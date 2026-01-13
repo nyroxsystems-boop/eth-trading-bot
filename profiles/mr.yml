@@ -1,0 +1,10 @@
+# Mean-Reversion Profil (enger, reaktiv)
+tp_min: 0.004
+tp_max: 0.009
+sl_floor: 0.007
+stop_atr_mult: 1.4
+trail_atr_mult: 0.6
+mr_rsi_hi: 55.0
+brk_tol: 0.9985
+adx_min: 16.0
+size_mult: 0.9

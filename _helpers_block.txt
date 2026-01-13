@@ -1,0 +1,65 @@
+# ------------------ RISK & REGIME HELPERS ------------------
+def current_equity(px: float|None=None) -> float:
+    try:
+        return estimate_equity(px)
+    except Exception:
+        return estimate_equity()
+
+def compute_regime(df_feat):
+    """
+    Einfache Regime-Erkennung:
+    - ADX (Trendstärke)
+    - ATR-Median (Volatility)
+    """
+    try:
+        adx = ADXIndicator(df_feat["high"], df_feat["low"], df_feat["close"], window=ADX_WINDOW).adx()
+        adx_now = float(adx.iloc[-1])
+    except Exception:
+        adx_now = 0.0
+    atr_series = df_feat["atr"].iloc[-200:] if len(df_feat)>=200 else df_feat["atr"]
+    atr_med = float(atr_series.median()) if len(atr_series)>0 else 0.0
+    atr_now = float(df_feat["atr"].iloc[-1])
+    vol_ok = atr_now >= atr_med if atr_med>0 else True
+    trend_ok = (adx_now >= ADX_MIN_TREND) if USE_ADX_FILTER else True
+    return {"adx": adx_now, "trend_ok": trend_ok, "vol_ok": vol_ok}
+
+def position_size_for_risk(px, sl_pct, eq):
+    """
+    Risiko pro Trade = eq * RISK_PCT_PER_TRADE
+    Größe (qty) = (RiskUSD) / (sl_pct * px)
+    """
+    risk_usd = max(0.0, float(eq) * float(RISK_PCT_PER_TRADE))
+    denom = max(sl_pct * px, 1e-9)
+    qty = risk_usd / denom
+    return max(0.0001, qty)
+
+def update_position_management(px, row, effective_tp):
+    """
+    Break-even, Trailing & Time-based Exit.
+    Nutzt global open_position, bars_in_position, loss_streak etc.
+    """
+    global open_position, bars_in_position, loss_streak
+    entry = open_position["entry"]; qty = open_position["qty"]; atr_in = open_position.get("atr", row["atr"])
+    upnl = (px/entry) - 1.0
+
+    # Dynamischer SL: Start = max(Floor, ATR-Mult)
+    sl_pct = max(STOP_FLOOR, STOP_ATR_MULT * (atr_in / max(entry,1e-9)))
+
+    # Break-even nach kleinem Gewinn
+    if upnl >= BREAK_EVEN_TRIGGER:
+        sl_pct = max(sl_pct, 0.0)  # BE = 0% Verlust
+
+    # Trailing über ATR
+    trail = (TRAIL_ATR_MULT * (row["atr"] / max(entry,1e-9)))
+    sl_pct = max(sl_pct, trail)
+
+    # Time-based Exit
+    if bars_in_position >= MAX_HOLD_BARS:
+        return "TIME"
+
+    # Regel-Exit
+    if upnl >= effective_tp:
+        return "TP"
+    if upnl <= -sl_pct:
+        return "SL"
+    return None

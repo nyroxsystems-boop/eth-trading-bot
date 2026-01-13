@@ -1,0 +1,10 @@
+# Trend-Profil (vorsichtig)
+tp_min: 0.006
+tp_max: 0.012
+sl_floor: 0.008
+stop_atr_mult: 1.6
+trail_atr_mult: 0.8
+mr_rsi_hi: 52.0
+brk_tol: 0.9990
+adx_min: 20.0
+size_mult: 1.0
