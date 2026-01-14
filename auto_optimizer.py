@@ -9,7 +9,14 @@ def auto_optimize_parameters():
     Automatically adjust trading parameters based on performance
     Target: 1% daily return
     """
+    # Import from main module
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    
+    # Access global variables from main bot
     global current_params, performance_history, last_optimization, RISK_PCT_PER_TRADE
+    global current_equity, day_start_equity, today_trades, DAILY_TARGET_PCT, log
     
     import time
     from datetime import datetime, timezone
@@ -106,9 +113,124 @@ def auto_optimize_parameters():
                 }, f, indent=2)
         except Exception as e:
             log(f"WARN failed to save params: {e}")
-            
+        
+        # Send daily Telegram report
+        send_daily_telegram_report(daily_pnl_pct, avg_pnl, today_trades)
+        
     except Exception as e:
         log(f"WARN auto-optimization failed: {e}")
+
+
+def send_daily_telegram_report(daily_pnl_pct, avg_7day_pnl, trades_today):
+    """
+    Send daily performance report to Telegram
+    Called once per day at midnight
+    """
+    try:
+        from datetime import datetime, timezone
+        import os
+        
+        # Get Telegram credentials
+        bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        
+        if not bot_token or not chat_id:
+            log("WARN: Telegram credentials not configured, skipping daily report")
+            return
+        
+        # Calculate win rate from recent trades
+        win_rate = calculate_win_rate()
+        
+        # Determine optimization action
+        if daily_pnl_pct < DAILY_TARGET_PCT * 0.5:
+            opt_status = "⬆️ Increased aggression (underperforming)"
+        elif daily_pnl_pct > DAILY_TARGET_PCT * 1.5:
+            opt_status = "⬇️ Reduced risk (overperforming)"
+        elif DAILY_TARGET_PCT * 0.8 <= daily_pnl_pct <= DAILY_TARGET_PCT * 1.2:
+            opt_status = "✅ Maintaining parameters (on target)"
+        else:
+            opt_status = "🔄 Minor adjustments"
+        
+        # Build report message
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        
+        # Emoji based on performance
+        if daily_pnl_pct >= DAILY_TARGET_PCT:
+            perf_emoji = "🎯"
+        elif daily_pnl_pct >= 0:
+            perf_emoji = "📈"
+        else:
+            perf_emoji = "📉"
+        
+        message = f"""📊 **Daily Performance Report**
+━━━━━━━━━━━━━━━━━━━━
+📅 Date: {date_str}
+💰 P&L: {daily_pnl_pct:+.2f}% {perf_emoji}
+📊 Trades: {trades_today}
+🎲 Win Rate: {win_rate:.1f}%
+📈 7-Day Avg: {avg_7day_pnl:+.2f}%
+🎯 Target: {DAILY_TARGET_PCT:.1f}%
+
+🤖 **Auto-Optimization:**
+{opt_status}
+New params saved.
+
+━━━━━━━━━━━━━━━━━━━━
+💡 Bot is running 24/7
+Next report: Tomorrow 00:00 UTC"""
+        
+        # Send via Telegram
+        import requests
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown"
+        }
+        
+        response = requests.post(url, json=payload, timeout=10)
+        
+        if response.status_code == 200:
+            log(f"[TELEGRAM] Daily report sent successfully")
+        else:
+            log(f"WARN: Telegram daily report failed: {response.status_code}")
+            
+    except Exception as e:
+        log(f"WARN: Failed to send daily Telegram report: {e}")
+
+
+def calculate_win_rate():
+    """Calculate win rate from recent trades"""
+    try:
+        import csv
+        import os
+        
+        trades_file = "/root/ethbot/logs/trades.csv"
+        
+        if not os.path.exists(trades_file):
+            return 0.0
+        
+        wins = 0
+        total = 0
+        
+        with open(trades_file, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get('side') == 'SELL':
+                    total += 1
+                    pnl = float(row.get('pnl_pct', 0))
+                    if pnl > 0:
+                        wins += 1
+        
+        if total == 0:
+            return 0.0
+        
+        return (wins / total) * 100
+        
+    except Exception as e:
+        log(f"WARN: Failed to calculate win rate: {e}")
+        return 0.0
+
 
 
 def generate_demo_market_data(num_candles=1000):
