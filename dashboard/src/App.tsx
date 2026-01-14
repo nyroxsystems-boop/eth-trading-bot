@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { 
-  TrendingUp, TrendingDown, Activity, Target, 
-  Brain, DollarSign, BarChart3, Zap 
+import {
+  TrendingUp, TrendingDown, Activity, Target,
+  Brain, DollarSign, BarChart3, Zap
 } from 'lucide-react'
-import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import './App.css'
 
 // Types
@@ -67,7 +67,7 @@ function App() {
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data)
-      
+
       if (data.type === 'update') {
         setStatus(data.status)
         setMetrics(data.metrics)
@@ -219,8 +219,17 @@ function App() {
 }
 
 // Components
-function StatCard({ title, value, change, subtitle, trend, icon }: any) {
-  const trendColors = {
+interface StatCardProps {
+  title: string
+  value: string | number
+  change?: string
+  subtitle?: string
+  trend?: 'up' | 'down' | 'neutral'
+  icon: React.ReactNode
+}
+
+function StatCard({ title, value, change, subtitle, trend, icon }: StatCardProps) {
+  const trendColors: Record<'up' | 'down' | 'neutral', string> = {
     up: 'text-green-400',
     down: 'text-red-400',
     neutral: 'text-slate-400'
@@ -267,26 +276,26 @@ function PerformanceChart({ trades }: { trades: Trade[] }) {
       <AreaChart data={data}>
         <defs>
           <linearGradient id="colorPnl" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#00ff88" stopOpacity={0.3}/>
-            <stop offset="95%" stopColor="#00ff88" stopOpacity={0}/>
+            <stop offset="5%" stopColor="#00ff88" stopOpacity={0.3} />
+            <stop offset="95%" stopColor="#00ff88" stopOpacity={0} />
           </linearGradient>
         </defs>
         <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
         <XAxis dataKey="index" stroke="#64748b" />
         <YAxis stroke="#64748b" />
-        <Tooltip 
-          contentStyle={{ 
-            backgroundColor: '#0f172a', 
+        <Tooltip
+          contentStyle={{
+            backgroundColor: '#0f172a',
             border: '1px solid #334155',
             borderRadius: '8px'
           }}
         />
-        <Area 
-          type="monotone" 
-          dataKey="pnl" 
-          stroke="#00ff88" 
-          fillOpacity={1} 
-          fill="url(#colorPnl)" 
+        <Area
+          type="monotone"
+          dataKey="pnl"
+          stroke="#00ff88"
+          fillOpacity={1}
+          fill="url(#colorPnl)"
         />
       </AreaChart>
     </ResponsiveContainer>
@@ -303,16 +312,14 @@ function TradeFeed({ trades }: { trades: Trade[] }) {
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
-            className={`p-4 rounded-xl border ${
-              trade.action === 'BUY' 
-                ? 'bg-green-500/10 border-green-500/30' 
+            className={`p-4 rounded-xl border ${trade.action === 'BUY'
+                ? 'bg-green-500/10 border-green-500/30'
                 : 'bg-red-500/10 border-red-500/30'
-            }`}
+              }`}
           >
             <div className="flex items-center justify-between mb-2">
-              <span className={`font-semibold ${
-                trade.action === 'BUY' ? 'text-green-400' : 'text-red-400'
-              }`}>
+              <span className={`font-semibold ${trade.action === 'BUY' ? 'text-green-400' : 'text-red-400'
+                }`}>
                 {trade.action}
               </span>
               <span className="text-sm text-slate-400">
@@ -324,9 +331,8 @@ function TradeFeed({ trades }: { trades: Trade[] }) {
               <span className="text-slate-400">{trade.qty.toFixed(4)} ETH</span>
             </div>
             {trade.pnl !== undefined && (
-              <div className={`text-sm mt-2 font-medium ${
-                trade.pnl > 0 ? 'text-green-400' : 'text-red-400'
-              }`}>
+              <div className={`text-sm mt-2 font-medium ${trade.pnl > 0 ? 'text-green-400' : 'text-red-400'
+                }`}>
                 {trade.pnl > 0 ? '+' : ''}{trade.pnl.toFixed(2)} USDT
               </div>
             )}
@@ -337,8 +343,14 @@ function TradeFeed({ trades }: { trades: Trade[] }) {
   )
 }
 
-function MetricCard({ title, value, color }: any) {
-  const colors = {
+interface MetricCardProps {
+  title: string
+  value: string | number
+  color: 'green' | 'red' | 'blue'
+}
+
+function MetricCard({ title, value, color }: MetricCardProps) {
+  const colors: Record<'green' | 'red' | 'blue', string> = {
     green: 'from-green-500/20 to-green-500/5 border-green-500/30',
     red: 'from-red-500/20 to-red-500/5 border-red-500/30',
     blue: 'from-blue-500/20 to-blue-500/5 border-blue-500/30'

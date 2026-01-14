@@ -23,6 +23,7 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 LOG_DIR = Path(os.getenv("LOG_DIR", "/root/ethbot/logs"))
 TRADES_CSV = LOG_DIR / "trades.csv"
 CONSOLE_LOG = LOG_DIR / "console.out"
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 
 app = FastAPI(title="ETH Bot Dashboard API", version="1.0.0")
 
@@ -87,8 +88,57 @@ class BotStatus(BaseModel):
     regime: str
 
 # Helper Functions
+def generate_demo_trades() -> List[Trade]:
+    """Generate realistic demo trades for testing"""
+    import random
+    trades = []
+    base_price = 3200.0
+    current_time = datetime.now() - timedelta(hours=24)
+    
+    # Generate 30 trades over 24 hours
+    for i in range(30):
+        # Price walks randomly
+        base_price += random.uniform(-20, 20)
+        
+        # BUY trade
+        buy_time = current_time + timedelta(minutes=random.randint(10, 60))
+        buy_price = base_price + random.uniform(-5, 5)
+        qty = random.uniform(0.05, 0.15)
+        
+        trades.append(Trade(
+            timestamp=buy_time.isoformat(),
+            action="BUY",
+            qty=qty,
+            price=buy_price,
+            pnl=0
+        ))
+        
+        # SELL trade (60% win rate)
+        sell_time = buy_time + timedelta(minutes=random.randint(15, 120))
+        if random.random() < 0.6:  # Win
+            sell_price = buy_price + random.uniform(5, 25)
+        else:  # Loss
+            sell_price = buy_price - random.uniform(3, 15)
+        
+        pnl = (sell_price - buy_price) * qty
+        
+        trades.append(Trade(
+            timestamp=sell_time.isoformat(),
+            action="SELL",
+            qty=qty,
+            price=sell_price,
+            pnl=pnl
+        ))
+        
+        current_time = sell_time
+    
+    return trades
+
 async def read_trades_csv() -> List[Trade]:
-    """Read trades from CSV file"""
+    """Read trades from CSV file or return demo data"""
+    if DEMO_MODE:
+        return generate_demo_trades()
+    
     trades = []
     try:
         if not TRADES_CSV.exists():
@@ -206,42 +256,49 @@ async def get_performance_metrics() -> PerformanceMetrics:
 
 async def get_bot_status() -> BotStatus:
     """Get current bot status"""
-    # Read from console.out for live status
-    try:
-        if CONSOLE_LOG.exists():
-            with open(CONSOLE_LOG, 'r') as f:
-                lines = f.readlines()[-50:]
-            
-            # Parse last status
+    # Demo mode values
+    if DEMO_MODE:
+        import random
+        ml_conf = random.uniform(0.55, 0.75)
+        sentiment = random.uniform(-0.2, 0.3)
+        regime = random.choice(["trending", "ranging", "trending"])
+    else:
+        # Read from console.out for live status
+        try:
+            if CONSOLE_LOG.exists():
+                with open(CONSOLE_LOG, 'r') as f:
+                    lines = f.readlines()[-50:]
+                
+                # Parse last status
+                ml_conf = 0.5
+                sentiment = 0.0
+                regime = "unknown"
+                
+                for line in reversed(lines):
+                    if "p_ml=" in line:
+                        try:
+                            ml_conf = float(line.split("p_ml=")[1].split()[0])
+                        except:
+                            pass
+                    if "sentiment=" in line:
+                        try:
+                            sentiment = float(line.split("sentiment=")[1].split()[0])
+                        except:
+                            pass
+                    if "adx=" in line:
+                        try:
+                            adx = float(line.split("adx=")[1].split()[0])
+                            regime = "trending" if adx > 20 else "ranging"
+                        except:
+                            pass
+            else:
+                ml_conf = 0.5
+                sentiment = 0.0
+                regime = "unknown"
+        except:
             ml_conf = 0.5
             sentiment = 0.0
             regime = "unknown"
-            
-            for line in reversed(lines):
-                if "p_ml=" in line:
-                    try:
-                        ml_conf = float(line.split("p_ml=")[1].split()[0])
-                    except:
-                        pass
-                if "sentiment=" in line:
-                    try:
-                        sentiment = float(line.split("sentiment=")[1].split()[0])
-                    except:
-                        pass
-                if "adx=" in line:
-                    try:
-                        adx = float(line.split("adx=")[1].split()[0])
-                        regime = "trending" if adx > 20 else "ranging"
-                    except:
-                        pass
-        else:
-            ml_conf = 0.5
-            sentiment = 0.0
-            regime = "unknown"
-    except:
-        ml_conf = 0.5
-        sentiment = 0.0
-        regime = "unknown"
     
     # Count today's trades
     trades = await read_trades_csv()
