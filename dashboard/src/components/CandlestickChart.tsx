@@ -17,71 +17,91 @@ export default function CandlestickChart({ data }: CandlestickChartProps) {
     const chartContainerRef = useRef<HTMLDivElement>(null)
     const chartRef = useRef<IChartApi | null>(null)
     const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+    const resizeObserverRef = useRef<ResizeObserver | null>(null)
 
     useEffect(() => {
         if (!chartContainerRef.current) return
 
-        // Create chart
-        const chart = createChart(chartContainerRef.current, {
-            layout: {
-                background: { type: ColorType.Solid, color: 'transparent' },
-                textColor: '#64748b',
-            },
-            grid: {
-                vertLines: { color: '#1e293b' },
-                horzLines: { color: '#1e293b' },
-            },
-            width: chartContainerRef.current.clientWidth,
-            height: 300,
-            timeScale: {
-                timeVisible: true,
-                secondsVisible: false,
-                borderColor: '#1e293b',
-            },
-            rightPriceScale: {
-                borderColor: '#1e293b',
-            },
-        })
+        try {
+            // Create chart
+            const chart = createChart(chartContainerRef.current, {
+                layout: {
+                    background: { type: ColorType.Solid, color: 'transparent' },
+                    textColor: '#64748b',
+                },
+                grid: {
+                    vertLines: { color: '#1e293b' },
+                    horzLines: { color: '#1e293b' },
+                },
+                width: chartContainerRef.current.clientWidth,
+                height: 300,
+                timeScale: {
+                    timeVisible: true,
+                    secondsVisible: false,
+                    borderColor: '#1e293b',
+                },
+                rightPriceScale: {
+                    borderColor: '#1e293b',
+                },
+            })
 
-        // Add candlestick series
-        const candlestickSeries = chart.addCandlestickSeries({
-            upColor: '#00ff88',
-            downColor: '#ff3366',
-            borderUpColor: '#00ff88',
-            borderDownColor: '#ff3366',
-            wickUpColor: '#00ff88',
-            wickDownColor: '#ff3366',
-        })
+            // Add candlestick series
+            const candlestickSeries = chart.addCandlestickSeries({
+                upColor: '#00ff88',
+                downColor: '#ff3366',
+                borderUpColor: '#00ff88',
+                borderDownColor: '#ff3366',
+                wickUpColor: '#00ff88',
+                wickDownColor: '#ff3366',
+            })
 
-        chartRef.current = chart
-        candlestickSeriesRef.current = candlestickSeries
+            chartRef.current = chart
+            candlestickSeriesRef.current = candlestickSeries
 
-        // Handle resize
-        const handleResize = () => {
-            if (chartContainerRef.current && chartRef.current) {
-                chartRef.current.applyOptions({
-                    width: chartContainerRef.current.clientWidth,
+            // Handle resize with ResizeObserver
+            if (chartContainerRef.current) {
+                resizeObserverRef.current = new ResizeObserver(entries => {
+                    if (entries.length === 0 || entries[0].target !== chartContainerRef.current) return
+                    if (chartRef.current) {
+                        const { width } = entries[0].contentRect
+                        chartRef.current.applyOptions({ width })
+                    }
                 })
+
+                resizeObserverRef.current.observe(chartContainerRef.current)
             }
+        } catch (err) {
+            console.error('Failed to create chart:', err)
         }
 
-        window.addEventListener('resize', handleResize)
-
         return () => {
-            window.removeEventListener('resize', handleResize)
-            chart.remove()
+            try {
+                if (resizeObserverRef.current && chartContainerRef.current) {
+                    resizeObserverRef.current.unobserve(chartContainerRef.current)
+                }
+                if (chartRef.current) {
+                    chartRef.current.remove()
+                    chartRef.current = null
+                }
+            } catch (err) {
+                console.error('Error cleaning up chart:', err)
+            }
         }
     }, [])
 
     useEffect(() => {
         if (candlestickSeriesRef.current && data.length > 0) {
-            candlestickSeriesRef.current.setData(data as any)
+            try {
+                candlestickSeriesRef.current.setData(data as any)
+            } catch (err) {
+                console.error('Failed to set chart data:', err)
+            }
         }
     }, [data])
 
     return (
-        <div className="relative">
-            <div ref={chartContainerRef} className="w-full" />
+        <div className="relative w-full">
+            <div ref={chartContainerRef} className="w-full" style={{ minHeight: '300px' }} />
         </div>
     )
 }
