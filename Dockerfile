@@ -23,6 +23,12 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY . .
 
+# Build dashboard
+RUN cd dashboard && \
+    npm install && \
+    npm run build && \
+    cd ..
+
 # Create necessary directories
 RUN mkdir -p /root/ethbot/logs
 

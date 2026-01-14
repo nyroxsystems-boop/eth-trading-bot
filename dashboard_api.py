@@ -6,7 +6,8 @@ Real-time WebSocket API for Premium Trading Dashboard
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import asyncio
@@ -35,6 +36,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount static files for dashboard (if built)
+DASHBOARD_DIST = Path(__file__).parent / "dashboard" / "dist"
+if DASHBOARD_DIST.exists():
+    # Serve static assets
+    app.mount("/assets", StaticFiles(directory=str(DASHBOARD_DIST / "assets")), name="assets")
 
 # WebSocket Connection Manager
 class ConnectionManager:
@@ -318,7 +325,11 @@ async def get_bot_status() -> BotStatus:
 # API Endpoints
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "ETH Bot Dashboard API"}
+    """Serve dashboard HTML"""
+    dashboard_index = DASHBOARD_DIST / "index.html"
+    if dashboard_index.exists():
+        return FileResponse(dashboard_index)
+    return {"status": "ok", "service": "ETH Bot Dashboard API", "note": "Dashboard not built yet"}
 
 @app.get("/api/health")
 async def health_check():
