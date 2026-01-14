@@ -154,19 +154,19 @@ DAILY_TARGET_PCT   = float(_os.getenv("DAILY_TARGET_PCT", "1.0"))  # 1% daily ta
 if AUTO_TRAIN_MODE:
     MAX_TRADES_PER_DAY = int(_os.getenv("MAX_TRADES_PER_DAY", "50"))  # More trades for training
 else:
-    MAX_TRADES_PER_DAY = int(_os.getenv("MAX_TRADES_PER_DAY", "10"))
+    MAX_TRADES_PER_DAY = int(_os.getenv("MAX_TRADES_PER_DAY", "15"))  # Optimized for 1% daily target
 
 INTERVAL           = _os.getenv("INTERVAL", "5m")
 LOOKBACK           = int(_os.getenv("LOOKBACK", "400"))
 TRADE_CAPITAL_PCT  = float(_os.getenv("TRADE_CAPITAL_PCT", "1.0"))
 
-TP_MIN             = float(_os.getenv("TARGET_PCT", "0.015"))
-TP_MAX             = float(_os.getenv("TARGET_PCT_MAX", "0.02"))
+TP_MIN             = float(_os.getenv("TARGET_PCT", "0.010"))      # 1.0% (faster exits)
+TP_MAX             = float(_os.getenv("TARGET_PCT_MAX", "0.015"))  # 1.5% (optimized)
 STOP_ATR_MULT      = float(_os.getenv("STOP_ATR_MULT", "1.5"))
-STOP_FLOOR         = float(_os.getenv("STOP_FLOOR", "0.01"))
+STOP_FLOOR         = float(_os.getenv("STOP_FLOOR", "0.005"))      # 0.5% (tighter SL)
 
 # --- Risk/Engine tuning ---
-RISK_PCT_PER_TRADE = float(_os.getenv("RISK_PCT_PER_TRADE", "0.005"))  # 0.5% vom Equity
+RISK_PCT_PER_TRADE = float(_os.getenv("RISK_PCT_PER_TRADE", "0.006"))  # 0.6% vom Equity (optimized for 1% target)
 
 TRAIL_PCT       = float(_os.getenv("TRAIL_PCT", "0.008"))   # fallback 0.8%
 TAKE_PROFIT_PCT = float(_os.getenv("TAKE_PROFIT_PCT", "0.015"))  # fallback 1.5%
@@ -193,13 +193,13 @@ MAX_HOLD_BARS      = int(_os.getenv("MAX_HOLD_BARS", "48"))            # Zeit-Ex
 # Regime-Filter
 USE_ADX_FILTER     = _os.getenv("USE_ADX_FILTER", "true").lower()=="true"
 ADX_WINDOW         = int(_os.getenv("ADX_WINDOW", "14"))
-ADX_MIN_TREND      = float(_os.getenv("ADX_MIN_TREND", "18.0"))
+ADX_MIN_TREND      = float(_os.getenv("ADX_MIN_TREND", "15.0"))     # Lowered for more opportunities
 # --- Entry thresholds (tunable via ENV) ---
-ENTRY_SCORE_MIN    = float(_os.getenv("ENTRY_SCORE_MIN", "0.75"))   # minimale Score für Entry
+ENTRY_SCORE_MIN    = float(_os.getenv("ENTRY_SCORE_MIN", "0.45"))   # Lowered for more trades
 BREAKOUT_PCT       = float(_os.getenv("BREAKOUT_PCT", "0.00010"))   # 0.01% über HH20
-RSI_MIN            = float(_os.getenv("RSI_MIN", "50"))
-RSI_MAX            = float(_os.getenv("RSI_MAX", "75"))
-SEC_PML_MIN        = float(_os.getenv("SEC_PML_MIN", "0.52"))       # ML-Minimum fürs Sekundär-Setup
+RSI_MIN            = float(_os.getenv("RSI_MIN", "40"))              # Lowered from 50
+RSI_MAX            = float(_os.getenv("RSI_MAX", "70"))              # Lowered from 75
+SEC_PML_MIN        = float(_os.getenv("SEC_PML_MIN", "0.48"))       # Lowered from 0.52
         # ab hier gilt 'trendend'
 
 PAPER_BASE_USDT    = float(_os.getenv("PAPER_BASE_USDT", "100000"))

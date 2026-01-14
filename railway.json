@@ -5,6 +5,7 @@
         "buildCommand": "cd dashboard && npm install && npm run build && cd .."
     },
     "deploy": {
+        "region": "eu-west1",
         "numReplicas": 1,
         "sleepApplication": false,
         "restartPolicyType": "ON_FAILURE",
