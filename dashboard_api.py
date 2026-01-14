@@ -98,6 +98,8 @@ class BotStatus(BaseModel):
 def generate_demo_trades() -> List[Trade]:
     """Generate realistic demo trades for testing"""
     import random
+    # Use fixed seed for consistent demo data
+    random.seed(42)
     trades = []
     base_price = 3200.0
     current_time = datetime.now() - timedelta(hours=24)
