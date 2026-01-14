@@ -212,16 +212,17 @@ async def get_performance_metrics() -> PerformanceMetrics:
     today_trades = [t for t in trades if t.timestamp.startswith(today)]
     daily_pnl = await calculate_pnl(today_trades)
     
-    # Win/Loss stats
-    wins = [t for t in trades if t.pnl and t.pnl > 0]
-    losses = [t for t in trades if t.pnl and t.pnl < 0]
+    # Win/Loss stats (only count SELL trades as completed trades)
+    sell_trades = [t for t in trades if t.action.upper() == "SELL"]
+    wins = [t for t in sell_trades if t.pnl and t.pnl > 0]
+    losses = [t for t in sell_trades if t.pnl and t.pnl < 0]
     
-    win_rate = len(wins) / len(trades) * 100 if trades else 0
+    win_rate = len(wins) / len(sell_trades) * 100 if sell_trades else 0
     avg_win = sum(t.pnl for t in wins) / len(wins) if wins else 0
     avg_loss = sum(t.pnl for t in losses) / len(losses) if losses else 0
     
     # Sharpe Ratio (simplified)
-    returns = [t.pnl for t in trades if t.pnl]
+    returns = [t.pnl for t in sell_trades if t.pnl]
     if returns:
         import numpy as np
         sharpe = np.mean(returns) / np.std(returns) if np.std(returns) > 0 else 0
@@ -250,7 +251,7 @@ async def get_performance_metrics() -> PerformanceMetrics:
     roi = (total_pnl / initial_capital) * 100 if initial_capital > 0 else 0
     
     return PerformanceMetrics(
-        total_trades=len(trades),
+        total_trades=len(sell_trades),  # Only count completed trades (SELL orders)
         winning_trades=len(wins),
         losing_trades=len(losses),
         win_rate=win_rate,
