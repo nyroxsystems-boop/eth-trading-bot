@@ -175,7 +175,7 @@ function TradeFeed({ trades }: { trades: Trade[] }) {
                     </div>
                     <div className="flex items-center justify-between text-xs">
                         <span className="text-slate-300 font-mono">${trade.price.toFixed(2)}</span>
-                        <span className="text-slate-400">{trade.qty.toFixed(4)} BTC</span>
+                        <span className="text-slate-400">{trade.qty.toFixed(4)} ETH</span>
                     </div>
                     {trade.pnl !== undefined && (
                         <div className={`text-xs mt-1 font-medium font-mono ${trade.pnl > 0 ? 'text-green-400' : 'text-red-400'
