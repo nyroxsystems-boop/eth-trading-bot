@@ -19,31 +19,62 @@ import { Trade, Metrics, BotStatus, CandleData } from './types'
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws'
 
-// Generate mock candlestick data with volume
-const generateCandlestickData = (): CandleData[] => {
+// Generate mock candlestick data with volume based on timeframe
+const generateCandlestickData = (timeframe: string): CandleData[] => {
   const data: CandleData[] = []
   let basePrice = 3200
 
-  for (let i = 100; i >= 0; i--) {
-    const open = basePrice + (Math.random() - 0.5) * 20
-    const close = open + (Math.random() - 0.5) * 30
-    const high = Math.max(open, close) + Math.random() * 15
-    const low = Math.min(open, close) - Math.random() * 15
+  // Timeframe configurations
+  const timeframeConfig: Record<string, { interval: number; points: number; label: string }> = {
+    '1M': { interval: 60, points: 100, label: 'min' },
+    '5M': { interval: 300, points: 100, label: 'min' },
+    '15M': { interval: 900, points: 100, label: 'min' },
+    '1H': { interval: 3600, points: 100, label: 'h' },
+    '4H': { interval: 14400, points: 100, label: 'h' },
+    '1D': { interval: 86400, points: 60, label: 'd' },
+  }
+
+  const config = timeframeConfig[timeframe] || timeframeConfig['15M']
+  const now = Date.now()
+
+  for (let i = config.points - 1; i >= 0; i--) {
+    const timestamp = now - (i * config.interval * 1000)
+    const date = new Date(timestamp)
+
+    // Format time label based on timeframe
+    let timeLabel = ''
+    if (config.label === 'min') {
+      timeLabel = `${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`
+    } else if (config.label === 'h') {
+      timeLabel = `${date.getMonth() + 1}/${date.getDate()} ${date.getHours()}:00`
+    } else {
+      timeLabel = `${date.getMonth() + 1}/${date.getDate()}`
+    }
+
+    // Generate realistic price movement
+    const volatility = timeframe === '1M' ? 5 : timeframe === '5M' ? 10 : timeframe === '15M' ? 15 : timeframe === '1H' ? 25 : timeframe === '4H' ? 40 : 60
+
+    const open = basePrice + (Math.random() - 0.5) * volatility
+    const close = open + (Math.random() - 0.5) * volatility * 1.5
+    const high = Math.max(open, close) + Math.random() * (volatility * 0.5)
+    const low = Math.min(open, close) - Math.random() * (volatility * 0.5)
     const volume = Math.random() * 1000 + 500
 
     data.push({
-      time: `${100 - i}:00`,
+      time: timeLabel,
       open,
       high,
       low,
       close,
       volume
     })
+
     basePrice = close
   }
 
   return data
 }
+
 
 // Generate mock ticker data
 const generateTickerData = () => [
@@ -59,9 +90,14 @@ function App() {
   const [metrics, setMetrics] = useState<Metrics | null>(null)
   const [status, setStatus] = useState<BotStatus | null>(null)
   const [, setConnected] = useState(false)
-  const [candlestickData] = useState(generateCandlestickData())
-  const [tickerData] = useState(generateTickerData())
   const [timeframe, setTimeframe] = useState('15M')
+  const [candlestickData, setCandlestickData] = useState<CandleData[]>([])
+  const [tickerData] = useState(generateTickerData())
+
+  // Generate initial candlestick data
+  useEffect(() => {
+    setCandlestickData(generateCandlestickData(timeframe))
+  }, [timeframe])
 
   // Fetch initial data
   useEffect(() => {

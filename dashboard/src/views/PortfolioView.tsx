@@ -4,9 +4,8 @@ import { PieChart as RePieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 
 
 export default function PortfolioView() {
     const holdings = [
-        { asset: 'ETH', amount: 1.2345, value: 3975.84, allocation: 65 },
-        { asset: 'USDT', amount: 1500.00, value: 1500.00, allocation: 25 },
-        { asset: 'BTC', amount: 0.0123, value: 678.18, allocation: 10 },
+        { asset: 'ETH', amount: 2.5, value: 8075.30, allocation: 84 },
+        { asset: 'USDT', amount: 1500.00, value: 1500.00, allocation: 16 },
     ]
 
     const positions = [

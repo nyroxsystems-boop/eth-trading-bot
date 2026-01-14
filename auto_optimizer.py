@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""
+Auto-Optimization Module for ETH Trading Bot
+Automatically adjusts trading parameters to achieve 1% daily target
+"""
+
+def auto_optimize_parameters():
+    """
+    Automatically adjust trading parameters based on performance
+    Target: 1% daily return
+    """
+    global current_params, performance_history, last_optimization, RISK_PCT_PER_TRADE
+    
+    import time
+    from datetime import datetime, timezone
+    
+    # Only optimize once per day
+    now = time.time()
+    if now - last_optimization < 86400:  # 24 hours
+        return
+    
+    last_optimization = now
+    
+    try:
+        # Calculate daily P&L percentage
+        eq_now = current_equity()
+        if day_start_equity is None or day_start_equity <= 0:
+            return
+        
+        daily_pnl_pct = ((eq_now / day_start_equity) - 1.0) * 100
+        
+        # Track performance
+        performance_history.append({
+            'date': datetime.now(timezone.utc).isoformat(),
+            'pnl_pct': daily_pnl_pct,
+            'trades': today_trades,
+            'params': current_params.copy()
+        })
+        
+        # Keep only last 30 days
+        if len(performance_history) > 30:
+            performance_history = performance_history[-30:]
+        
+        # Calculate average performance
+        if len(performance_history) < 3:
+            return  # Need at least 3 days of data
+        
+        avg_pnl = sum(p['pnl_pct'] for p in performance_history[-7:]) / min(7, len(performance_history))
+        
+        log(f\"[AUTO-OPT] Daily P&L: {daily_pnl_pct:.2f}% | 7-day avg: {avg_pnl:.2f}% | Target: {DAILY_TARGET_PCT}%\")
+        
+        # Adjust parameters based on performance
+        if avg_pnl < DAILY_TARGET_PCT * 0.5:
+            # Underperforming - increase aggression
+            log(\"[AUTO-OPT] Underperforming - increasing aggression\")
+            
+            # Increase position size
+            current_params['position_size_mult'] = min(current_params['position_size_mult'] * 1.1, 2.0)
+            
+            # Lower ML threshold (take more trades)
+            current_params['ml_threshold'] = max(current_params['ml_threshold'] * 0.95, 0.45)
+            
+            # Increase risk per trade
+            current_params['risk_pct'] = min(current_params['risk_pct'] * 1.05, 0.01)  # Max 1%
+            
+            # Increase TP targets
+            current_params['tp_min'] = min(current_params['tp_min'] * 1.05, 0.025)
+            current_params['tp_max'] = min(current_params['tp_max'] * 1.05, 0.03)
+            
+        elif avg_pnl > DAILY_TARGET_PCT * 1.5:
+            # Overperforming - reduce risk to protect gains
+            log(\"[AUTO-OPT] Overperforming - reducing risk\")
+            
+            # Decrease position size
+            current_params['position_size_mult'] = max(current_params['position_size_mult'] * 0.95, 0.5)
+            
+            # Raise ML threshold (be more selective)
+            current_params['ml_threshold'] = min(current_params['ml_threshold'] * 1.05, 0.65)
+            
+            # Decrease risk per trade
+            current_params['risk_pct'] = max(current_params['risk_pct'] * 0.95, 0.003)
+            
+        elif DAILY_TARGET_PCT * 0.8 <= avg_pnl <= DAILY_TARGET_PCT * 1.2:
+            # On target - minor adjustments
+            log(\"[AUTO-OPT] On target - maintaining current parameters\")
+        
+        # Apply optimized parameters
+        RISK_PCT_PER_TRADE = current_params['risk_pct']
+        
+        log(f\"[AUTO-OPT] Updated params: risk={current_params['risk_pct']:.4f} ml_thresh={current_params['ml_threshold']:.2f} pos_mult={current_params['position_size_mult']:.2f}\")
+        
+        # Save parameters to file
+        try:
+            import json
+            import os
+            os.makedirs(\"/root/ethbot/logs\", exist_ok=True)
+            with open(\"/root/ethbot/logs/optimized_params.json\", \"w\") as f:
+                json.dump({
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                    'params': current_params,
+                    'performance': {
+                        'daily_pnl_pct': daily_pnl_pct,
+                        'avg_7day_pnl': avg_pnl,
+                        'target': DAILY_TARGET_PCT
+                    }
+                }, f, indent=2)
+        except Exception as e:
+            log(f\"WARN failed to save params: {e}\")
+            
+    except Exception as e:
+        log(f\"WARN auto-optimization failed: {e}\")
+
+
+def generate_demo_market_data(num_candles=1000):
+    """
+    Generate realistic demo market data for training
+    Returns DataFrame with OHLCV data
+    """
+    import pandas as pd
+    import numpy as np
+    from datetime import datetime, timedelta, timezone
+    
+    data = []
+    base_price = 3200.0
+    timestamp = datetime.now(timezone.utc) - timedelta(minutes=5 * num_candles)
+    
+    for i in range(num_candles):
+        # Trend component (sine wave)
+        trend = np.sin(i / 50) * 50
+        
+        # Volatility component
+        volatility = np.random.normal(0, 20)
+        
+        # Support/Resistance levels
+        if base_price < 3000:
+            base_price += abs(volatility)  # Bounce up from support
+        elif base_price > 3400:
+            base_price -= abs(volatility)  # Bounce down from resistance
+        else:
+            base_price += trend + volatility
+        
+        # Generate OHLC
+        open_price = base_price + np.random.normal(0, 5)
+        close_price = open_price + np.random.normal(0, 15)
+        high_price = max(open_price, close_price) + abs(np.random.normal(0, 10))
+        low_price = min(open_price, close_price) - abs(np.random.normal(0, 10))
+        volume = abs(np.random.normal(1000, 300))
+        
+        data.append({
+            'time': timestamp,
+            'open': max(open_price, 1.0),
+            'high': max(high_price, 1.0),
+            'low': max(low_price, 1.0),
+            'close': max(close_price, 1.0),
+            'volume': max(volume, 0.1)
+        })
+        
+        timestamp += timedelta(minutes=5)
+        base_price = close_price
+    
+    df = pd.DataFrame(data)
+    return df

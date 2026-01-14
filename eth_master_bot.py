@@ -144,7 +144,18 @@ BASE_ASSET         = "ETH"
 QUOTE_ASSET        = "USDT"
 
 DRY_RUN            = _os.getenv("DRY_RUN", "true").lower() == "true"
-MAX_TRADES_PER_DAY = int(_os.getenv("MAX_TRADES_PER_DAY", "3"))
+
+# --- Auto-Optimization Settings ---
+AUTO_TRAIN_MODE    = _os.getenv("AUTO_TRAIN_MODE", "false").lower() == "true"
+AUTO_OPTIMIZE      = _os.getenv("AUTO_OPTIMIZE", "false").lower() == "true"
+DAILY_TARGET_PCT   = float(_os.getenv("DAILY_TARGET_PCT", "1.0"))  # 1% daily target
+
+# Increase limits for training mode
+if AUTO_TRAIN_MODE:
+    MAX_TRADES_PER_DAY = int(_os.getenv("MAX_TRADES_PER_DAY", "50"))  # More trades for training
+else:
+    MAX_TRADES_PER_DAY = int(_os.getenv("MAX_TRADES_PER_DAY", "10"))
+
 INTERVAL           = _os.getenv("INTERVAL", "5m")
 LOOKBACK           = int(_os.getenv("LOOKBACK", "400"))
 TRADE_CAPITAL_PCT  = float(_os.getenv("TRADE_CAPITAL_PCT", "1.0"))
@@ -232,6 +243,17 @@ nltk_downloaded = False
 sia = None
 sent_score = 0.0
 last_rss_pull = 0.0
+
+# --- Auto-Optimization State ---
+performance_history = []  # Track daily performance for optimization
+current_params = {
+    'risk_pct': RISK_PCT_PER_TRADE,
+    'ml_threshold': 0.52,
+    'position_size_mult': 1.0,
+    'tp_min': TP_MIN,
+    'tp_max': TP_MAX,
+}
+last_optimization = 0.0  # Timestamp of last parameter adjustment
 
 # ------------------ INIT ------------------
 def init_env():
@@ -490,6 +512,14 @@ def poll_rss_sentiment():
         sent_score = max(min(s / max(n,1), 0.5), -0.5)
     except Exception as e:
         log(f"WARN sentiment poll failed: {e}")
+
+# --- Auto-Optimization ---
+if AUTO_OPTIMIZE:
+    try:
+        from auto_optimizer import auto_optimize_parameters
+    except ImportError:
+        AUTO_OPTIMIZE = False
+        log("WARN auto_optimizer module not found, disabling auto-optimization")
 
 # ------------------ BALANCE / ORDERS ------------------
 def usdt_balance() -> float:

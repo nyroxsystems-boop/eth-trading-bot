@@ -1,10 +1,9 @@
 import { motion } from 'framer-motion'
 import { Bell, User } from 'lucide-react'
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import CandlestickChart from '../components/CandlestickChart'
 import TickerBar from '../components/TickerBar'
 import MetricCard from '../components/MetricCard'
-import { Trade, Metrics, BotStatus } from '../types'
+import type { Trade, Metrics, BotStatus } from '../types'
 
 interface DashboardViewProps {
     trades: Trade[]
@@ -76,8 +75,8 @@ export default function DashboardView({
                                     key={tf}
                                     onClick={() => setTimeframe(tf)}
                                     className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-300 ${timeframe === tf
-                                            ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/30'
-                                            : 'bg-slate-800/50 text-slate-400 hover:text-white hover:bg-slate-800 hover:scale-105'
+                                        ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/30'
+                                        : 'bg-slate-800/50 text-slate-400 hover:text-white hover:bg-slate-800 hover:scale-105'
                                         }`}
                                 >
                                     {tf}
@@ -146,87 +145,7 @@ export default function DashboardView({
                     </motion.div>
                 </div>
             </div>
-
-            {/* Performance Analysis */}
-            <div className="px-8 pb-6">
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.4 }}
-                    className="bg-slate-900/50 backdrop-blur-xl border border-slate-800/50 rounded-2xl p-6 shadow-2xl"
-                >
-                    <div className="flex items-center justify-between mb-6">
-                        <h2 className="text-xl font-semibold">Performance Analysis</h2>
-                        <select className="bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-sm hover:bg-slate-800 transition-colors cursor-pointer">
-                            <option>Last 30 days</option>
-                            <option>Last 7 days</option>
-                            <option>Last 24 hours</option>
-                        </select>
-                    </div>
-                    <PerformanceChart trades={trades} />
-
-                    {/* Additional Metrics */}
-                    <div className="grid grid-cols-3 gap-6 mt-6">
-                        <div className="p-4 bg-slate-800/30 rounded-xl border border-slate-700/50">
-                            <div className="text-slate-400 text-sm mb-2">Max Drawdown</div>
-                            <div className="text-2xl font-bold text-red-400">-{metrics?.max_drawdown.toFixed(2) || '0'}%</div>
-                        </div>
-                        <div className="p-4 bg-slate-800/30 rounded-xl border border-slate-700/50">
-                            <div className="text-slate-400 text-sm mb-2">Sharpe Ratio</div>
-                            <div className="text-2xl font-bold text-cyan-400">{(metrics?.sharpe_ratio || 0).toFixed(2)}</div>
-                        </div>
-                        <div className="p-4 bg-slate-800/30 rounded-xl border border-slate-700/50">
-                            <div className="text-slate-400 text-sm mb-2">Avg. Trade Duration</div>
-                            <div className="text-2xl font-bold text-cyan-400">2h min</div>
-                        </div>
-                    </div>
-                </motion.div>
-            </div>
         </motion.div>
-    )
-}
-
-// Performance Chart Component
-function PerformanceChart({ trades }: { trades: Trade[] }) {
-    const data = trades.reduce((acc: any[], trade, idx) => {
-        const prevPnl = idx > 0 ? acc[idx - 1].pnl : 0
-        const currentPnl = prevPnl + (trade.pnl || 0)
-        acc.push({
-            index: idx,
-            pnl: currentPnl,
-            timestamp: new Date(trade.timestamp).toLocaleTimeString()
-        })
-        return acc
-    }, [])
-
-    return (
-        <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={data}>
-                <defs>
-                    <linearGradient id="colorPnl" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#00ff88" stopOpacity={0.3} />
-                        <stop offset="95%" stopColor="#00ff88" stopOpacity={0} />
-                    </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis dataKey="index" stroke="#64748b" />
-                <YAxis stroke="#64748b" />
-                <Tooltip
-                    contentStyle={{
-                        backgroundColor: '#0f172a',
-                        border: '1px solid #334155',
-                        borderRadius: '8px'
-                    }}
-                />
-                <Area
-                    type="monotone"
-                    dataKey="pnl"
-                    stroke="#00ff88"
-                    fillOpacity={1}
-                    fill="url(#colorPnl)"
-                />
-            </AreaChart>
-        </ResponsiveContainer>
     )
 }
 
@@ -241,8 +160,8 @@ function TradeFeed({ trades }: { trades: Trade[] }) {
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: idx * 0.05 }}
                     className={`p-3 rounded-xl border text-sm transition-all duration-300 hover:scale-105 ${trade.action === 'BUY'
-                            ? 'bg-green-500/10 border-green-500/30 hover:bg-green-500/20'
-                            : 'bg-red-500/10 border-red-500/30 hover:bg-red-500/20'
+                        ? 'bg-green-500/10 border-green-500/30 hover:bg-green-500/20'
+                        : 'bg-red-500/10 border-red-500/30 hover:bg-red-500/20'
                         }`}
                 >
                     <div className="flex items-center justify-between mb-1">
