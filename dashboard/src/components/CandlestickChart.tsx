@@ -31,7 +31,7 @@ const Candlestick = (props: any) => {
     const scale = height / priceRange
 
     const wickX = x + width / 2
-    const bodyWidth = Math.max(width * 0.6, 2)
+    const bodyWidth = Math.max(width * 0.9, 3)  // Increased from 0.6 to 0.9 for thicker candles
     const bodyX = x + (width - bodyWidth) / 2
 
     const highY = y + (high - payload.high) * scale
@@ -48,14 +48,14 @@ const Candlestick = (props: any) => {
                 x2={wickX}
                 y2={lowY}
                 stroke={color}
-                strokeWidth={1}
+                strokeWidth={2}  // Increased from 1 to 2 for thicker wicks
             />
             {/* Body (open-close rectangle) */}
             <rect
                 x={bodyX}
                 y={Math.min(openY, closeY)}
                 width={bodyWidth}
-                height={Math.max(Math.abs(closeY - openY), 1)}
+                height={Math.max(Math.abs(closeY - openY), 2)}  // Minimum height 2 instead of 1
                 fill={color}
                 stroke={color}
                 strokeWidth={1}
@@ -75,7 +75,11 @@ export default function CandlestickChart({ data, height = 400 }: CandlestickChar
         <div className="w-full">
             {/* Main Candlestick Chart */}
             <ResponsiveContainer width="100%" height={height}>
-                <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <ComposedChart
+                    data={chartData}
+                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                    barCategoryGap="5%"  // Reduced gap between candles (default is 10%)
+                >
                     <defs>
                         <linearGradient id="volumeGradient" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="#334155" stopOpacity={0.8} />
@@ -147,7 +151,11 @@ export default function CandlestickChart({ data, height = 400 }: CandlestickChar
 
             {/* Volume Chart */}
             <ResponsiveContainer width="100%" height={80}>
-                <ComposedChart data={chartData} margin={{ top: 0, right: 10, left: 0, bottom: 5 }}>
+                <ComposedChart
+                    data={chartData}
+                    margin={{ top: 0, right: 10, left: 0, bottom: 5 }}
+                    barCategoryGap="5%"  // Match main chart spacing
+                >
                     <XAxis
                         dataKey="time"
                         hide
