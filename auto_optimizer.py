@@ -47,12 +47,12 @@ def auto_optimize_parameters():
         
         avg_pnl = sum(p['pnl_pct'] for p in performance_history[-7:]) / min(7, len(performance_history))
         
-        log(f\"[AUTO-OPT] Daily P&L: {daily_pnl_pct:.2f}% | 7-day avg: {avg_pnl:.2f}% | Target: {DAILY_TARGET_PCT}%\")
+        log(f"[AUTO-OPT] Daily P&L: {daily_pnl_pct:.2f}% | 7-day avg: {avg_pnl:.2f}% | Target: {DAILY_TARGET_PCT}%")
         
         # Adjust parameters based on performance
         if avg_pnl < DAILY_TARGET_PCT * 0.5:
             # Underperforming - increase aggression
-            log(\"[AUTO-OPT] Underperforming - increasing aggression\")
+            log("[AUTO-OPT] Underperforming - increasing aggression")
             
             # Increase position size
             current_params['position_size_mult'] = min(current_params['position_size_mult'] * 1.1, 2.0)
@@ -69,7 +69,7 @@ def auto_optimize_parameters():
             
         elif avg_pnl > DAILY_TARGET_PCT * 1.5:
             # Overperforming - reduce risk to protect gains
-            log(\"[AUTO-OPT] Overperforming - reducing risk\")
+            log("[AUTO-OPT] Overperforming - reducing risk")
             
             # Decrease position size
             current_params['position_size_mult'] = max(current_params['position_size_mult'] * 0.95, 0.5)
@@ -82,19 +82,19 @@ def auto_optimize_parameters():
             
         elif DAILY_TARGET_PCT * 0.8 <= avg_pnl <= DAILY_TARGET_PCT * 1.2:
             # On target - minor adjustments
-            log(\"[AUTO-OPT] On target - maintaining current parameters\")
+            log("[AUTO-OPT] On target - maintaining current parameters")
         
         # Apply optimized parameters
         RISK_PCT_PER_TRADE = current_params['risk_pct']
         
-        log(f\"[AUTO-OPT] Updated params: risk={current_params['risk_pct']:.4f} ml_thresh={current_params['ml_threshold']:.2f} pos_mult={current_params['position_size_mult']:.2f}\")
+        log(f"[AUTO-OPT] Updated params: risk={current_params['risk_pct']:.4f} ml_thresh={current_params['ml_threshold']:.2f} pos_mult={current_params['position_size_mult']:.2f}")
         
         # Save parameters to file
         try:
             import json
             import os
-            os.makedirs(\"/root/ethbot/logs\", exist_ok=True)
-            with open(\"/root/ethbot/logs/optimized_params.json\", \"w\") as f:
+            os.makedirs("/root/ethbot/logs", exist_ok=True)
+            with open("/root/ethbot/logs/optimized_params.json", "w") as f:
                 json.dump({
                     'timestamp': datetime.now(timezone.utc).isoformat(),
                     'params': current_params,
@@ -105,10 +105,10 @@ def auto_optimize_parameters():
                     }
                 }, f, indent=2)
         except Exception as e:
-            log(f\"WARN failed to save params: {e}\")
+            log(f"WARN failed to save params: {e}")
             
     except Exception as e:
-        log(f\"WARN auto-optimization failed: {e}\")
+        log(f"WARN auto-optimization failed: {e}")
 
 
 def generate_demo_market_data(num_candles=1000):
