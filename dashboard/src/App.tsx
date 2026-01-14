@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import {
-  TrendingUp, TrendingDown, Activity, Target,
-  Brain, DollarSign, BarChart3, Zap
-} from 'lucide-react'
+import { Bell, User } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import './App.css'
+
+// Components
+import Sidebar from './components/Sidebar'
+import CandlestickChart from './components/CandlestickChart'
+import TickerBar from './components/TickerBar'
+import MetricCard from './components/MetricCard'
 
 // Types
 interface Trade {
@@ -43,11 +46,44 @@ interface BotStatus {
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws'
 
+// Generate mock candlestick data
+const generateCandlestickData = () => {
+  const data = []
+  let basePrice = 3200
+  const now = Math.floor(Date.now() / 1000)
+
+  for (let i = 100; i >= 0; i--) {
+    const time = (now - (i * 900)) as any // 15-minute intervals
+    const open = basePrice + (Math.random() - 0.5) * 20
+    const close = open + (Math.random() - 0.5) * 30
+    const high = Math.max(open, close) + Math.random() * 15
+    const low = Math.min(open, close) - Math.random() * 15
+
+    data.push({ time, open, high, low, close })
+    basePrice = close
+  }
+
+  return data
+}
+
+// Generate mock ticker data
+const generateTickerData = () => [
+  { symbol: 'ETH', name: 'Ethereum', price: 3230.12, change: 8.24, changePercent: 0.26 },
+  { symbol: 'XRP', name: 'Ripple', price: 0.6039, change: 0.0524, changePercent: 8.78 },
+  { symbol: 'BTC', name: 'Bitcoin', price: 55218.50, change: -621.30, changePercent: -11.38 },
+  { symbol: 'ADA', name: 'Cardano', price: 0.066415, change: 0.0078, changePercent: 18.5 },
+]
+
 function App() {
   const [trades, setTrades] = useState<Trade[]>([])
   const [metrics, setMetrics] = useState<Metrics | null>(null)
   const [status, setStatus] = useState<BotStatus | null>(null)
-  const [connected, setConnected] = useState(false)
+  const [, setConnected] = useState(false)
+  const [candlestickData] = useState(generateCandlestickData())
+  const [tickerData] = useState(generateTickerData())
+  const [timeframe, setTimeframe] = useState('15M')
+
+  const timeframes = ['1M', '5M', '15M', '1H', '4H', '1D']
 
   // Fetch initial data
   useEffect(() => {
@@ -58,7 +94,6 @@ function App() {
 
   // WebSocket connection
   useEffect(() => {
-    // Only attempt WebSocket if URL is properly configured
     if (!WS_URL || WS_URL === 'ws://localhost:8000/ws') {
       console.warn('WebSocket URL not configured for production')
       return
@@ -142,149 +177,139 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white">
-      {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-xl">
-        <div className="container mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
+      {/* Sidebar */}
+      <Sidebar activePage="dashboard" />
+
+      {/* Main Content */}
+      <div className="ml-20">
+        {/* Header */}
+        <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-xl">
+          <div className="px-8 py-4 flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold">Dashboard</h1>
+            </div>
             <div className="flex items-center gap-4">
+              <button className="w-10 h-10 rounded-xl bg-slate-800/50 flex items-center justify-center hover:bg-slate-800 transition-colors">
+                <Bell className="w-5 h-5 text-slate-400" />
+              </button>
+              <button className="w-10 h-10 rounded-xl bg-slate-800/50 flex items-center justify-center hover:bg-slate-800 transition-colors">
+                <User className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+          </div>
+        </header>
+
+        {/* Candlestick Chart Section */}
+        <div className="px-8 py-6">
+          <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-800 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
-                <Zap className="w-8 h-8 text-cyan-400" />
-                <h1 className="text-2xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
-                  ETH Trading Bot
-                </h1>
+                <h2 className="text-lg font-semibold">ETH/USD</h2>
+                <span className="text-cyan-400 text-sm">Live Market Data</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
-                <span className="text-sm text-slate-400">
-                  {connected ? 'Live' : 'Disconnected'}
-                </span>
+                {timeframes.map((tf) => (
+                  <button
+                    key={tf}
+                    onClick={() => setTimeframe(tf)}
+                    className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${timeframe === tf
+                      ? 'bg-cyan-500 text-white'
+                      : 'bg-slate-800/50 text-slate-400 hover:text-white'
+                      }`}
+                  >
+                    {tf}
+                  </button>
+                ))}
               </div>
             </div>
-            <div className="text-sm text-slate-400">
-              {status?.last_update && new Date(status.last_update).toLocaleString()}
-            </div>
+            <CandlestickChart data={candlestickData} />
           </div>
         </div>
-      </header>
 
-      <div className="container mx-auto px-6 py-8">
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <StatCard
-            title="Daily P&L"
-            value={`$${metrics?.daily_pnl.toFixed(2) || '0.00'}`}
-            change={`${((metrics?.daily_pnl || 0) / 10000 * 100).toFixed(2)}%`}
-            trend={metrics?.daily_pnl && metrics.daily_pnl > 0 ? 'up' : 'down'}
-            icon={<DollarSign className="w-6 h-6" />}
-          />
-          <StatCard
-            title="Win Rate"
-            value={`${metrics?.win_rate.toFixed(1) || '0'}%`}
-            subtitle={`${metrics?.winning_trades || 0}/${metrics?.total_trades || 0} trades`}
-            icon={<Target className="w-6 h-6" />}
-            trend={metrics?.win_rate && metrics.win_rate > 60 ? 'up' : 'neutral'}
-          />
-          <StatCard
-            title="ML Confidence"
-            value={(status?.ml_confidence || 0.5).toFixed(2)}
-            subtitle={status?.ml_confidence && status.ml_confidence > 0.6 ? 'High' : 'Medium'}
-            icon={<Brain className="w-6 h-6" />}
-            trend={status?.ml_confidence && status.ml_confidence > 0.6 ? 'up' : 'neutral'}
-          />
-          <StatCard
-            title="Total Trades"
-            value={metrics?.total_trades || 0}
-            subtitle={`${status?.today_trades || 0} today`}
-            icon={<Activity className="w-6 h-6" />}
-          />
-        </div>
+        {/* Ticker Bar */}
+        <TickerBar tickers={tickerData} />
 
-        {/* Main Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Performance Chart */}
-          <div className="lg:col-span-2">
-            <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-800 rounded-2xl p-6">
-              <h2 className="text-xl font-semibold mb-6 flex items-center gap-2">
-                <BarChart3 className="w-5 h-5 text-cyan-400" />
-                Performance Analysis
-              </h2>
-              <PerformanceChart trades={trades} />
+        {/* Metrics Grid & Trade Feed */}
+        <div className="px-8 py-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left: Metrics Grid (2x2) */}
+            <div className="lg:col-span-2 grid grid-cols-2 gap-6">
+              <MetricCard
+                title="Daily P&L"
+                value={`$${metrics?.daily_pnl.toFixed(2) || '0.00'}`}
+                subtitle={`${((metrics?.daily_pnl || 0) / 10000 * 100).toFixed(2)}%`}
+                type="pnl"
+                trend={metrics?.daily_pnl && metrics.daily_pnl > 0 ? 'up' : 'down'}
+              />
+              <MetricCard
+                title="Win Rate"
+                value={`${metrics?.win_rate.toFixed(1) || '0'}%`}
+                type="winrate"
+                percentage={metrics?.win_rate || 0}
+              />
+              <MetricCard
+                title="ML Confidence"
+                value={(status?.ml_confidence || 0.5).toFixed(2)}
+                subtitle={status?.ml_confidence && status.ml_confidence > 0.6 ? 'High' : 'Medium'}
+                type="confidence"
+                percentage={(status?.ml_confidence || 0.5)}
+              />
+              <MetricCard
+                title="Total Trades"
+                value={metrics?.total_trades || 0}
+                subtitle={`${status?.today_trades || 0} today`}
+                type="trades"
+              />
             </div>
-          </div>
 
-          {/* Live Trade Feed */}
-          <div className="lg:col-span-1">
-            <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-800 rounded-2xl p-6">
-              <h2 className="text-xl font-semibold mb-6">Live Trade Feed</h2>
-              <TradeFeed trades={trades.slice(-10).reverse()} />
+            {/* Right: Live Trade Feed */}
+            <div className="lg:col-span-1">
+              <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-800 rounded-2xl p-6 h-full">
+                <div className="bg-cyan-500 text-white px-4 py-2 rounded-lg mb-4 text-center font-semibold">
+                  Live Trades - ETH/USD
+                </div>
+                <TradeFeed trades={trades.slice(-10).reverse()} />
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Additional Metrics */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
-          <MetricCard
-            title="Max Drawdown"
-            value={`${metrics?.max_drawdown.toFixed(2) || '0'}%`}
-            color="red"
-          />
-          <MetricCard
-            title="Sharpe Ratio"
-            value={(metrics?.sharpe_ratio || 0).toFixed(2)}
-            color="blue"
-          />
-          <MetricCard
-            title="ROI"
-            value={`${metrics?.roi.toFixed(2) || '0'}%`}
-            color="green"
-          />
+        {/* Performance Analysis */}
+        <div className="px-8 pb-6">
+          <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-800 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-semibold">Performance Analysis</h2>
+              <select className="bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-2 text-sm">
+                <option>Last 30 days</option>
+                <option>Last 7 days</option>
+                <option>Last 24 hours</option>
+              </select>
+            </div>
+            <PerformanceChart trades={trades} />
+
+            {/* Additional Metrics */}
+            <div className="grid grid-cols-3 gap-6 mt-6">
+              <div>
+                <div className="text-slate-400 text-sm mb-2">Max Drawdown</div>
+                <div className="text-2xl font-bold text-red-400">-{metrics?.max_drawdown.toFixed(2) || '0'}%</div>
+              </div>
+              <div>
+                <div className="text-slate-400 text-sm mb-2">Sharpe Ratio</div>
+                <div className="text-2xl font-bold text-cyan-400">{(metrics?.sharpe_ratio || 0).toFixed(2)}</div>
+              </div>
+              <div>
+                <div className="text-slate-400 text-sm mb-2">Avg. Trade Duration</div>
+                <div className="text-2xl font-bold text-cyan-400">2h min</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   )
 }
 
-// Components
-interface StatCardProps {
-  title: string
-  value: string | number
-  change?: string
-  subtitle?: string
-  trend?: 'up' | 'down' | 'neutral'
-  icon: React.ReactNode
-}
-
-function StatCard({ title, value, change, subtitle, trend, icon }: StatCardProps) {
-  const trendColors: Record<'up' | 'down' | 'neutral', string> = {
-    up: 'text-green-400',
-    down: 'text-red-400',
-    neutral: 'text-slate-400'
-  }
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="bg-slate-900/50 backdrop-blur-xl border border-slate-800 rounded-2xl p-6 hover:border-cyan-500/50 transition-all"
-    >
-      <div className="flex items-start justify-between mb-4">
-        <div className="text-slate-400 text-sm font-medium">{title}</div>
-        <div className={`${trend ? trendColors[trend] : 'text-cyan-400'}`}>
-          {icon}
-        </div>
-      </div>
-      <div className="text-3xl font-bold mb-2">{value}</div>
-      {change && (
-        <div className={`text-sm flex items-center gap-1 ${trendColors[trend || 'neutral']}`}>
-          {trend === 'up' ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-          {change}
-        </div>
-      )}
-      {subtitle && <div className="text-sm text-slate-400 mt-1">{subtitle}</div>}
-    </motion.div>
-  )
-}
-
+// Performance Chart Component
 function PerformanceChart({ trades }: { trades: Trade[] }) {
   const data = trades.reduce((acc: any[], trade, idx) => {
     const prevPnl = idx > 0 ? acc[idx - 1].pnl : 0
@@ -328,6 +353,7 @@ function PerformanceChart({ trades }: { trades: Trade[] }) {
   )
 }
 
+// Trade Feed Component
 function TradeFeed({ trades }: { trades: Trade[] }) {
   return (
     <div className="space-y-3 max-h-[400px] overflow-y-auto custom-scrollbar">
@@ -338,26 +364,26 @@ function TradeFeed({ trades }: { trades: Trade[] }) {
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
-            className={`p-4 rounded-xl border ${trade.action === 'BUY'
+            className={`p-3 rounded-xl border text-sm ${trade.action === 'BUY'
               ? 'bg-green-500/10 border-green-500/30'
               : 'bg-red-500/10 border-red-500/30'
               }`}
           >
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-1">
               <span className={`font-semibold ${trade.action === 'BUY' ? 'text-green-400' : 'text-red-400'
                 }`}>
-                {trade.action}
+                {trade.action} ↗
               </span>
-              <span className="text-sm text-slate-400">
+              <span className="text-xs text-slate-400">
                 {new Date(trade.timestamp).toLocaleTimeString()}
               </span>
             </div>
-            <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center justify-between text-xs">
               <span className="text-slate-300">${trade.price.toFixed(2)}</span>
-              <span className="text-slate-400">{trade.qty.toFixed(4)} ETH</span>
+              <span className="text-slate-400">{trade.qty.toFixed(4)} BTC</span>
             </div>
             {trade.pnl !== undefined && (
-              <div className={`text-sm mt-2 font-medium ${trade.pnl > 0 ? 'text-green-400' : 'text-red-400'
+              <div className={`text-xs mt-1 font-medium ${trade.pnl > 0 ? 'text-green-400' : 'text-red-400'
                 }`}>
                 {trade.pnl > 0 ? '+' : ''}{trade.pnl.toFixed(2)} USDT
               </div>
@@ -365,27 +391,6 @@ function TradeFeed({ trades }: { trades: Trade[] }) {
           </motion.div>
         ))}
       </AnimatePresence>
-    </div>
-  )
-}
-
-interface MetricCardProps {
-  title: string
-  value: string | number
-  color: 'green' | 'red' | 'blue'
-}
-
-function MetricCard({ title, value, color }: MetricCardProps) {
-  const colors: Record<'green' | 'red' | 'blue', string> = {
-    green: 'from-green-500/20 to-green-500/5 border-green-500/30',
-    red: 'from-red-500/20 to-red-500/5 border-red-500/30',
-    blue: 'from-blue-500/20 to-blue-500/5 border-blue-500/30'
-  }
-
-  return (
-    <div className={`bg-gradient-to-br ${colors[color]} border rounded-2xl p-6`}>
-      <div className="text-slate-400 text-sm mb-2">{title}</div>
-      <div className="text-2xl font-bold">{value}</div>
     </div>
   )
 }

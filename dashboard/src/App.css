@@ -12,11 +12,11 @@
   .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
   }
-  
+
   .custom-scrollbar::-webkit-scrollbar-track {
     @apply bg-slate-800/50 rounded-full;
   }
-  
+
   .custom-scrollbar::-webkit-scrollbar-thumb {
     @apply bg-cyan-500/50 rounded-full hover:bg-cyan-500/70;
   }
@@ -40,4 +40,33 @@
 
 .glow-cyan {
   box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+}
+
+/* Circular progress animation */
+@keyframes progress {
+  from {
+    stroke-dashoffset: 201;
+  }
+}
+
+/* Gauge animation */
+@keyframes gauge {
+  from {
+    stroke-dashoffset: 100.5;
+  }
+}
+
+/* Smooth transitions for charts */
+.chart-container {
+  transition: all 0.3s ease-in-out;
+}
+
+/* Card hover effects */
+.metric-card {
+  transition: all 0.2s ease-in-out;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 212, 255, 0.15);
 }
