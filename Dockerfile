@@ -25,7 +25,7 @@ COPY . .
 
 # Build dashboard
 RUN cd dashboard && \
-    npm install --include=dev && \
+    npm install && \
     npm run build && \
     cd ..
 
