@@ -58,30 +58,56 @@ function App() {
 
   // WebSocket connection
   useEffect(() => {
-    const ws = new WebSocket(WS_URL)
-
-    ws.onopen = () => {
-      console.log('WebSocket connected')
-      setConnected(true)
+    // Only attempt WebSocket if URL is properly configured
+    if (!WS_URL || WS_URL === 'ws://localhost:8000/ws') {
+      console.warn('WebSocket URL not configured for production')
+      return
     }
 
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data)
+    try {
+      const ws = new WebSocket(WS_URL)
 
-      if (data.type === 'update') {
-        setStatus(data.status)
-        setMetrics(data.metrics)
-      } else if (data.type === 'new_trade') {
-        setTrades(prev => [...prev, data.trade])
+      ws.onopen = () => {
+        console.log('WebSocket connected')
+        setConnected(true)
       }
-    }
 
-    ws.onclose = () => {
-      console.log('WebSocket disconnected')
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+
+          if (data.type === 'update') {
+            setStatus(data.status)
+            setMetrics(data.metrics)
+          } else if (data.type === 'new_trade') {
+            setTrades(prev => [...prev, data.trade])
+          }
+        } catch (err) {
+          console.error('Failed to parse WebSocket message:', err)
+        }
+      }
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error)
+        setConnected(false)
+      }
+
+      ws.onclose = () => {
+        console.log('WebSocket disconnected')
+        setConnected(false)
+      }
+
+      return () => {
+        try {
+          ws.close()
+        } catch (err) {
+          console.error('Error closing WebSocket:', err)
+        }
+      }
+    } catch (err) {
+      console.error('Failed to create WebSocket:', err)
       setConnected(false)
     }
-
-    return () => ws.close()
   }, [])
 
   const fetchTrades = async () => {
@@ -313,8 +339,8 @@ function TradeFeed({ trades }: { trades: Trade[] }) {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
             className={`p-4 rounded-xl border ${trade.action === 'BUY'
-                ? 'bg-green-500/10 border-green-500/30'
-                : 'bg-red-500/10 border-red-500/30'
+              ? 'bg-green-500/10 border-green-500/30'
+              : 'bg-red-500/10 border-red-500/30'
               }`}
           >
             <div className="flex items-center justify-between mb-2">
