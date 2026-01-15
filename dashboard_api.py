@@ -950,6 +950,63 @@ async def get_trading_mode():
         return {"mode": "paper", "dry_run": True}
 
 
+# ==================== AUTHENTICATION SYSTEM ====================
+from user_manager import UserManager
+
+user_mgr = UserManager()
+security = HTTPBearer()
+
+# Pydantic models for auth
+class UserRegister(BaseModel):
+    email: EmailStr
+    username: str
+    password: str
+
+class UserLogin(BaseModel):
+    email_or_username: str
+    password: str
+
+class PasswordChange(BaseModel):
+    old_password: str
+    new_password: str
+
+# Authentication dependency
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Verify JWT token and return current user"""
+    token = credentials.credentials
+    payload = user_mgr.verify_jwt(token)
+    
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    user = user_mgr.get_user(payload['user_id'])
+    if not user or not user['active']:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    
+    return user
+
+# Optional auth dependency (for public endpoints)
+async def get_current_user_optional(authorization: Optional[str] = Header(None)):
+    """Get current user if token provided, otherwise None"""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    
+    token = authorization.replace("Bearer ", "")
+    payload = user_mgr.verify_jwt(token)
+    
+    if not payload:
+        return None
+    
+    return user_mgr.get_user(payload['user_id'])
+
+# Admin-only dependency
+async def get_current_admin(current_user: dict = Depends(get_current_user)):
+    """Verify user is admin"""
+    if current_user['role'] != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+
 # ==================== ACCOUNT MANAGEMENT ====================
 from account_manager import AccountManager
 
@@ -1262,229 +1319,6 @@ async def get_aggregated_performance():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# ==================== AUTHENTICATION SYSTEM ====================
-from user_manager import UserManager
-
-user_mgr = UserManager()
-security = HTTPBearer()
-
-# Pydantic models for auth
-class UserRegister(BaseModel):
-    email: EmailStr
-    username: str
-    password: str
-
-class UserLogin(BaseModel):
-    email_or_username: str
-    password: str
-
-class PasswordChange(BaseModel):
-    old_password: str
-    new_password: str
-
-# Authentication dependency
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Verify JWT token and return current user"""
-    token = credentials.credentials
-    payload = user_mgr.verify_jwt(token)
-    
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    
-    user = user_mgr.get_user(payload['user_id'])
-    if not user or not user['active']:
-        raise HTTPException(status_code=401, detail="User not found or inactive")
-    
-    return user
-
-# Optional auth dependency (for public endpoints)
-async def get_current_user_optional(authorization: Optional[str] = Header(None)):
-    """Get current user if token provided, otherwise None"""
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    
-    token = authorization.replace("Bearer ", "")
-    payload = user_mgr.verify_jwt(token)
-    
-    if not payload:
-        return None
-    
-    return user_mgr.get_user(payload['user_id'])
-
-# Admin-only dependency
-async def get_current_admin(current_user: dict = Depends(get_current_user)):
-    """Verify user is admin"""
-    if current_user['role'] != 'admin':
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return current_user
-
-# Auth endpoints
-@app.post("/api/auth/register")
-async def register(user_data: UserRegister):
-    """Register a new user"""
-    try:
-        user_id = user_mgr.register_user(
-            email=user_data.email,
-            username=user_data.username,
-            password=user_data.password
-        )
-        
-        return {
-            "status": "success",
-            "message": "User registered successfully",
-            "user_id": user_id
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Registration failed")
-
-@app.post("/api/auth/login")
-async def login(credentials: UserLogin):
-    """Login and get JWT token"""
-    try:
-        result = user_mgr.login(
-            email_or_username=credentials.email_or_username,
-            password=credentials.password
-        )
-        
-        if not result:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        
-        return {
-            "status": "success",
-            "token": result['token'],
-            "user": {
-                "id": result['user_id'],
-                "email": result['email'],
-                "username": result['username'],
-                "role": result['role']
-            }
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Login failed")
-
-@app.post("/api/auth/logout")
-async def logout(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Logout (revoke token)"""
-    token = credentials.credentials
-    user_mgr.logout(token)
-    return {"status": "success", "message": "Logged out successfully"}
-
-@app.get("/api/auth/me")
-async def get_me(current_user: dict = Depends(get_current_user)):
-    """Get current user info"""
-    return current_user
-
-@app.post("/api/auth/change-password")
-async def change_password(
-    password_data: PasswordChange,
-    current_user: dict = Depends(get_current_user)
-):
-    """Change user password"""
-    try:
-        success = user_mgr.change_password(
-            user_id=current_user['id'],
-            old_password=password_data.old_password,
-            new_password=password_data.new_password
-        )
-        
-        if not success:
-            raise HTTPException(status_code=400, detail="Password change failed")
-        
-        return {"status": "success", "message": "Password changed successfully"}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-# User management endpoints (admin only)
-@app.get("/api/admin/users")
-async def list_all_users(admin: dict = Depends(get_current_admin)):
-    """List all users (admin only)"""
-    users = user_mgr.list_users()
-    return {"users": users, "total": len(users)}
-
-@app.post("/api/admin/users/{user_id}/suspend")
-async def suspend_user(user_id: int, admin: dict = Depends(get_current_admin)):
-    """Suspend a user (admin only)"""
-    success = user_mgr.update_user(user_id, active=False)
-    if not success:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"status": "success", "message": "User suspended"}
-
-@app.post("/api/admin/users/{user_id}/activate")
-async def activate_user(user_id: int, admin: dict = Depends(get_current_admin)):
-    """Activate a user (admin only)"""
-    success = user_mgr.update_user(user_id, active=True)
-    if not success:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"status": "success", "message": "User activated"}
-
-@app.delete("/api/admin/users/{user_id}")
-async def delete_user_admin(user_id: int, admin: dict = Depends(get_current_admin)):
-    """Delete a user (admin only)"""
-    if user_id == admin['id']:
-        raise HTTPException(status_code=400, detail="Cannot delete yourself")
-    
-    success = user_mgr.delete_user(user_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"status": "success", "message": "User deleted"}
-
-# Update existing account endpoints to require authentication
-# Modify account_manager imports to include user filtering
-from account_manager import AccountManager
-
-# Override account manager initialization with user context
-original_list_accounts = account_mgr.list_accounts
-
-def list_accounts_for_user(user_id: int, active_only: bool = False):
-    """List accounts filtered by user_id"""
-    import sqlite3
-    from account_manager import ACCOUNTS_DB
-    
-    conn = sqlite3.connect(ACCOUNTS_DB)
-    cursor = conn.cursor()
-    
-    # Note: This requires user_id column in accounts table
-    # Will be added in next migration
-    if active_only:
-        cursor.execute("""
-            SELECT id, name, api_key, capital, dry_run, active, 
-                   created_at, last_active
-            FROM accounts
-            WHERE active = 1
-            ORDER BY created_at DESC
-        """)
-    else:
-        cursor.execute("""
-            SELECT id, name, api_key, capital, dry_run, active, 
-                   created_at, last_active
-            FROM accounts
-            ORDER BY created_at DESC
-        """)
-    
-    rows = cursor.fetchall()
-    conn.close()
-    
-    accounts = []
-    for row in rows:
-        accounts.append({
-            "id": row[0],
-            "name": row[1],
-            "api_key": row[2],
-            "api_secret_masked": "•" * 16,
-            "capital": row[3],
-            "dry_run": bool(row[4]),
-            "active": bool(row[5]),
-            "created_at": row[6],
-            "last_active": row[7]
-        })
-    
-    return accounts
 
 
 if __name__ == "__main__":
