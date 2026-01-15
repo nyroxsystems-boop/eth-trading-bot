@@ -46,14 +46,16 @@ def init_database():
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
+            user_id INTEGER DEFAULT 1,
+            name TEXT NOT NULL,
             api_key TEXT NOT NULL,
             api_secret TEXT NOT NULL,
             capital REAL DEFAULT 10000,
             dry_run BOOLEAN DEFAULT 1,
             active BOOLEAN DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_active TIMESTAMP
+            last_active TIMESTAMP,
+            UNIQUE(user_id, name)
         )
     """)
     
@@ -110,7 +112,7 @@ class AccountManager:
     def __init__(self):
         init_database()
     
-    def create_account(self, name: str, api_key: str, api_secret: str, 
+    def create_account(self, user_id: int, name: str, api_key: str, api_secret: str, 
                       capital: float = 10000, dry_run: bool = True) -> int:
         """Create a new trading account"""
         conn = sqlite3.connect(ACCOUNTS_DB)
@@ -121,9 +123,9 @@ class AccountManager:
             encrypted_secret = encrypt_secret(api_secret)
             
             cursor.execute("""
-                INSERT INTO accounts (name, api_key, api_secret, capital, dry_run, active)
-                VALUES (?, ?, ?, ?, ?, 1)
-            """, (name, api_key, encrypted_secret, capital, dry_run))
+                INSERT INTO accounts (user_id, name, api_key, api_secret, capital, dry_run, active)
+                VALUES (?, ?, ?, ?, ?, ?, 1)
+            """, (user_id, name, api_key, encrypted_secret, capital, dry_run))
             
             account_id = cursor.lastrowid
             
@@ -203,26 +205,45 @@ class AccountManager:
             "last_active": row[8]
         }
     
-    def list_accounts(self, active_only: bool = False) -> List[Dict]:
-        """List all accounts"""
+    def list_accounts(self, user_id: int = None, active_only: bool = False) -> List[Dict]:
+        """List accounts for a specific user"""
         conn = sqlite3.connect(ACCOUNTS_DB)
         cursor = conn.cursor()
         
-        if active_only:
-            cursor.execute("""
-                SELECT id, name, api_key, capital, dry_run, active, 
-                       created_at, last_active
-                FROM accounts
-                WHERE active = 1
-                ORDER BY created_at DESC
-            """)
+        if user_id:
+            if active_only:
+                cursor.execute("""
+                    SELECT id, name, api_key, capital, dry_run, active, 
+                           created_at, last_active
+                    FROM accounts
+                    WHERE user_id = ? AND active = 1
+                    ORDER BY created_at DESC
+                """, (user_id,))
+            else:
+                cursor.execute("""
+                    SELECT id, name, api_key, capital, dry_run, active, 
+                           created_at, last_active
+                    FROM accounts
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC
+                """, (user_id,))
         else:
-            cursor.execute("""
-                SELECT id, name, api_key, capital, dry_run, active, 
-                       created_at, last_active
-                FROM accounts
-                ORDER BY created_at DESC
-            """)
+            # Admin: show all accounts
+            if active_only:
+                cursor.execute("""
+                    SELECT id, name, api_key, capital, dry_run, active, 
+                           created_at, last_active
+                    FROM accounts
+                    WHERE active = 1
+                    ORDER BY created_at DESC
+                """)
+            else:
+                cursor.execute("""
+                    SELECT id, name, api_key, capital, dry_run, active, 
+                           created_at, last_active
+                    FROM accounts
+                    ORDER BY created_at DESC
+                """)
         
         rows = cursor.fetchall()
         conn.close()
