@@ -24,7 +24,8 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 LOG_DIR = Path(os.getenv("LOG_DIR", "/root/ethbot/logs"))
 TRADES_CSV = LOG_DIR / "trades.csv"
 CONSOLE_LOG = LOG_DIR / "console.out"
-DEMO_MODE = False  # Always use real data
+# DEMO_MODE: false = show real trades, true = generate demo data
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
 SETTINGS_FILE = LOG_DIR / "bot_settings.json"
 
 app = FastAPI(title="ETH Bot Dashboard API", version="1.0.0")
