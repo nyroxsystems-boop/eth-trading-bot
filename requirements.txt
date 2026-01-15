@@ -7,6 +7,7 @@ requests==2.31.0
 cryptography
 bcrypt==4.1.2
 PyJWT==2.8.0
+email-validator==2.1.0
 
 # Sentiment Analysis
 nltk==3.8.1
