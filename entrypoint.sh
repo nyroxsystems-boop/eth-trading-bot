@@ -16,6 +16,10 @@ case "${RAILWAY_SERVICE_NAME}" in
     echo "Starting Dashboard API on port ${PORT}..."
     exec uvicorn dashboard_api:app --host 0.0.0.0 --port "${PORT}"
     ;;
+  "auto-learning")
+    echo "Starting Auto-Learning Service..."
+    exec python3 auto_learning_service.py
+    ;;
   "dashboard")
     echo "Starting Dashboard Server on port ${PORT}..."
     # First build the dashboard if not already built
@@ -27,7 +31,7 @@ case "${RAILWAY_SERVICE_NAME}" in
     ;;
   *)
     echo "ERROR: Unknown service '${RAILWAY_SERVICE_NAME}'"
-    echo "Valid services: worker, web, dashboard"
+    echo "Valid services: worker, web, auto-learning, dashboard"
     exit 1
     ;;
 esac

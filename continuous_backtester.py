@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""
+Continuous Backtester - Auto-Learning System
+Tests strategies 24/7 and saves results
+"""
+
+import asyncio
+import aiohttp
+import json
+from datetime import datetime
+from typing import List, Dict, Any
+from pathlib import Path
+import sqlite3
+
+from strategy_generator import StrategyGenerator
+
+class ContinuousBacktester:
+    def __init__(
+        self,
+        api_url: str = "http://localhost:8000",
+        db_path: str = "/root/ethbot/logs/learning.db",
+        strategies_per_hour: int = 10
+    ):
+        self.api_url = api_url
+        self.db_path = Path(db_path)
+        self.strategies_per_hour = strategies_per_hour
+        self.generator = StrategyGenerator()
+        self.init_database()
+    
+    def init_database(self):
+        """Initialize SQLite database for learning"""
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS strategies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                ml_threshold REAL,
+                risk_per_trade REAL,
+                tp_min REAL,
+                tp_max REAL,
+                stop_floor REAL,
+                max_trades_per_day INTEGER,
+                
+                total_trades INTEGER,
+                winning_trades INTEGER,
+                losing_trades INTEGER,
+                win_rate REAL,
+                total_pnl REAL,
+                roi REAL,
+                sharpe_ratio REAL,
+                max_drawdown REAL,
+                
+                score REAL,
+                applied BOOLEAN DEFAULT 0,
+                applied_at DATETIME
+            )
+        """)
+        
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_score ON strategies(score DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON strategies(timestamp DESC)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_applied ON strategies(applied, score DESC)")
+        
+        conn.commit()
+        conn.close()
+    
+    async def backtest_strategy(self, strategy: Dict[str, Any]) -> Dict[str, Any]:
+        """Run backtest for a single strategy"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.api_url}/api/backtest",
+                    json=strategy,
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        print(f"Backtest failed: {response.status}")
+                        return None
+        except Exception as e:
+            print(f"Error backtesting strategy: {e}")
+            return None
+    
+    def calculate_score(self, metrics: Dict[str, Any]) -> float:
+        """
+        Calculate strategy score based on multiple metrics
+        Higher is better
+        """
+        if not metrics:
+            return 0.0
+        
+        score = 0.0
+        
+        # Win Rate (30% weight) - Target: 55-65%
+        win_rate = metrics.get('win_rate', 0)
+        score += win_rate * 0.30
+        
+        # ROI (25% weight) - Target: 3-10%
+        roi = metrics.get('roi', 0)
+        score += roi * 2.5
+        
+        # Sharpe Ratio (20% weight) - Target: 1.5-3.0
+        sharpe = metrics.get('sharpe_ratio', 0)
+        score += sharpe * 10
+        
+        # Max Drawdown (15% weight, negative) - Target: < 10%
+        max_dd = metrics.get('max_drawdown', 0)
+        score -= max_dd * 0.15
+        
+        # Total Trades (10% weight) - Target: 50-100
+        total_trades = metrics.get('total_trades', 0)
+        score += min(total_trades / 100, 1.0) * 10
+        
+        return score
+    
+    def save_result(self, strategy: Dict[str, Any], metrics: Dict[str, Any], score: float):
+        """Save backtest result to database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            INSERT INTO strategies (
+                ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                total_trades, winning_trades, losing_trades, win_rate, total_pnl, roi,
+                sharpe_ratio, max_drawdown, score
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            strategy['ml_threshold'],
+            strategy['risk_per_trade'],
+            strategy['tp_min'],
+            strategy['tp_max'],
+            strategy['stop_floor'],
+            strategy['max_trades_per_day'],
+            metrics.get('total_trades', 0),
+            metrics.get('winning_trades', 0),
+            metrics.get('losing_trades', 0),
+            metrics.get('win_rate', 0),
+            metrics.get('total_pnl', 0),
+            metrics.get('roi', 0),
+            metrics.get('sharpe_ratio', 0),
+            metrics.get('max_drawdown', 0),
+            score
+        ))
+        
+        conn.commit()
+        conn.close()
+    
+    def get_top_strategies(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get top performing strategies"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                   total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score
+            FROM strategies
+            ORDER BY score DESC
+            LIMIT ?
+        """, (limit,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        strategies = []
+        for row in rows:
+            strategies.append({
+                'params': {
+                    'ml_threshold': row[0],
+                    'risk_per_trade': row[1],
+                    'tp_min': row[2],
+                    'tp_max': row[3],
+                    'stop_floor': row[4],
+                    'max_trades_per_day': row[5]
+                },
+                'metrics': {
+                    'total_trades': row[6],
+                    'win_rate': row[7],
+                    'roi': row[8],
+                    'sharpe_ratio': row[9],
+                    'max_drawdown': row[10]
+                },
+                'score': row[11]
+            })
+        
+        return strategies
+    
+    async def run_cycle(self):
+        """Run one backtest cycle"""
+        print(f"\n[{datetime.now()}] Starting backtest cycle...")
+        
+        # Get top strategies for guided generation
+        top_strategies = self.get_top_strategies(5)
+        
+        # Generate new strategies
+        strategies = self.generator.generate_strategies(
+            count=self.strategies_per_hour,
+            best_strategies=top_strategies if top_strategies else None
+        )
+        
+        print(f"Generated {len(strategies)} strategies to test")
+        
+        # Test each strategy
+        results = []
+        for i, strategy in enumerate(strategies, 1):
+            print(f"  Testing strategy {i}/{len(strategies)}...", end=" ")
+            
+            metrics = await self.backtest_strategy(strategy)
+            
+            if metrics:
+                score = self.calculate_score(metrics)
+                self.save_result(strategy, metrics, score)
+                results.append({
+                    'params': strategy,
+                    'metrics': metrics,
+                    'score': score
+                })
+                print(f"Score: {score:.2f}, Win Rate: {metrics['win_rate']:.1f}%, ROI: {metrics['roi']:.2f}%")
+            else:
+                print("FAILED")
+        
+        # Show best from this cycle
+        if results:
+            best = max(results, key=lambda x: x['score'])
+            print(f"\nBest this cycle:")
+            print(f"  Score: {best['score']:.2f}")
+            print(f"  Win Rate: {best['metrics']['win_rate']:.1f}%")
+            print(f"  ROI: {best['metrics']['roi']:.2f}%")
+            print(f"  Sharpe: {best['metrics']['sharpe_ratio']:.2f}")
+        
+        print(f"Cycle complete. Tested {len(results)} strategies.")
+    
+    async def run_continuous(self):
+        """Run continuous backtesting loop"""
+        print("Starting continuous backtester...")
+        print(f"Testing {self.strategies_per_hour} strategies per hour")
+        
+        while True:
+            try:
+                await self.run_cycle()
+                
+                # Wait 1 hour
+                print(f"Waiting 1 hour until next cycle...\n")
+                await asyncio.sleep(3600)
+                
+            except Exception as e:
+                print(f"Error in backtest cycle: {e}")
+                await asyncio.sleep(60)  # Wait 1 minute on error
+
+if __name__ == "__main__":
+    backtester = ContinuousBacktester()
+    asyncio.run(backtester.run_continuous())

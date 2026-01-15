@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""
+Strategy Generator - Auto-Learning System
+Generates parameter combinations for testing
+"""
+
+import random
+import json
+from typing import List, Dict, Any
+from pathlib import Path
+
+class StrategyGenerator:
+    def __init__(self, learning_db_path: str = "/root/ethbot/logs/learning.db"):
+        self.db_path = Path(learning_db_path)
+        self.parameter_ranges = {
+            'ml_threshold': (0.30, 0.70),
+            'risk_per_trade': (0.003, 0.020),
+            'tp_min': (0.005, 0.020),
+            'tp_max': (0.010, 0.030),
+            'stop_floor': (0.003, 0.015),
+            'max_trades_per_day': (5, 30)
+        }
+    
+    def generate_random_strategy(self) -> Dict[str, Any]:
+        """Generate completely random strategy"""
+        return {
+            'ml_threshold': random.uniform(*self.parameter_ranges['ml_threshold']),
+            'risk_per_trade': random.uniform(*self.parameter_ranges['risk_per_trade']),
+            'tp_min': random.uniform(*self.parameter_ranges['tp_min']),
+            'tp_max': random.uniform(*self.parameter_ranges['tp_max']),
+            'stop_floor': random.uniform(*self.parameter_ranges['stop_floor']),
+            'max_trades_per_day': random.randint(*self.parameter_ranges['max_trades_per_day'])
+        }
+    
+    def mutate_strategy(self, strategy: Dict[str, Any], mutation_rate: float = 0.1) -> Dict[str, Any]:
+        """Mutate strategy by small random changes"""
+        mutated = strategy.copy()
+        
+        for param, (min_val, max_val) in self.parameter_ranges.items():
+            if random.random() < mutation_rate:
+                if param == 'max_trades_per_day':
+                    # Integer parameter
+                    change = random.randint(-3, 3)
+                    mutated[param] = max(min_val, min(max_val, strategy[param] + change))
+                else:
+                    # Float parameter
+                    change = random.uniform(-0.05, 0.05)
+                    mutated[param] = max(min_val, min(max_val, strategy[param] * (1 + change)))
+        
+        return mutated
+    
+    def crossover(self, parent1: Dict[str, Any], parent2: Dict[str, Any]) -> Dict[str, Any]:
+        """Combine two strategies"""
+        child = {}
+        
+        for param in self.parameter_ranges.keys():
+            # Randomly pick from parent1 or parent2
+            if random.random() < 0.5:
+                child[param] = parent1[param]
+            else:
+                child[param] = parent2[param]
+        
+        return child
+    
+    def generate_strategies(self, count: int = 10, best_strategies: List[Dict] = None) -> List[Dict[str, Any]]:
+        """
+        Generate mix of strategies:
+        - 50% Random exploration
+        - 30% Mutation of best
+        - 20% Crossover
+        """
+        strategies = []
+        
+        # Random exploration (50%)
+        random_count = count // 2
+        for _ in range(random_count):
+            strategies.append(self.generate_random_strategy())
+        
+        # If we have best strategies, use them for mutation and crossover
+        if best_strategies and len(best_strategies) >= 2:
+            # Mutation (30%)
+            mutation_count = count // 3
+            for _ in range(mutation_count):
+                parent = random.choice(best_strategies)
+                mutated = self.mutate_strategy(parent['params'], mutation_rate=0.15)
+                strategies.append(mutated)
+            
+            # Crossover (20%)
+            crossover_count = count - len(strategies)
+            for _ in range(crossover_count):
+                parent1 = random.choice(best_strategies)
+                parent2 = random.choice(best_strategies)
+                child = self.crossover(parent1['params'], parent2['params'])
+                strategies.append(child)
+        else:
+            # Fill remaining with random
+            while len(strategies) < count:
+                strategies.append(self.generate_random_strategy())
+        
+        return strategies
+    
+    def generate_focused_strategies(self, best_strategy: Dict[str, Any], count: int = 5) -> List[Dict[str, Any]]:
+        """Generate strategies focused around the best one"""
+        strategies = []
+        
+        for _ in range(count):
+            # Small mutations around best
+            mutated = self.mutate_strategy(best_strategy, mutation_rate=0.05)
+            strategies.append(mutated)
+        
+        return strategies
+
+if __name__ == "__main__":
+    # Test
+    gen = StrategyGenerator()
+    
+    # Generate random strategies
+    strategies = gen.generate_strategies(10)
+    
+    print("Generated 10 strategies:")
+    for i, s in enumerate(strategies, 1):
+        print(f"\nStrategy {i}:")
+        print(f"  ML Threshold: {s['ml_threshold']:.3f}")
+        print(f"  Risk: {s['risk_per_trade']:.4f}")
+        print(f"  TP: {s['tp_min']:.3f} - {s['tp_max']:.3f}")
+        print(f"  SL: {s['stop_floor']:.3f}")
+        print(f"  Max Trades: {s['max_trades_per_day']}")
