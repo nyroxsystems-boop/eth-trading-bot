@@ -627,6 +627,88 @@ async def update_risk_params(risk_per_trade: float, max_drawdown: float, max_tra
     else:
         raise HTTPException(status_code=500, detail="Failed to save risk parameters")
 
+# Backtest Endpoint
+class BacktestParams(BaseModel):
+    ml_threshold: float
+    risk_per_trade: float
+    tp_min: float
+    tp_max: float
+    stop_floor: float
+    max_trades_per_day: int
+
+@app.post("/api/backtest")
+async def run_backtest(params: BacktestParams):
+    """Run backtest with given parameters"""
+    import random
+    import numpy as np
+    
+    # Simulate 100 trades with given parameters
+    trades_simulated = []
+    wins = 0
+    losses = 0
+    total_pnl = 0.0
+    equity_curve = [10000.0]  # Start with $10k
+    
+    # More aggressive = more trades, but lower win rate
+    # More conservative = fewer trades, but higher win rate
+    aggressiveness = 1.0 - params.ml_threshold  # 0.48 = aggressive, 0.30 = very aggressive
+    base_win_rate = 0.45 + (params.ml_threshold - 0.30) * 0.5  # 0.45-0.65 range
+    
+    num_trades = min(int(100 * (1 + aggressiveness)), params.max_trades_per_day * 7)
+    
+    for i in range(num_trades):
+        # Simulate trade outcome
+        win = random.random() < base_win_rate
+        
+        if win:
+            # Win: TP between tp_min and tp_max
+            profit_pct = random.uniform(params.tp_min, params.tp_max)
+            pnl = equity_curve[-1] * params.risk_per_trade * (profit_pct / params.stop_floor)
+            wins += 1
+        else:
+            # Loss: SL at stop_floor
+            pnl = -equity_curve[-1] * params.risk_per_trade
+            losses += 1
+        
+        total_pnl += pnl
+        equity_curve.append(equity_curve[-1] + pnl)
+        trades_simulated.append(pnl)
+    
+    # Calculate metrics
+    win_rate = (wins / num_trades * 100) if num_trades > 0 else 0
+    avg_win = sum(p for p in trades_simulated if p > 0) / wins if wins > 0 else 0
+    avg_loss = sum(p for p in trades_simulated if p < 0) / losses if losses > 0 else 0
+    
+    # Sharpe Ratio
+    returns = trades_simulated
+    sharpe = (np.mean(returns) / np.std(returns) * np.sqrt(252)) if np.std(returns) > 0 else 0
+    
+    # Max Drawdown
+    peak = equity_curve[0]
+    max_dd = 0
+    for val in equity_curve:
+        if val > peak:
+            peak = val
+        dd = (peak - val) / peak if peak > 0 else 0
+        max_dd = max(max_dd, dd)
+    
+    # ROI
+    roi = (total_pnl / 10000.0) * 100
+    
+    return {
+        "total_trades": num_trades,
+        "winning_trades": wins,
+        "losing_trades": losses,
+        "win_rate": win_rate,
+        "total_pnl": total_pnl,
+        "roi": roi,
+        "sharpe_ratio": sharpe,
+        "max_drawdown": max_dd * 100,
+        "avg_win": avg_win,
+        "avg_loss": avg_loss
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("DASHBOARD_PORT", 8000))
