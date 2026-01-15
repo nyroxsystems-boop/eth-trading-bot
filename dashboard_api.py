@@ -24,7 +24,8 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 LOG_DIR = Path(os.getenv("LOG_DIR", "/root/ethbot/logs"))
 TRADES_CSV = LOG_DIR / "trades.csv"
 CONSOLE_LOG = LOG_DIR / "console.out"
-DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+DEMO_MODE = False  # Always use real data
+SETTINGS_FILE = LOG_DIR / "bot_settings.json"
 
 app = FastAPI(title="ETH Bot Dashboard API", version="1.0.0")
 
@@ -414,7 +415,219 @@ async def monitor_trades():
         
         await asyncio.sleep(1)
 
+# Settings Management
+class BotSettings(BaseModel):
+    telegram_bot_token: str
+    telegram_chat_id: str
+    binance_api_key: str
+    binance_api_secret: str
+    trading_capital: float
+    risk_per_trade: float
+    max_trades_per_day: int
+    daily_target_pct: float
+    max_drawdown_day: float
+    dry_run: bool
+
+class TelegramSettings(BaseModel):
+    bot_token: str
+    chat_id: str
+
+class TradingSettings(BaseModel):
+    capital: float
+    risk_per_trade: float
+    max_trades_per_day: int
+    daily_target_pct: float
+    max_drawdown_day: float
+    tp_min: float
+    tp_max: float
+    stop_floor: float
+
+def load_settings() -> dict:
+    """Load settings from file or environment"""
+    try:
+        if SETTINGS_FILE.exists():
+            with open(SETTINGS_FILE, 'r') as f:
+                return json.load(f)
+    except:
+        pass
+    
+    # Default from environment
+    return {
+        "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
+        "telegram_chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
+        "binance_api_key": os.getenv("BINANCE_API_KEY", ""),
+        "binance_api_secret": os.getenv("BINANCE_API_SECRET", ""),
+        "trading_capital": float(os.getenv("PAPER_BASE_USDT", "10000")),
+        "risk_per_trade": float(os.getenv("RISK_PCT_PER_TRADE", "0.006")),
+        "max_trades_per_day": int(os.getenv("MAX_TRADES_PER_DAY", "15")),
+        "daily_target_pct": float(os.getenv("DAILY_TARGET_PCT", "1.0")),
+        "max_drawdown_day": float(os.getenv("MAX_DRAWDOWN_DAY", "0.05")),
+        "tp_min": float(os.getenv("TP_MIN", "0.010")),
+        "tp_max": float(os.getenv("TP_MAX", "0.015")),
+        "stop_floor": float(os.getenv("STOP_FLOOR", "0.005")),
+        "dry_run": os.getenv("DRY_RUN", "false").lower() == "true"
+    }
+
+def save_settings(settings: dict):
+    """Save settings to file"""
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(SETTINGS_FILE, 'w') as f:
+            json.dump(settings, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"Error saving settings: {e}")
+        return False
+
+@app.get("/api/settings/bot")
+async def get_bot_settings():
+    """Get all bot settings"""
+    settings = load_settings()
+    # Mask sensitive data
+    if settings.get("binance_api_secret"):
+        settings["binance_api_secret"] = "•" * 16
+    return settings
+
+@app.post("/api/settings/bot")
+async def update_bot_settings(settings: BotSettings):
+    """Update bot settings"""
+    current = load_settings()
+    
+    # Update with new values
+    current.update({
+        "telegram_bot_token": settings.telegram_bot_token,
+        "telegram_chat_id": settings.telegram_chat_id,
+        "trading_capital": settings.trading_capital,
+        "risk_per_trade": settings.risk_per_trade,
+        "max_trades_per_day": settings.max_trades_per_day,
+        "daily_target_pct": settings.daily_target_pct,
+        "max_drawdown_day": settings.max_drawdown_day,
+        "dry_run": settings.dry_run
+    })
+    
+    # Only update API keys if not masked
+    if not settings.binance_api_secret.startswith("•"):
+        current["binance_api_key"] = settings.binance_api_key
+        current["binance_api_secret"] = settings.binance_api_secret
+    
+    if save_settings(current):
+        return {"status": "success", "message": "Settings updated"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to save settings")
+
+@app.get("/api/settings/telegram")
+async def get_telegram_settings():
+    """Get Telegram settings"""
+    settings = load_settings()
+    return {
+        "bot_token": settings.get("telegram_bot_token", ""),
+        "chat_id": settings.get("telegram_chat_id", "")
+    }
+
+@app.post("/api/settings/telegram")
+async def update_telegram_settings(telegram: TelegramSettings):
+    """Update Telegram settings"""
+    current = load_settings()
+    current["telegram_bot_token"] = telegram.bot_token
+    current["telegram_chat_id"] = telegram.chat_id
+    
+    if save_settings(current):
+        return {"status": "success", "message": "Telegram settings updated"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to save settings")
+
+@app.get("/api/settings/trading")
+async def get_trading_settings():
+    """Get trading parameters"""
+    settings = load_settings()
+    return {
+        "capital": settings.get("trading_capital", 10000),
+        "risk_per_trade": settings.get("risk_per_trade", 0.006),
+        "max_trades_per_day": settings.get("max_trades_per_day", 15),
+        "daily_target_pct": settings.get("daily_target_pct", 1.0),
+        "max_drawdown_day": settings.get("max_drawdown_day", 0.05),
+        "tp_min": settings.get("tp_min", 0.010),
+        "tp_max": settings.get("tp_max", 0.015),
+        "stop_floor": settings.get("stop_floor", 0.005)
+    }
+
+@app.post("/api/settings/trading")
+async def update_trading_settings(trading: TradingSettings):
+    """Update trading parameters"""
+    current = load_settings()
+    current.update({
+        "trading_capital": trading.capital,
+        "risk_per_trade": trading.risk_per_trade,
+        "max_trades_per_day": trading.max_trades_per_day,
+        "daily_target_pct": trading.daily_target_pct,
+        "max_drawdown_day": trading.max_drawdown_day,
+        "tp_min": trading.tp_min,
+        "tp_max": trading.tp_max,
+        "stop_floor": trading.stop_floor
+    })
+    
+    if save_settings(current):
+        return {"status": "success", "message": "Trading settings updated"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to save settings")
+
+@app.get("/api/capital")
+async def get_capital():
+    """Get current trading capital"""
+    settings = load_settings()
+    return {
+        "capital": settings.get("trading_capital", 10000),
+        "currency": "USDT"
+    }
+
+@app.post("/api/capital")
+async def update_capital(capital: float):
+    """Update trading capital"""
+    if capital <= 0:
+        raise HTTPException(status_code=400, detail="Capital must be positive")
+    
+    current = load_settings()
+    current["trading_capital"] = capital
+    
+    if save_settings(current):
+        return {"status": "success", "message": f"Capital updated to ${capital:,.2f}"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to save capital")
+
+@app.get("/api/risk")
+async def get_risk_params():
+    """Get risk parameters"""
+    settings = load_settings()
+    return {
+        "risk_per_trade": settings.get("risk_per_trade", 0.006),
+        "max_drawdown_day": settings.get("max_drawdown_day", 0.05),
+        "max_trades_per_day": settings.get("max_trades_per_day", 15)
+    }
+
+@app.post("/api/risk")
+async def update_risk_params(risk_per_trade: float, max_drawdown: float, max_trades: int):
+    """Update risk parameters"""
+    if not (0 < risk_per_trade <= 0.02):
+        raise HTTPException(status_code=400, detail="Risk per trade must be between 0% and 2%")
+    if not (0 < max_drawdown <= 0.2):
+        raise HTTPException(status_code=400, detail="Max drawdown must be between 0% and 20%")
+    if not (1 <= max_trades <= 100):
+        raise HTTPException(status_code=400, detail="Max trades must be between 1 and 100")
+    
+    current = load_settings()
+    current.update({
+        "risk_per_trade": risk_per_trade,
+        "max_drawdown_day": max_drawdown,
+        "max_trades_per_day": max_trades
+    })
+    
+    if save_settings(current):
+        return {"status": "success", "message": "Risk parameters updated"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to save risk parameters")
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("DASHBOARD_PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
