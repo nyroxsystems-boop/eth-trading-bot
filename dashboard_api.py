@@ -708,6 +708,246 @@ async def run_backtest(params: BacktestParams):
         "avg_loss": avg_loss
     }
 
+# Learning API Endpoints
+LEARNING_DB = Path(os.getenv("LOG_DIR", "/root/ethbot/logs")) / "learning.db"
+
+@app.get("/api/learning/stats")
+async def get_learning_stats():
+    """Get auto-learning statistics"""
+    try:
+        if not LEARNING_DB.exists():
+            return {
+                "total_tested": 0,
+                "best_score": 0,
+                "total_applied": 0,
+                "today_tested": 0,
+                "this_hour_tested": 0
+            }
+        
+        conn = sqlite3.connect(LEARNING_DB)
+        cursor = conn.cursor()
+        
+        # Total strategies tested
+        cursor.execute("SELECT COUNT(*) FROM strategies")
+        total_tested = cursor.fetchone()[0] or 0
+        
+        # Best score ever
+        cursor.execute("SELECT MAX(score) FROM strategies")
+        best_score = cursor.fetchone()[0] or 0
+        
+        # Applied strategies
+        cursor.execute("SELECT COUNT(*) FROM strategies WHERE applied = 1")
+        total_applied = cursor.fetchone()[0] or 0
+        
+        # Today's tests
+        cursor.execute("""
+            SELECT COUNT(*) FROM strategies 
+            WHERE DATE(timestamp) = DATE('now')
+        """)
+        today_tested = cursor.fetchone()[0] or 0
+        
+        # This hour's tests
+        cursor.execute("""
+            SELECT COUNT(*) FROM strategies 
+            WHERE datetime(timestamp) >= datetime('now', '-1 hour')
+        """)
+        this_hour_tested = cursor.fetchone()[0] or 0
+        
+        conn.close()
+        
+        return {
+            "total_tested": total_tested,
+            "best_score": round(best_score, 2),
+            "total_applied": total_applied,
+            "today_tested": today_tested,
+            "this_hour_tested": this_hour_tested
+        }
+    except Exception as e:
+        print(f"Error getting learning stats: {e}")
+        return {
+            "total_tested": 0,
+            "best_score": 0,
+            "total_applied": 0,
+            "today_tested": 0,
+            "this_hour_tested": 0
+        }
+
+@app.get("/api/learning/strategies")
+async def get_top_strategies(limit: int = 10):
+    """Get top performing strategies"""
+    try:
+        if not LEARNING_DB.exists():
+            return []
+        
+        conn = sqlite3.connect(LEARNING_DB)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                   total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score, timestamp, applied
+            FROM strategies
+            ORDER BY score DESC
+            LIMIT ?
+        """, (limit,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        strategies = []
+        for row in rows:
+            strategies.append({
+                "params": {
+                    "ml_threshold": round(row[0], 3),
+                    "risk_per_trade": round(row[1], 4),
+                    "tp_min": round(row[2], 3),
+                    "tp_max": round(row[3], 3),
+                    "stop_floor": round(row[4], 3),
+                    "max_trades_per_day": row[5]
+                },
+                "metrics": {
+                    "total_trades": row[6],
+                    "win_rate": round(row[7], 1),
+                    "roi": round(row[8], 2),
+                    "sharpe_ratio": round(row[9], 2),
+                    "max_drawdown": round(row[10], 2)
+                },
+                "score": round(row[11], 2),
+                "timestamp": row[12],
+                "applied": bool(row[13])
+            })
+        
+        return strategies
+    except Exception as e:
+        print(f"Error getting top strategies: {e}")
+        return []
+
+@app.get("/api/learning/evolution")
+async def get_strategy_evolution(days: int = 7):
+    """Get strategy score evolution over time"""
+    try:
+        if not LEARNING_DB.exists():
+            return []
+        
+        conn = sqlite3.connect(LEARNING_DB)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT DATE(timestamp) as date, MAX(score) as best_score
+            FROM strategies
+            WHERE datetime(timestamp) >= datetime('now', '-' || ? || ' days')
+            GROUP BY DATE(timestamp)
+            ORDER BY date ASC
+        """, (days,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        evolution = []
+        for row in rows:
+            evolution.append({
+                "date": row[0],
+                "best_score": round(row[1], 2)
+            })
+        
+        return evolution
+    except Exception as e:
+        print(f"Error getting evolution: {e}")
+        return []
+
+@app.get("/api/learning/current")
+async def get_current_strategy():
+    """Get currently applied strategy"""
+    try:
+        if not LEARNING_DB.exists():
+            return None
+        
+        conn = sqlite3.connect(LEARNING_DB)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                   total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score, applied_at
+            FROM strategies
+            WHERE applied = 1
+            ORDER BY applied_at DESC
+            LIMIT 1
+        """)
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return None
+        
+        return {
+            "params": {
+                "ml_threshold": round(row[0], 3),
+                "risk_per_trade": round(row[1], 4),
+                "tp_min": round(row[2], 3),
+                "tp_max": round(row[3], 3),
+                "stop_floor": round(row[4], 3),
+                "max_trades_per_day": row[5]
+            },
+            "metrics": {
+                "total_trades": row[6],
+                "win_rate": round(row[7], 1),
+                "roi": round(row[8], 2),
+                "sharpe_ratio": round(row[9], 2),
+                "max_drawdown": round(row[10], 2)
+            },
+            "score": round(row[11], 2),
+            "applied_at": row[12]
+        }
+    except Exception as e:
+        print(f"Error getting current strategy: {e}")
+        return None
+
+# Trading Mode Switch
+class TradingMode(BaseModel):
+    mode: str  # "paper" or "live"
+
+@app.post("/api/trading/mode")
+async def switch_trading_mode(mode_data: TradingMode):
+    """Switch between paper and live trading"""
+    mode = mode_data.mode.lower()
+    
+    if mode not in ["paper", "live"]:
+        raise HTTPException(status_code=400, detail="Invalid mode. Must be 'paper' or 'live'")
+    
+    try:
+        # Load current settings
+        settings = load_settings()
+        
+        # Update DRY_RUN
+        settings['dry_run'] = (mode == "paper")
+        
+        # Save settings
+        if save_settings(settings):
+            return {
+                "status": "success",
+                "mode": mode,
+                "message": f"Switched to {mode.upper()} trading. Bot will use new mode on next trade."
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to save settings")
+    except Exception as e:
+        print(f"Error switching mode: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/trading/mode")
+async def get_trading_mode():
+    """Get current trading mode"""
+    try:
+        settings = load_settings()
+        is_paper = settings.get('dry_run', True)
+        return {
+            "mode": "paper" if is_paper else "live",
+            "dry_run": is_paper
+        }
+    except Exception as e:
+        print(f"Error getting mode: {e}")
+        return {"mode": "paper", "dry_run": True}
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -10,6 +10,7 @@ import Sidebar from './components/Sidebar'
 // Views
 import DashboardView from './views/DashboardView'
 import PortfolioView from './views/PortfolioView'
+import LearningView from './views/LearningView'
 import BotsView from './views/BotsView'
 import SettingsView from './views/SettingsView'
 import StrategyLabView from './views/StrategyLabView'
@@ -192,6 +193,7 @@ function App() {
               />
             )}
             {activePage === 'portfolio' && <PortfolioView key="portfolio" />}
+            {activePage === 'learning' && <LearningView key="learning" />}
             {activePage === 'bots' && <BotsView key="bots" />}
             {activePage === 'lab' && <StrategyLabView key="lab" />}
             {activePage === 'settings' && <SettingsView key="settings" />}
