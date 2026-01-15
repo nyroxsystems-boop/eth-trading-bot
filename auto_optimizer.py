@@ -55,9 +55,30 @@ def auto_optimize_parameters():
         avg_pnl = sum(p['pnl_pct'] for p in performance_history[-7:]) / min(7, len(performance_history))
         
         log(f"[AUTO-OPT] Daily P&L: {daily_pnl_pct:.2f}% | 7-day avg: {avg_pnl:.2f}% | Target: {DAILY_TARGET_PCT}%")
+        log(f"[AUTO-OPT] Trades today: {today_trades}")
+        
+        # CRITICAL: Check if no trades are happening (parameters too strict)
+        if today_trades == 0:
+            log("[AUTO-OPT] ⚠️ ZERO TRADES TODAY - Parameters too strict! Relaxing entry criteria...")
+            
+            # Aggressively relax entry criteria
+            current_params['ml_threshold'] = max(current_params.get('ml_threshold', 0.52) * 0.85, 0.35)
+            log(f"[AUTO-OPT] Lowered ML threshold to {current_params['ml_threshold']:.2f}")
+            
+            # Also check recent history for consistent zero trades
+            recent_trades = [p.get('trades', 0) for p in performance_history[-3:]]
+            if all(t == 0 for t in recent_trades):
+                log("[AUTO-OPT] ⚠️ NO TRADES FOR 3 DAYS! Emergency parameter relaxation...")
+                
+                # Emergency relaxation
+                current_params['ml_threshold'] = 0.30  # Very low threshold
+                current_params['position_size_mult'] = min(current_params.get('position_size_mult', 1.0) * 1.2, 2.0)
+                current_params['risk_pct'] = min(current_params.get('risk_pct', 0.006) * 1.1, 0.012)
+                
+                log(f"[AUTO-OPT] Emergency params: ml_thresh=0.30, pos_mult={current_params['position_size_mult']:.2f}, risk={current_params['risk_pct']:.4f}")
         
         # Adjust parameters based on performance
-        if avg_pnl < DAILY_TARGET_PCT * 0.5:
+        elif avg_pnl < DAILY_TARGET_PCT * 0.5:
             # Underperforming - increase aggression
             log("[AUTO-OPT] Underperforming - increasing aggression")
             
