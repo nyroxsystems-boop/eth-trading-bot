@@ -971,23 +971,39 @@ class AccountUpdate(BaseModel):
     active: Optional[bool] = None
 
 @app.get("/api/accounts")
-async def list_accounts(active_only: bool = False):
-    """List all trading accounts"""
+async def list_accounts(
+    active_only: bool = False,
+    current_user: dict = Depends(get_current_user)
+):
+    """List all trading accounts for current user"""
     try:
-        accounts = account_mgr.list_accounts(active_only=active_only)
+        accounts = account_mgr.list_accounts(
+            user_id=current_user['id'],
+            active_only=active_only
+        )
         return {"accounts": accounts, "total": len(accounts)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/accounts")
-async def create_account(account: AccountCreate):
-    """Create a new trading account"""
+async def create_account(
+    account: AccountCreate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Create a new trading account for current user"""
     try:
+        # Check subscription limits
+        from subscription_manager import enforce_tier_limits
+        allowed, message = enforce_tier_limits(current_user['id'], 'add_account')
+        if not allowed:
+            raise HTTPException(status_code=403, detail=message)
+        
         # Validate credentials first
         if not account_mgr.validate_credentials(account.api_key, account.api_secret):
             raise HTTPException(status_code=400, detail="Invalid Binance API credentials")
         
         account_id = account_mgr.create_account(
+            user_id=current_user['id'],
             name=account.name,
             api_key=account.api_key,
             api_secret=account.api_secret,
