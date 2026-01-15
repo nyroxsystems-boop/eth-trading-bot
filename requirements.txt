@@ -4,6 +4,7 @@ numpy==1.26.2
 ta==0.11.0
 scikit-learn==1.3.2
 requests==2.31.0
+cryptography
 
 # Sentiment Analysis
 nltk==3.8.1

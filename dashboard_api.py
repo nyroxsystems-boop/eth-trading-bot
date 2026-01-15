@@ -949,6 +949,304 @@ async def get_trading_mode():
         return {"mode": "paper", "dry_run": True}
 
 
+# ==================== ACCOUNT MANAGEMENT ====================
+from account_manager import AccountManager
+
+account_mgr = AccountManager()
+
+class AccountCreate(BaseModel):
+    name: str
+    api_key: str
+    api_secret: str
+    capital: float = 10000
+    dry_run: bool = True
+
+class AccountUpdate(BaseModel):
+    name: Optional[str] = None
+    api_key: Optional[str] = None
+    api_secret: Optional[str] = None
+    capital: Optional[float] = None
+    dry_run: Optional[bool] = None
+    active: Optional[bool] = None
+
+@app.get("/api/accounts")
+async def list_accounts(active_only: bool = False):
+    """List all trading accounts"""
+    try:
+        accounts = account_mgr.list_accounts(active_only=active_only)
+        return {"accounts": accounts, "total": len(accounts)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/accounts")
+async def create_account(account: AccountCreate):
+    """Create a new trading account"""
+    try:
+        # Validate credentials first
+        if not account_mgr.validate_credentials(account.api_key, account.api_secret):
+            raise HTTPException(status_code=400, detail="Invalid Binance API credentials")
+        
+        account_id = account_mgr.create_account(
+            name=account.name,
+            api_key=account.api_key,
+            api_secret=account.api_secret,
+            capital=account.capital,
+            dry_run=account.dry_run
+        )
+        
+        if account_id == -1:
+            raise HTTPException(status_code=400, detail="Account name already exists")
+        
+        return {
+            "status": "success",
+            "account_id": account_id,
+            "message": f"Account '{account.name}' created successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/accounts/{account_id}")
+async def get_account(account_id: int):
+    """Get account details"""
+    try:
+        account = account_mgr.get_account(account_id)
+        if not account:
+            raise HTTPException(status_code=404, detail="Account not found")
+        
+        # Mask API secret
+        account['api_secret'] = "•" * 16
+        return account
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/accounts/{account_id}")
+async def update_account(account_id: int, updates: AccountUpdate):
+    """Update account settings"""
+    try:
+        # Build update dict
+        update_dict = {}
+        if updates.name is not None:
+            update_dict['name'] = updates.name
+        if updates.api_key is not None:
+            update_dict['api_key'] = updates.api_key
+        if updates.api_secret is not None:
+            update_dict['api_secret'] = updates.api_secret
+        if updates.capital is not None:
+            update_dict['capital'] = updates.capital
+        if updates.dry_run is not None:
+            update_dict['dry_run'] = updates.dry_run
+        if updates.active is not None:
+            update_dict['active'] = updates.active
+        
+        success = account_mgr.update_account(account_id, **update_dict)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Account not found")
+        
+        return {"status": "success", "message": "Account updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/accounts/{account_id}")
+async def delete_account(account_id: int):
+    """Delete an account"""
+    try:
+        success = account_mgr.delete_account(account_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Account not found")
+        
+        return {"status": "success", "message": "Account deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/accounts/{account_id}/toggle")
+async def toggle_account(account_id: int):
+    """Toggle account active status"""
+    try:
+        success = account_mgr.toggle_account(account_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Account not found")
+        
+        account = account_mgr.get_account(account_id)
+        status = "active" if account['active'] else "inactive"
+        
+        return {
+            "status": "success",
+            "active": account['active'],
+            "message": f"Account is now {status}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/accounts/validate")
+async def validate_credentials(api_key: str, api_secret: str):
+    """Validate Binance API credentials"""
+    try:
+        valid = account_mgr.validate_credentials(api_key, api_secret)
+        return {
+            "valid": valid,
+            "message": "Credentials are valid" if valid else "Invalid credentials"
+        }
+    except Exception as e:
+        return {
+            "valid": False,
+            "message": str(e)
+        }
+
+# Account-specific data endpoints
+@app.get("/api/accounts/{account_id}/trades")
+async def get_account_trades(account_id: int, limit: int = 100):
+    """Get trades for a specific account"""
+    try:
+        import sqlite3
+        from account_manager import ACCOUNTS_DB
+        
+        conn = sqlite3.connect(ACCOUNTS_DB)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT timestamp, action, qty, price, pnl
+            FROM account_trades
+            WHERE account_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (account_id, limit))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        trades = []
+        for row in rows:
+            trades.append({
+                "timestamp": row[0],
+                "action": row[1],
+                "qty": row[2],
+                "price": row[3],
+                "pnl": row[4]
+            })
+        
+        return {"trades": trades, "total": len(trades)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/accounts/{account_id}/performance")
+async def get_account_performance(account_id: int):
+    """Get performance metrics for a specific account"""
+    try:
+        import sqlite3
+        from account_manager import ACCOUNTS_DB
+        
+        conn = sqlite3.connect(ACCOUNTS_DB)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT total_pnl, total_trades, win_rate, sharpe_ratio, max_drawdown, last_updated
+            FROM account_performance
+            WHERE account_id = ?
+        """, (account_id,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return {
+                "total_pnl": 0,
+                "total_trades": 0,
+                "win_rate": 0,
+                "sharpe_ratio": 0,
+                "max_drawdown": 0,
+                "last_updated": None
+            }
+        
+        return {
+            "total_pnl": row[0],
+            "total_trades": row[1],
+            "win_rate": row[2],
+            "sharpe_ratio": row[3],
+            "max_drawdown": row[4],
+            "last_updated": row[5]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Aggregated portfolio endpoints
+@app.get("/api/portfolio/total")
+async def get_total_portfolio():
+    """Get combined portfolio value across all accounts"""
+    try:
+        import sqlite3
+        from account_manager import ACCOUNTS_DB
+        
+        conn = sqlite3.connect(ACCOUNTS_DB)
+        cursor = conn.cursor()
+        
+        # Sum capital from all active accounts
+        cursor.execute("""
+            SELECT SUM(capital) FROM accounts WHERE active = 1
+        """)
+        total_capital = cursor.fetchone()[0] or 0
+        
+        # Sum PnL from all accounts
+        cursor.execute("""
+            SELECT SUM(total_pnl) FROM account_performance
+        """)
+        total_pnl = cursor.fetchone()[0] or 0
+        
+        conn.close()
+        
+        return {
+            "total_capital": total_capital,
+            "total_pnl": total_pnl,
+            "total_value": total_capital + total_pnl,
+            "roi": (total_pnl / total_capital * 100) if total_capital > 0 else 0
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/portfolio/performance")
+async def get_aggregated_performance():
+    """Get aggregated performance across all accounts"""
+    try:
+        import sqlite3
+        from account_manager import ACCOUNTS_DB
+        
+        conn = sqlite3.connect(ACCOUNTS_DB)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT 
+                SUM(total_pnl) as total_pnl,
+                SUM(total_trades) as total_trades,
+                AVG(win_rate) as avg_win_rate,
+                AVG(sharpe_ratio) as avg_sharpe,
+                MAX(max_drawdown) as max_dd
+            FROM account_performance
+        """)
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        return {
+            "total_pnl": row[0] or 0,
+            "total_trades": row[1] or 0,
+            "avg_win_rate": row[2] or 0,
+            "avg_sharpe_ratio": row[3] or 0,
+            "max_drawdown": row[4] or 0
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("DASHBOARD_PORT", 8000))

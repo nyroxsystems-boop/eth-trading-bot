@@ -11,6 +11,7 @@ import Sidebar from './components/Sidebar'
 import DashboardView from './views/DashboardView'
 import PortfolioView from './views/PortfolioView'
 import LearningView from './views/LearningView'
+import AccountsView from './views/AccountsView'
 import BotsView from './views/BotsView'
 import SettingsView from './views/SettingsView'
 
@@ -193,6 +194,7 @@ function App() {
             )}
             {activePage === 'portfolio' && <PortfolioView key="portfolio" />}
             {activePage === 'learning' && <LearningView key="learning" />}
+            {activePage === 'accounts' && <AccountsView key="accounts" />}
             {activePage === 'bots' && <BotsView key="bots" />}
             {activePage === 'settings' && <SettingsView key="settings" />}
           </AnimatePresence>
