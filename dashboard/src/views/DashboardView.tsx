@@ -1,190 +1,198 @@
 import { motion } from 'framer-motion'
-import { Bell, User } from 'lucide-react'
-import CandlestickChart from '../components/CandlestickChart'
-import TickerBar from '../components/TickerBar'
-import MetricCard from '../components/MetricCard'
-import type { Trade, Metrics, BotStatus } from '../types'
+import { TrendingUp, TrendingDown, Activity, Target, Zap } from 'lucide-react'
+import '../styles/premium.css'
+import '../styles/components.css'
 
 interface DashboardViewProps {
-    trades: Trade[]
-    metrics: Metrics | null
-    status: BotStatus | null
+    trades: any[]
+    metrics: any
+    status: any
     candlestickData: any[]
     tickerData: any[]
     timeframe: string
     setTimeframe: (tf: string) => void
 }
 
-const timeframes = ['1M', '5M', '15M', '1H', '4H', '1D']
+const DashboardView = ({ metrics, status }: DashboardViewProps) => {
+    const dailyPnl = metrics?.daily_pnl || 0
+    const totalPnl = metrics?.total_pnl || 0
+    const winRate = metrics?.win_rate || 0
+    const totalTrades = metrics?.total_trades || 0
+    const todayTrades = status?.today_trades || 0
 
-export default function DashboardView({
-    trades,
-    metrics,
-    status,
-    candlestickData,
-    tickerData,
-    timeframe,
-    setTimeframe
-}: DashboardViewProps) {
     return (
-        <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.3 }}
-            className="flex-1"
-        >
-            {/* Header */}
-            <header className="border-b border-slate-800/50 bg-slate-900/30 backdrop-blur-xl">
-                <div className="px-8 py-4 flex items-center justify-between">
-                    <div>
-                        <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
-                            Dashboard
-                        </h1>
-                        <p className="text-sm text-slate-400 mt-1">Trading Overview & Performance</p>
-                    </div>
-                    <div className="flex items-center gap-4">
-                        <button className="w-10 h-10 rounded-xl bg-slate-800/50 flex items-center justify-center hover:bg-slate-800 transition-all duration-300 hover:scale-110 hover:shadow-lg hover:shadow-cyan-500/20">
-                            <Bell className="w-5 h-5 text-slate-400 hover:text-cyan-400 transition-colors" />
-                        </button>
-                        <button className="w-10 h-10 rounded-xl bg-slate-800/50 flex items-center justify-center hover:bg-slate-800 transition-all duration-300 hover:scale-110 hover:shadow-lg hover:shadow-cyan-500/20">
-                            <User className="w-5 h-5 text-slate-400 hover:text-cyan-400 transition-colors" />
-                        </button>
-                    </div>
-                </div>
-            </header>
-
-            {/* Candlestick Chart Section */}
-            <div className="px-8 py-6">
+        <div className="dashboard-container">
+            {/* Stats Grid */}
+            <div className="stats-grid">
+                {/* Daily P&L Card */}
                 <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
+                    className="glass-card stat-card"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
-                    className="bg-slate-900/50 backdrop-blur-xl border border-slate-800/50 rounded-2xl p-6 shadow-2xl hover:shadow-cyan-500/10 transition-shadow duration-300"
                 >
-                    <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                            <h2 className="text-lg font-semibold">ETH/USD</h2>
-                            <span className="text-cyan-400 text-sm px-3 py-1 bg-cyan-500/10 rounded-full border border-cyan-500/20">
-                                Live Market Data
+                    <div className="stat-header">
+                        <div className="stat-icon" style={{ background: dailyPnl >= 0 ? 'var(--gradient-primary)' : 'var(--gradient-gold)' }}>
+                            {dailyPnl >= 0 ? <TrendingUp size={24} /> : <TrendingDown size={24} />}
+                        </div>
+                        <span className="stat-label">Daily P&L</span>
+                    </div>
+                    <div className="stat-value">
+                        <span className={`stat-number ${dailyPnl >= 0 ? 'positive' : 'negative'}`}>
+                            {dailyPnl >= 0 ? '+' : ''}${Math.abs(dailyPnl).toFixed(2)}
+                        </span>
+                        <span className="stat-percentage">
+                            {dailyPnl >= 0 ? '+' : ''}{((dailyPnl / 10000) * 100).toFixed(2)}%
+                        </span>
+                    </div>
+                    <div className="stat-footer">
+                        <span className="stat-trend">
+                            {dailyPnl >= 0 ? '📈' : '📉'} Today
+                        </span>
+                    </div>
+                </motion.div>
+
+                {/* Win Rate Card */}
+                <motion.div
+                    className="glass-card stat-card"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 }}
+                >
+                    <div className="stat-header">
+                        <div className="stat-icon" style={{ background: 'var(--gradient-secondary)' }}>
+                            <Target size={24} />
+                        </div>
+                        <span className="stat-label">Win Rate</span>
+                    </div>
+                    <div className="stat-value">
+                        <div className="circular-progress">
+                            <svg width="120" height="120">
+                                <circle
+                                    cx="60"
+                                    cy="60"
+                                    r="50"
+                                    fill="none"
+                                    stroke="rgba(139, 92, 246, 0.2)"
+                                    strokeWidth="10"
+                                />
+                                <circle
+                                    cx="60"
+                                    cy="60"
+                                    r="50"
+                                    fill="none"
+                                    stroke="url(#gradient)"
+                                    strokeWidth="10"
+                                    strokeDasharray={`${(winRate / 100) * 314} 314`}
+                                    strokeLinecap="round"
+                                    transform="rotate(-90 60 60)"
+                                />
+                                <defs>
+                                    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                        <stop offset="0%" stopColor="#8B5CF6" />
+                                        <stop offset="100%" stopColor="#EC4899" />
+                                    </linearGradient>
+                                </defs>
+                            </svg>
+                            <div className="progress-text">
+                                <span className="progress-value">{winRate.toFixed(1)}%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="stat-footer">
+                        <span className="stat-trend">
+                            {metrics?.winning_trades || 0}W / {metrics?.losing_trades || 0}L
+                        </span>
+                    </div>
+                </motion.div>
+
+                {/* Total Trades Card */}
+                <motion.div
+                    className="glass-card stat-card"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 }}
+                >
+                    <div className="stat-header">
+                        <div className="stat-icon" style={{ background: 'var(--gradient-gold)' }}>
+                            <Activity size={24} />
+                        </div>
+                        <span className="stat-label">Total Trades</span>
+                    </div>
+                    <div className="stat-value">
+                        <span className="stat-number">{totalTrades}</span>
+                        <span className="stat-subtext">All time</span>
+                    </div>
+                    <div className="stat-footer">
+                        <span className="stat-trend">
+                            ⚡ {todayTrades} today
+                        </span>
+                    </div>
+                </motion.div>
+
+                {/* Bot Status Card */}
+                <motion.div
+                    className="glass-card stat-card"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.4 }}
+                >
+                    <div className="stat-header">
+                        <div className="stat-icon" style={{ background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)' }}>
+                            <Zap size={24} />
+                        </div>
+                        <span className="stat-label">Bot Status</span>
+                    </div>
+                    <div className="stat-value">
+                        <div className="status-indicator">
+                            <div className="status-dot active" />
+                            <span className="status-text">Running</span>
+                        </div>
+                        <span className="stat-subtext">Paper Trading</span>
+                    </div>
+                    <div className="stat-footer">
+                        <span className="stat-trend">
+                            🎯 Target: 1.0% daily
+                        </span>
+                    </div>
+                </motion.div>
+            </div>
+
+            {/* Performance Chart */}
+            <motion.div
+                className="glass-card chart-card"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.5 }}
+            >
+                <div className="chart-header">
+                    <h3>Performance Overview</h3>
+                    <div className="chart-stats">
+                        <div className="chart-stat">
+                            <span className="chart-stat-label">Total P&L</span>
+                            <span className={`chart-stat-value ${totalPnl >= 0 ? 'positive' : 'negative'}`}>
+                                ${totalPnl.toFixed(2)}
                             </span>
                         </div>
-                        <div className="flex items-center gap-2">
-                            {timeframes.map((tf) => (
-                                <button
-                                    key={tf}
-                                    onClick={() => setTimeframe(tf)}
-                                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-300 ${timeframe === tf
-                                        ? 'bg-cyan-500 text-white shadow-lg shadow-cyan-500/30'
-                                        : 'bg-slate-800/50 text-slate-400 hover:text-white hover:bg-slate-800 hover:scale-105'
-                                        }`}
-                                >
-                                    {tf}
-                                </button>
-                            ))}
+                        <div className="chart-stat">
+                            <span className="chart-stat-label">ROI</span>
+                            <span className="chart-stat-value positive">
+                                {((totalPnl / 10000) * 100).toFixed(2)}%
+                            </span>
                         </div>
                     </div>
-                    <CandlestickChart data={candlestickData} height={350} />
-                </motion.div>
-            </div>
-
-            {/* Ticker Bar */}
-            <TickerBar tickers={tickerData} />
-
-            {/* Metrics Grid & Trade Feed */}
-            <div className="px-8 py-6">
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {/* Left: Metrics Grid (2x2) */}
-                    <motion.div
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: 0.2 }}
-                        className="lg:col-span-2 grid grid-cols-2 gap-6"
-                    >
-                        <MetricCard
-                            title="Daily P&L"
-                            value={`$${metrics?.daily_pnl.toFixed(2) || '0.00'}`}
-                            subtitle={`${((metrics?.daily_pnl || 0) / 10000 * 100).toFixed(2)}%`}
-                            type="pnl"
-                            trend={metrics?.daily_pnl && metrics.daily_pnl > 0 ? 'up' : 'down'}
-                        />
-                        <MetricCard
-                            title="Win Rate"
-                            value={`${metrics?.win_rate.toFixed(1) || '0'}%`}
-                            type="winrate"
-                            percentage={metrics?.win_rate || 0}
-                        />
-                        <MetricCard
-                            title="ML Confidence"
-                            value={(status?.ml_confidence || 0.5).toFixed(2)}
-                            subtitle={status?.ml_confidence && status.ml_confidence > 0.6 ? 'High' : 'Medium'}
-                            type="confidence"
-                            percentage={(status?.ml_confidence || 0.5)}
-                        />
-                        <MetricCard
-                            title="Total Trades"
-                            value={metrics?.total_trades || 0}
-                            subtitle={`${status?.today_trades || 0} today`}
-                            type="trades"
-                        />
-                    </motion.div>
-
-                    {/* Right: Live Trade Feed */}
-                    <motion.div
-                        initial={{ opacity: 0, x: 20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: 0.3 }}
-                        className="lg:col-span-1"
-                    >
-                        <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-800/50 rounded-2xl p-6 h-full shadow-2xl">
-                            <div className="bg-gradient-to-r from-cyan-500 to-blue-500 text-white px-4 py-2 rounded-lg mb-4 text-center font-semibold shadow-lg shadow-cyan-500/30">
-                                Live Trades - ETH/USD
-                            </div>
-                            <TradeFeed trades={trades.slice(-10).reverse()} />
-                        </div>
-                    </motion.div>
                 </div>
-            </div>
-        </motion.div>
-    )
-}
+                <div className="chart-placeholder">
+                    <div className="chart-message">
+                        <Activity size={48} opacity={0.3} />
+                        <p>Live chart coming soon...</p>
+                        <span>Real-time P&L visualization</span>
+                    </div>
+                </div>
+            </motion.div>
 
-// Trade Feed Component
-function TradeFeed({ trades }: { trades: Trade[] }) {
-    return (
-        <div className="space-y-3 max-h-[400px] overflow-y-auto custom-scrollbar">
-            {trades.map((trade, idx) => (
-                <motion.div
-                    key={`${trade.timestamp}-${idx}`}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: idx * 0.05 }}
-                    className={`p-3 rounded-xl border text-sm transition-all duration-300 hover:scale-105 ${trade.action === 'BUY'
-                        ? 'bg-green-500/10 border-green-500/30 hover:bg-green-500/20'
-                        : 'bg-red-500/10 border-red-500/30 hover:bg-red-500/20'
-                        }`}
-                >
-                    <div className="flex items-center justify-between mb-1">
-                        <span className={`font-semibold ${trade.action === 'BUY' ? 'text-green-400' : 'text-red-400'
-                            }`}>
-                            {trade.action} ↗
-                        </span>
-                        <span className="text-xs text-slate-400">
-                            {new Date(trade.timestamp).toLocaleTimeString()}
-                        </span>
-                    </div>
-                    <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-300 font-mono">${trade.price.toFixed(2)}</span>
-                        <span className="text-slate-400">{trade.qty.toFixed(4)} ETH</span>
-                    </div>
-                    {trade.pnl !== undefined && (
-                        <div className={`text-xs mt-1 font-medium font-mono ${trade.pnl > 0 ? 'text-green-400' : 'text-red-400'
-                            }`}>
-                            {trade.pnl > 0 ? '+' : ''}{trade.pnl.toFixed(2)} USDT
-                        </div>
-                    )}
-                </motion.div>
-            ))}
         </div>
     )
 }
+
+export default DashboardView
