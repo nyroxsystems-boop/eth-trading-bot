@@ -1,4 +1,4 @@
-import { Home, TrendingUp, RefreshCw, Bot, Settings, FlaskConical } from 'lucide-react'
+import { Home, TrendingUp, Bot, Settings, FlaskConical } from 'lucide-react'
 
 interface SidebarProps {
     activePage: string
@@ -9,7 +9,6 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
     const menuItems = [
         { id: 'dashboard', icon: Home, label: 'Dashboard' },
         { id: 'portfolio', icon: TrendingUp, label: 'Portfolio' },
-        { id: 'trading', icon: RefreshCw, label: 'Trading' },
         { id: 'bots', icon: Bot, label: 'Bots' },
         { id: 'lab', icon: FlaskConical, label: 'Strategy Lab' },
         { id: 'settings', icon: Settings, label: 'Settings' },

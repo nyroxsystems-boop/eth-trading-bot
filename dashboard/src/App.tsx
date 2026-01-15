@@ -10,7 +10,6 @@ import Sidebar from './components/Sidebar'
 // Views
 import DashboardView from './views/DashboardView'
 import PortfolioView from './views/PortfolioView'
-import TradingView from './views/TradingView'
 import BotsView from './views/BotsView'
 import SettingsView from './views/SettingsView'
 import StrategyLabView from './views/StrategyLabView'
@@ -193,7 +192,6 @@ function App() {
               />
             )}
             {activePage === 'portfolio' && <PortfolioView key="portfolio" />}
-            {activePage === 'trading' && <TradingView key="trading" />}
             {activePage === 'bots' && <BotsView key="bots" />}
             {activePage === 'lab' && <StrategyLabView key="lab" />}
             {activePage === 'settings' && <SettingsView key="settings" />}
