@@ -1,20 +1,20 @@
 """
 Account Manager for Multi-Account Trading System
 Handles CRUD operations for Binance API accounts
+Uses PostgreSQL in production, SQLite for local development
 """
 
-import sqlite3
 import os
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
 from cryptography.fernet import Fernet
-import base64
-import hashlib
 
-# Database path
+# Import database adapter
+from db_adapter import get_db_connection, USE_POSTGRES
+
+# Database path for encryption key
 LOG_DIR = Path(os.getenv("LOG_DIR", "/root/ethbot/logs"))
-ACCOUNTS_DB = LOG_DIR / "accounts.db"
 
 # Encryption key (derived from environment or generated)
 def get_encryption_key():
@@ -37,63 +37,90 @@ cipher = Fernet(ENCRYPTION_KEY)
 
 def init_database():
     """Initialize accounts database with schema"""
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    
-    conn = sqlite3.connect(ACCOUNTS_DB)
-    cursor = conn.cursor()
-    
-    # Accounts table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS accounts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER DEFAULT 1,
-            name TEXT NOT NULL,
-            api_key TEXT NOT NULL,
-            api_secret TEXT NOT NULL,
-            capital REAL DEFAULT 10000,
-            dry_run BOOLEAN DEFAULT 1,
-            active BOOLEAN DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_active TIMESTAMP,
-            UNIQUE(user_id, name)
-        )
-    """)
-    
-    # Account trades table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS account_trades (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            account_id INTEGER NOT NULL,
-            timestamp TEXT NOT NULL,
-            action TEXT NOT NULL,
-            qty REAL NOT NULL,
-            price REAL NOT NULL,
-            pnl REAL DEFAULT 0,
-            FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
-        )
-    """)
-    
-    # Account performance table
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS account_performance (
-            account_id INTEGER PRIMARY KEY,
-            total_pnl REAL DEFAULT 0,
-            total_trades INTEGER DEFAULT 0,
-            win_rate REAL DEFAULT 0,
-            sharpe_ratio REAL DEFAULT 0,
-            max_drawdown REAL DEFAULT 0,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
-        )
-    """)
-    
-    # Create indexes
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_trades_account_id ON account_trades(account_id)")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_trades_timestamp ON account_trades(timestamp)")
-    
-    conn.commit()
-    conn.close()
-    print(f"✅ Accounts database initialized at {ACCOUNTS_DB}")
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # Accounts table
+        if USE_POSTGRES:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS accounts (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER DEFAULT 1,
+                    name TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    api_secret TEXT NOT NULL,
+                    capital REAL DEFAULT 10000,
+                    dry_run BOOLEAN DEFAULT true,
+                    active BOOLEAN DEFAULT true,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_active TIMESTAMP,
+                    UNIQUE(user_id, name)
+                )
+            """)
+        else:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER DEFAULT 1,
+                    name TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    api_secret TEXT NOT NULL,
+                    capital REAL DEFAULT 10000,
+                    dry_run BOOLEAN DEFAULT 1,
+                    active BOOLEAN DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_active TIMESTAMP,
+                    UNIQUE(user_id, name)
+                )
+            """)
+        
+        # Account trades table
+        if USE_POSTGRES:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS account_trades (
+                    id SERIAL PRIMARY KEY,
+                    account_id INTEGER NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    qty REAL NOT NULL,
+                    price REAL NOT NULL,
+                    pnl REAL DEFAULT 0,
+                    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+                )
+            """)
+        else:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS account_trades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    account_id INTEGER NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    qty REAL NOT NULL,
+                    price REAL NOT NULL,
+                    pnl REAL DEFAULT 0,
+                    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+                )
+            """)
+        
+        # Account performance table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS account_performance (
+                account_id INTEGER PRIMARY KEY,
+                total_pnl REAL DEFAULT 0,
+                total_trades INTEGER DEFAULT 0,
+                win_rate REAL DEFAULT 0,
+                sharpe_ratio REAL DEFAULT 0,
+                max_drawdown REAL DEFAULT 0,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+            )
+        """)
+        
+        # Create indexes
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_trades_account_id ON account_trades(account_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_trades_timestamp ON account_trades(timestamp)")
+        
+        print(f"✅ Accounts database initialized")
 
 
 def encrypt_secret(secret: str) -> str:
@@ -115,50 +142,68 @@ class AccountManager:
     def create_account(self, user_id: int, name: str, api_key: str, api_secret: str, 
                       capital: float = 10000, dry_run: bool = True) -> int:
         """Create a new trading account"""
-        conn = sqlite3.connect(ACCOUNTS_DB)
-        cursor = conn.cursor()
-        
         try:
             # Encrypt the API secret
             encrypted_secret = encrypt_secret(api_secret)
             
-            cursor.execute("""
-                INSERT INTO accounts (user_id, name, api_key, api_secret, capital, dry_run, active)
-                VALUES (?, ?, ?, ?, ?, ?, 1)
-            """, (user_id, name, api_key, encrypted_secret, capital, dry_run))
-            
-            account_id = cursor.lastrowid
-            
-            # Initialize performance record
-            cursor.execute("""
-                INSERT INTO account_performance (account_id)
-                VALUES (?)
-            """, (account_id,))
-            
-            conn.commit()
-            print(f"✅ Created account '{name}' (ID: {account_id})")
-            return account_id
-            
-        except sqlite3.IntegrityError:
-            print(f"❌ Account '{name}' already exists")
-            return -1
-        finally:
-            conn.close()
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                if USE_POSTGRES:
+                    cursor.execute("""
+                        INSERT INTO accounts (user_id, name, api_key, api_secret, capital, dry_run, active)
+                        VALUES (%s, %s, %s, %s, %s, %s, true)
+                        RETURNING id
+                    """, (user_id, name, api_key, encrypted_secret, capital, dry_run))
+                    account_id = cursor.fetchone()[0]
+                    
+                    cursor.execute("""
+                        INSERT INTO account_performance (account_id)
+                        VALUES (%s)
+                    """, (account_id,))
+                else:
+                    cursor.execute("""
+                        INSERT INTO accounts (user_id, name, api_key, api_secret, capital, dry_run, active)
+                        VALUES (?, ?, ?, ?, ?, ?, 1)
+                    """, (user_id, name, api_key, encrypted_secret, capital, dry_run))
+                    account_id = cursor.lastrowid
+                    
+                    cursor.execute("""
+                        INSERT INTO account_performance (account_id)
+                        VALUES (?)
+                    """, (account_id,))
+                
+                print(f"✅ Created account '{name}' (ID: {account_id})")
+                return account_id
+                
+        except Exception as e:
+            error_str = str(e).lower()
+            if 'unique' in error_str or 'duplicate' in error_str:
+                print(f"❌ Account '{name}' already exists")
+                return -1
+            raise
     
     def get_account(self, account_id: int) -> Optional[Dict]:
         """Get account by ID"""
-        conn = sqlite3.connect(ACCOUNTS_DB)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id, name, api_key, api_secret, capital, dry_run, active, 
-                   created_at, last_active
-            FROM accounts
-            WHERE id = ?
-        """, (account_id,))
-        
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    SELECT id, name, api_key, api_secret, capital, dry_run, active, 
+                           created_at, last_active
+                    FROM accounts
+                    WHERE id = %s
+                """, (account_id,))
+            else:
+                cursor.execute("""
+                    SELECT id, name, api_key, api_secret, capital, dry_run, active, 
+                           created_at, last_active
+                    FROM accounts
+                    WHERE id = ?
+                """, (account_id,))
+            
+            row = cursor.fetchone()
         
         if not row:
             return None
@@ -177,18 +222,25 @@ class AccountManager:
     
     def get_account_by_name(self, name: str) -> Optional[Dict]:
         """Get account by name"""
-        conn = sqlite3.connect(ACCOUNTS_DB)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id, name, api_key, api_secret, capital, dry_run, active, 
-                   created_at, last_active
-            FROM accounts
-            WHERE name = ?
-        """, (name,))
-        
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    SELECT id, name, api_key, api_secret, capital, dry_run, active, 
+                           created_at, last_active
+                    FROM accounts
+                    WHERE name = %s
+                """, (name,))
+            else:
+                cursor.execute("""
+                    SELECT id, name, api_key, api_secret, capital, dry_run, active, 
+                           created_at, last_active
+                    FROM accounts
+                    WHERE name = ?
+                """, (name,))
+            
+            row = cursor.fetchone()
         
         if not row:
             return None
@@ -207,46 +259,80 @@ class AccountManager:
     
     def list_accounts(self, user_id: int = None, active_only: bool = False) -> List[Dict]:
         """List accounts for a specific user"""
-        conn = sqlite3.connect(ACCOUNTS_DB)
-        cursor = conn.cursor()
-        
-        if user_id:
-            if active_only:
-                cursor.execute("""
-                    SELECT id, name, api_key, capital, dry_run, active, 
-                           created_at, last_active
-                    FROM accounts
-                    WHERE user_id = ? AND active = 1
-                    ORDER BY created_at DESC
-                """, (user_id,))
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            if user_id:
+                if USE_POSTGRES:
+                    if active_only:
+                        cursor.execute("""
+                            SELECT id, name, api_key, capital, dry_run, active, 
+                                   created_at, last_active
+                            FROM accounts
+                            WHERE user_id = %s AND active = true
+                            ORDER BY created_at DESC
+                        """, (user_id,))
+                    else:
+                        cursor.execute("""
+                            SELECT id, name, api_key, capital, dry_run, active, 
+                                   created_at, last_active
+                            FROM accounts
+                            WHERE user_id = %s
+                            ORDER BY created_at DESC
+                        """, (user_id,))
+                else:
+                    if active_only:
+                        cursor.execute("""
+                            SELECT id, name, api_key, capital, dry_run, active, 
+                                   created_at, last_active
+                            FROM accounts
+                            WHERE user_id = ? AND active = 1
+                            ORDER BY created_at DESC
+                        """, (user_id,))
+                    else:
+                        cursor.execute("""
+                            SELECT id, name, api_key, capital, dry_run, active, 
+                                   created_at, last_active
+                            FROM accounts
+                            WHERE user_id = ?
+                            ORDER BY created_at DESC
+                        """, (user_id,))
             else:
-                cursor.execute("""
-                    SELECT id, name, api_key, capital, dry_run, active, 
-                           created_at, last_active
-                    FROM accounts
-                    WHERE user_id = ?
-                    ORDER BY created_at DESC
-                """, (user_id,))
-        else:
-            # Admin: show all accounts
-            if active_only:
-                cursor.execute("""
-                    SELECT id, name, api_key, capital, dry_run, active, 
-                           created_at, last_active
-                    FROM accounts
-                    WHERE active = 1
-                    ORDER BY created_at DESC
-                """)
-            else:
-                cursor.execute("""
-                    SELECT id, name, api_key, capital, dry_run, active, 
-                           created_at, last_active
-                    FROM accounts
-                    ORDER BY created_at DESC
-                """)
-        
-        rows = cursor.fetchall()
-        conn.close()
+                # Admin: show all accounts
+                if USE_POSTGRES:
+                    if active_only:
+                        cursor.execute("""
+                            SELECT id, name, api_key, capital, dry_run, active, 
+                                   created_at, last_active
+                            FROM accounts
+                            WHERE active = true
+                            ORDER BY created_at DESC
+                        """)
+                    else:
+                        cursor.execute("""
+                            SELECT id, name, api_key, capital, dry_run, active, 
+                                   created_at, last_active
+                            FROM accounts
+                            ORDER BY created_at DESC
+                        """)
+                else:
+                    if active_only:
+                        cursor.execute("""
+                            SELECT id, name, api_key, capital, dry_run, active, 
+                                   created_at, last_active
+                            FROM accounts
+                            WHERE active = 1
+                            ORDER BY created_at DESC
+                        """)
+                    else:
+                        cursor.execute("""
+                            SELECT id, name, api_key, capital, dry_run, active, 
+                                   created_at, last_active
+                            FROM accounts
+                            ORDER BY created_at DESC
+                        """)
+            
+            rows = cursor.fetchall()
         
         accounts = []
         for row in rows:
@@ -266,9 +352,6 @@ class AccountManager:
     
     def update_account(self, account_id: int, **kwargs) -> bool:
         """Update account fields"""
-        conn = sqlite3.connect(ACCOUNTS_DB)
-        cursor = conn.cursor()
-        
         # Build update query dynamically
         allowed_fields = ["name", "api_key", "api_secret", "capital", "dry_run", "active"]
         updates = []
@@ -278,20 +361,19 @@ class AccountManager:
             if field in allowed_fields:
                 if field == "api_secret":
                     value = encrypt_secret(value)
-                updates.append(f"{field} = ?")
+                updates.append(f"{field} = {'%s' if USE_POSTGRES else '?'}")
                 values.append(value)
         
         if not updates:
-            conn.close()
             return False
         
         values.append(account_id)
-        query = f"UPDATE accounts SET {', '.join(updates)} WHERE id = ?"
+        query = f"UPDATE accounts SET {', '.join(updates)} WHERE id = {'%s' if USE_POSTGRES else '?'}"
         
-        cursor.execute(query, values)
-        conn.commit()
-        success = cursor.rowcount > 0
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, values)
+            success = cursor.rowcount > 0
         
         if success:
             print(f"✅ Updated account ID {account_id}")
@@ -299,13 +381,15 @@ class AccountManager:
     
     def delete_account(self, account_id: int) -> bool:
         """Delete account and all associated data"""
-        conn = sqlite3.connect(ACCOUNTS_DB)
-        cursor = conn.cursor()
-        
-        cursor.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
-        conn.commit()
-        success = cursor.rowcount > 0
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("DELETE FROM accounts WHERE id = %s", (account_id,))
+            else:
+                cursor.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+            
+            success = cursor.rowcount > 0
         
         if success:
             print(f"✅ Deleted account ID {account_id}")
@@ -313,18 +397,16 @@ class AccountManager:
     
     def toggle_account(self, account_id: int) -> bool:
         """Toggle account active status"""
-        conn = sqlite3.connect(ACCOUNTS_DB)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            UPDATE accounts 
-            SET active = NOT active 
-            WHERE id = ?
-        """, (account_id,))
-        
-        conn.commit()
-        success = cursor.rowcount > 0
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                UPDATE accounts 
+                SET active = NOT active 
+                WHERE id = {}
+            """.format('%s' if USE_POSTGRES else '?'), (account_id,))
+            
+            success = cursor.rowcount > 0
         
         if success:
             print(f"✅ Toggled account ID {account_id}")
@@ -332,17 +414,21 @@ class AccountManager:
     
     def update_last_active(self, account_id: int):
         """Update last active timestamp"""
-        conn = sqlite3.connect(ACCOUNTS_DB)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            UPDATE accounts 
-            SET last_active = ? 
-            WHERE id = ?
-        """, (datetime.now().isoformat(), account_id))
-        
-        conn.commit()
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    UPDATE accounts 
+                    SET last_active = %s 
+                    WHERE id = %s
+                """, (datetime.now().isoformat(), account_id))
+            else:
+                cursor.execute("""
+                    UPDATE accounts 
+                    SET last_active = ? 
+                    WHERE id = ?
+                """, (datetime.now().isoformat(), account_id))
     
     def validate_credentials(self, api_key: str, api_secret: str) -> bool:
         """Validate Binance API credentials"""
@@ -376,6 +462,7 @@ class AccountManager:
         
         # Create default account
         account_id = self.create_account(
+            user_id=1,
             name="Default Account",
             api_key=api_key,
             api_secret=api_secret,

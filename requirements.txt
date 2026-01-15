@@ -23,6 +23,7 @@ python-jose[cryptography]==3.3.0
 
 # Database
 aiosqlite==0.19.0
+psycopg2-binary==2.9.9
 
 # Monitoring
 python-telegram-bot==20.7
