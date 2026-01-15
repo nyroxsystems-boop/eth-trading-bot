@@ -4,13 +4,14 @@ Auto-Apply System - Auto-Learning
 Automatically applies best strategies to live bot
 """
 
-import sqlite3
 import json
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 import requests
+
+from db_adapter import get_db_connection, USE_POSTGRES
 
 class AutoApply:
     def __init__(
@@ -35,20 +36,29 @@ class AutoApply:
     
     def get_current_strategy(self) -> Optional[Dict[str, Any]]:
         """Get currently applied strategy"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                   score, win_rate, roi, max_drawdown
-            FROM strategies
-            WHERE applied = 1
-            ORDER BY applied_at DESC
-            LIMIT 1
-        """)
-        
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_connection('learning') as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                           score, win_rate, roi, max_drawdown
+                    FROM strategies
+                    WHERE applied = true
+                    ORDER BY applied_at DESC
+                    LIMIT 1
+                """)
+            else:
+                cursor.execute("""
+                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                           score, win_rate, roi, max_drawdown
+                    FROM strategies
+                    WHERE applied = 1
+                    ORDER BY applied_at DESC
+                    LIMIT 1
+                """)
+            
+            row = cursor.fetchone()
         
         if row:
             return {
@@ -70,19 +80,18 @@ class AutoApply:
     
     def get_best_strategy(self) -> Optional[Dict[str, Any]]:
         """Get best strategy from database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                   score, win_rate, roi, max_drawdown, sharpe_ratio
-            FROM strategies
-            ORDER BY score DESC
-            LIMIT 1
-        """)
-        
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_connection('learning') as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                       score, win_rate, roi, max_drawdown, sharpe_ratio
+                FROM strategies
+                ORDER BY score DESC
+                LIMIT 1
+            """)
+            
+            row = cursor.fetchone()
         
         if row:
             return {
@@ -159,22 +168,31 @@ class AutoApply:
                 json.dump(settings, f, indent=2)
             
             # Mark as applied in database
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                UPDATE strategies
-                SET applied = 1, applied_at = ?
-                WHERE ml_threshold = ? AND risk_per_trade = ? AND tp_min = ?
-            """, (
-                datetime.now().isoformat(),
-                strategy['params']['ml_threshold'],
-                strategy['params']['risk_per_trade'],
-                strategy['params']['tp_min']
-            ))
-            
-            conn.commit()
-            conn.close()
+            with get_db_connection('learning') as conn:
+                cursor = conn.cursor()
+                
+                if USE_POSTGRES:
+                    cursor.execute("""
+                        UPDATE strategies
+                        SET applied = true, applied_at = %s
+                        WHERE ml_threshold = %s AND risk_per_trade = %s AND tp_min = %s
+                    """, (
+                        datetime.now().isoformat(),
+                        strategy['params']['ml_threshold'],
+                        strategy['params']['risk_per_trade'],
+                        strategy['params']['tp_min']
+                    ))
+                else:
+                    cursor.execute("""
+                        UPDATE strategies
+                        SET applied = 1, applied_at = ?
+                        WHERE ml_threshold = ? AND risk_per_trade = ? AND tp_min = ?
+                    """, (
+                        datetime.now().isoformat(),
+                        strategy['params']['ml_threshold'],
+                        strategy['params']['risk_per_trade'],
+                        strategy['params']['tp_min']
+                    ))
             
             return True
             

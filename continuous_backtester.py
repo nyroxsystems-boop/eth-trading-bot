@@ -10,9 +10,9 @@ import json
 from datetime import datetime
 from typing import List, Dict, Any
 from pathlib import Path
-import sqlite3
 
 from strategy_generator import StrategyGenerator
+from db_adapter import get_db_connection, USE_POSTGRES
 
 class ContinuousBacktester:
     def __init__(
@@ -28,44 +28,66 @@ class ContinuousBacktester:
         self.init_database()
     
     def init_database(self):
-        """Initialize SQLite database for learning"""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS strategies (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                ml_threshold REAL,
-                risk_per_trade REAL,
-                tp_min REAL,
-                tp_max REAL,
-                stop_floor REAL,
-                max_trades_per_day INTEGER,
-                
-                total_trades INTEGER,
-                winning_trades INTEGER,
-                losing_trades INTEGER,
-                win_rate REAL,
-                total_pnl REAL,
-                roi REAL,
-                sharpe_ratio REAL,
-                max_drawdown REAL,
-                
-                score REAL,
-                applied BOOLEAN DEFAULT 0,
-                applied_at DATETIME
-            )
-        """)
-        
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_score ON strategies(score DESC)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON strategies(timestamp DESC)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_applied ON strategies(applied, score DESC)")
-        
-        conn.commit()
-        conn.close()
+        """Initialize database for learning"""
+        with get_db_connection('learning') as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS strategies (
+                        id SERIAL PRIMARY KEY,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        ml_threshold REAL,
+                        risk_per_trade REAL,
+                        tp_min REAL,
+                        tp_max REAL,
+                        stop_floor REAL,
+                        max_trades_per_day INTEGER,
+                        
+                        total_trades INTEGER,
+                        winning_trades INTEGER,
+                        losing_trades INTEGER,
+                        win_rate REAL,
+                        total_pnl REAL,
+                        roi REAL,
+                        sharpe_ratio REAL,
+                        max_drawdown REAL,
+                        
+                        score REAL,
+                        applied BOOLEAN DEFAULT false,
+                        applied_at TIMESTAMP
+                    )
+                """)
+            else:
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS strategies (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        ml_threshold REAL,
+                        risk_per_trade REAL,
+                        tp_min REAL,
+                        tp_max REAL,
+                        stop_floor REAL,
+                        max_trades_per_day INTEGER,
+                        
+                        total_trades INTEGER,
+                        winning_trades INTEGER,
+                        losing_trades INTEGER,
+                        win_rate REAL,
+                        total_pnl REAL,
+                        roi REAL,
+                        sharpe_ratio REAL,
+                        max_drawdown REAL,
+                        
+                        score REAL,
+                        applied BOOLEAN DEFAULT 0,
+                        applied_at DATETIME
+                    )
+                """)
+            
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_score ON strategies(score DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON strategies(timestamp DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_applied ON strategies(applied, score DESC)")
     
     async def backtest_strategy(self, strategy: Dict[str, Any]) -> Dict[str, Any]:
         """Run backtest for a single strategy"""
@@ -119,51 +141,81 @@ class ContinuousBacktester:
     
     def save_result(self, strategy: Dict[str, Any], metrics: Dict[str, Any], score: float):
         """Save backtest result to database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            INSERT INTO strategies (
-                ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                total_trades, winning_trades, losing_trades, win_rate, total_pnl, roi,
-                sharpe_ratio, max_drawdown, score
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            strategy['ml_threshold'],
-            strategy['risk_per_trade'],
-            strategy['tp_min'],
-            strategy['tp_max'],
-            strategy['stop_floor'],
-            strategy['max_trades_per_day'],
-            metrics.get('total_trades', 0),
-            metrics.get('winning_trades', 0),
-            metrics.get('losing_trades', 0),
-            metrics.get('win_rate', 0),
-            metrics.get('total_pnl', 0),
-            metrics.get('roi', 0),
-            metrics.get('sharpe_ratio', 0),
-            metrics.get('max_drawdown', 0),
-            score
-        ))
-        
-        conn.commit()
-        conn.close()
+        with get_db_connection('learning') as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    INSERT INTO strategies (
+                        ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                        total_trades, winning_trades, losing_trades, win_rate, total_pnl, roi,
+                        sharpe_ratio, max_drawdown, score
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    strategy['ml_threshold'],
+                    strategy['risk_per_trade'],
+                    strategy['tp_min'],
+                    strategy['tp_max'],
+                    strategy['stop_floor'],
+                    strategy['max_trades_per_day'],
+                    metrics.get('total_trades', 0),
+                    metrics.get('winning_trades', 0),
+                    metrics.get('losing_trades', 0),
+                    metrics.get('win_rate', 0),
+                    metrics.get('total_pnl', 0),
+                    metrics.get('roi', 0),
+                    metrics.get('sharpe_ratio', 0),
+                    metrics.get('max_drawdown', 0),
+                    score
+                ))
+            else:
+                cursor.execute("""
+                    INSERT INTO strategies (
+                        ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                        total_trades, winning_trades, losing_trades, win_rate, total_pnl, roi,
+                        sharpe_ratio, max_drawdown, score
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    strategy['ml_threshold'],
+                    strategy['risk_per_trade'],
+                    strategy['tp_min'],
+                    strategy['tp_max'],
+                    strategy['stop_floor'],
+                    strategy['max_trades_per_day'],
+                    metrics.get('total_trades', 0),
+                    metrics.get('winning_trades', 0),
+                    metrics.get('losing_trades', 0),
+                    metrics.get('win_rate', 0),
+                    metrics.get('total_pnl', 0),
+                    metrics.get('roi', 0),
+                    metrics.get('sharpe_ratio', 0),
+                    metrics.get('max_drawdown', 0),
+                    score
+                ))
     
     def get_top_strategies(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Get top performing strategies"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                   total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score
-            FROM strategies
-            ORDER BY score DESC
-            LIMIT ?
-        """, (limit,))
-        
-        rows = cursor.fetchall()
-        conn.close()
+        with get_db_connection('learning') as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                           total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score
+                    FROM strategies
+                    ORDER BY score DESC
+                    LIMIT %s
+                """, (limit,))
+            else:
+                cursor.execute("""
+                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                           total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score
+                    FROM strategies
+                    ORDER BY score DESC
+                    LIMIT ?
+                """, (limit,))
+            
+            rows = cursor.fetchall()
         
         strategies = []
         for row in rows:

@@ -3,14 +3,13 @@ Subscription Manager for SaaS Platform
 Manages subscription tiers, limits, and enforcement
 """
 
-import sqlite3
 import os
 from pathlib import Path
 from typing import Dict, Optional
 from datetime import datetime
 
-LOG_DIR = Path(os.getenv("LOG_DIR", "/root/ethbot/logs"))
-USERS_DB = LOG_DIR / "users.db"
+# Import database adapter
+from db_adapter import get_db_connection, USE_POSTGRES
 
 # Subscription tier definitions
 TIERS = {
@@ -56,15 +55,19 @@ class SubscriptionManager:
     
     def get_user_tier(self, user_id: int) -> str:
         """Get user's current subscription tier"""
-        conn = sqlite3.connect(USERS_DB)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT subscription_tier FROM users WHERE id = ?
-        """, (user_id,))
-        
-        result = cursor.fetchone()
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    SELECT subscription_tier FROM users WHERE id = %s
+                """, (user_id,))
+            else:
+                cursor.execute("""
+                    SELECT subscription_tier FROM users WHERE id = ?
+                """, (user_id,))
+            
+            result = cursor.fetchone()
         
         return result[0] if result else 'free'
     
@@ -101,16 +104,19 @@ class SubscriptionManager:
         if new_tier not in TIERS:
             return False
         
-        conn = sqlite3.connect(USERS_DB)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            UPDATE users SET subscription_tier = ? WHERE id = ?
-        """, (new_tier, user_id))
-        
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    UPDATE users SET subscription_tier = %s WHERE id = %s
+                """, (new_tier, user_id))
+            else:
+                cursor.execute("""
+                    UPDATE users SET subscription_tier = ? WHERE id = ?
+                """, (new_tier, user_id))
+            
+            success = cursor.rowcount > 0
         
         return success
     

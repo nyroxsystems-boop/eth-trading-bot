@@ -19,6 +19,9 @@ from pathlib import Path
 import csv
 import aiosqlite
 
+# Import database adapter
+from db_adapter import get_db_connection, USE_POSTGRES
+
 # Configuration
 DASHBOARD_SECRET = os.getenv("DASHBOARD_SECRET", "change_me")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
@@ -716,45 +719,49 @@ LEARNING_DB = Path(os.getenv("LOG_DIR", "/root/ethbot/logs")) / "learning.db"
 async def get_learning_stats():
     """Get auto-learning statistics"""
     try:
-        if not LEARNING_DB.exists():
-            return {
-                "total_tested": 0,
-                "best_score": 0,
-                "total_applied": 0,
-                "today_tested": 0,
-                "this_hour_tested": 0
-            }
-        
-        conn = sqlite3.connect(LEARNING_DB)
-        cursor = conn.cursor()
-        
-        # Total strategies tested
-        cursor.execute("SELECT COUNT(*) FROM strategies")
-        total_tested = cursor.fetchone()[0] or 0
-        
-        # Best score ever
-        cursor.execute("SELECT MAX(score) FROM strategies")
-        best_score = cursor.fetchone()[0] or 0
-        
-        # Applied strategies
-        cursor.execute("SELECT COUNT(*) FROM strategies WHERE applied = 1")
-        total_applied = cursor.fetchone()[0] or 0
-        
-        # Today's tests
-        cursor.execute("""
-            SELECT COUNT(*) FROM strategies 
-            WHERE DATE(timestamp) = DATE('now')
-        """)
-        today_tested = cursor.fetchone()[0] or 0
-        
-        # This hour's tests
-        cursor.execute("""
-            SELECT COUNT(*) FROM strategies 
-            WHERE datetime(timestamp) >= datetime('now', '-1 hour')
-        """)
-        this_hour_tested = cursor.fetchone()[0] or 0
-        
-        conn.close()
+        with get_db_connection('learning') as conn:
+            cursor = conn.cursor()
+            
+            # Total strategies tested
+            cursor.execute("SELECT COUNT(*) FROM strategies")
+            total_tested = cursor.fetchone()[0] or 0
+            
+            # Best score ever
+            cursor.execute("SELECT MAX(score) FROM strategies")
+            best_score = cursor.fetchone()[0] or 0
+            
+            # Applied strategies
+            if USE_POSTGRES:
+                cursor.execute("SELECT COUNT(*) FROM strategies WHERE applied = true")
+            else:
+                cursor.execute("SELECT COUNT(*) FROM strategies WHERE applied = 1")
+            total_applied = cursor.fetchone()[0] or 0
+            
+            # Today's tests (PostgreSQL and SQLite have different date functions)
+            if USE_POSTGRES:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM strategies 
+                    WHERE DATE(timestamp) = CURRENT_DATE
+                """)
+            else:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM strategies 
+                    WHERE DATE(timestamp) = DATE('now')
+                """)
+            today_tested = cursor.fetchone()[0] or 0
+            
+            # This hour's tests
+            if USE_POSTGRES:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM strategies 
+                    WHERE timestamp >= NOW() - INTERVAL '1 hour'
+                """)
+            else:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM strategies 
+                    WHERE datetime(timestamp) >= datetime('now', '-1 hour')
+                """)
+            this_hour_tested = cursor.fetchone()[0] or 0
         
         return {
             "total_tested": total_tested,
@@ -777,22 +784,27 @@ async def get_learning_stats():
 async def get_top_strategies(limit: int = 10):
     """Get top performing strategies"""
     try:
-        if not LEARNING_DB.exists():
-            return []
-        
-        conn = sqlite3.connect(LEARNING_DB)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                   total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score, timestamp, applied
-            FROM strategies
-            ORDER BY score DESC
-            LIMIT ?
-        """, (limit,))
-        
-        rows = cursor.fetchall()
-        conn.close()
+        with get_db_connection('learning') as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                           total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score, timestamp, applied
+                    FROM strategies
+                    ORDER BY score DESC
+                    LIMIT %s
+                """, (limit,))
+            else:
+                cursor.execute("""
+                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                           total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score, timestamp, applied
+                    FROM strategies
+                    ORDER BY score DESC
+                    LIMIT ?
+                """, (limit,))
+            
+            rows = cursor.fetchall()
         
         strategies = []
         for row in rows:
@@ -826,22 +838,27 @@ async def get_top_strategies(limit: int = 10):
 async def get_strategy_evolution(days: int = 7):
     """Get strategy score evolution over time"""
     try:
-        if not LEARNING_DB.exists():
-            return []
-        
-        conn = sqlite3.connect(LEARNING_DB)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT DATE(timestamp) as date, MAX(score) as best_score
-            FROM strategies
-            WHERE datetime(timestamp) >= datetime('now', '-' || ? || ' days')
-            GROUP BY DATE(timestamp)
-            ORDER BY date ASC
-        """, (days,))
-        
-        rows = cursor.fetchall()
-        conn.close()
+        with get_db_connection('learning') as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    SELECT DATE(timestamp) as date, MAX(score) as best_score
+                    FROM strategies
+                    WHERE timestamp >= NOW() - INTERVAL '%s days'
+                    GROUP BY DATE(timestamp)
+                    ORDER BY date ASC
+                """, (days,))
+            else:
+                cursor.execute("""
+                    SELECT DATE(timestamp) as date, MAX(score) as best_score
+                    FROM strategies
+                    WHERE datetime(timestamp) >= datetime('now', '-' || ? || ' days')
+                    GROUP BY DATE(timestamp)
+                    ORDER BY date ASC
+                """, (days,))
+            
+            rows = cursor.fetchall()
         
         evolution = []
         for row in rows:
@@ -859,23 +876,29 @@ async def get_strategy_evolution(days: int = 7):
 async def get_current_strategy():
     """Get currently applied strategy"""
     try:
-        if not LEARNING_DB.exists():
-            return None
-        
-        conn = sqlite3.connect(LEARNING_DB)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                   total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score, applied_at
-            FROM strategies
-            WHERE applied = 1
-            ORDER BY applied_at DESC
-            LIMIT 1
-        """)
-        
-        row = cursor.fetchone()
-        conn.close()
+        with get_db_connection('learning') as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                           total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score, applied_at
+                    FROM strategies
+                    WHERE applied = true
+                    ORDER BY applied_at DESC
+                    LIMIT 1
+                """)
+            else:
+                cursor.execute("""
+                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                           total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score, applied_at
+                    FROM strategies
+                    WHERE applied = 1
+                    ORDER BY applied_at DESC
+                    LIMIT 1
+                """)
+            
+            row = cursor.fetchone()
         
         if not row:
             return None
