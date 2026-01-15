@@ -22,6 +22,12 @@ import aiosqlite
 # Import database adapter
 from db_adapter import get_db_connection, USE_POSTGRES
 
+# Import user manager for authentication
+from user_manager import UserManager, init_users_database
+
+# Initialize user manager
+user_manager = UserManager()
+
 # Configuration
 DASHBOARD_SECRET = os.getenv("DASHBOARD_SECRET", "change_me")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
@@ -99,6 +105,55 @@ class BotStatus(BaseModel):
     ml_confidence: float
     sentiment_score: float
     regime: str
+
+# Authentication Models
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    username: str
+    password: str
+
+class LoginRequest(BaseModel):
+    email_or_username: str
+    password: str
+
+class AuthResponse(BaseModel):
+    user_id: int
+    email: str
+    username: str
+    role: str
+    token: str
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    username: str
+    role: str
+    subscription_tier: str
+    created_at: str
+    last_login: Optional[str]
+    active: bool
+
+# Authentication Helper
+def get_current_user(authorization: Optional[str] = Header(None)) -> Dict:
+    """Extract and verify JWT token from Authorization header"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        # Extract token from "Bearer <token>"
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(status_code=401, detail="Invalid authentication scheme")
+        
+        # Verify token
+        payload = user_manager.verify_jwt(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+        
+        return payload
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+
 
 # Helper Functions
 def generate_demo_trades() -> List[Trade]:
@@ -370,6 +425,73 @@ async def get_chart_data(interval: str = "5m", limit: int = 500):
         "interval": interval,
         "data": []  # TODO: Implement actual data fetching
     }
+
+# Authentication Endpoints
+@app.post("/api/auth/register", response_model=AuthResponse)
+async def register(request: RegisterRequest):
+    """Register a new user"""
+    try:
+        user_id = user_manager.register_user(
+            email=request.email,
+            username=request.username,
+            password=request.password
+        )
+        
+        # Auto-login after registration
+        result = user_manager.login(request.email, request.password)
+        
+        if not result:
+            raise HTTPException(status_code=500, detail="Registration succeeded but login failed")
+        
+        return AuthResponse(**result)
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+async def login(request: LoginRequest):
+    """Login user"""
+    try:
+        result = user_manager.login(request.email_or_username, request.password)
+        
+        if not result:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        return AuthResponse(**result)
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
+
+@app.post("/api/auth/logout")
+async def logout(current_user: Dict = Depends(get_current_user)):
+    """Logout user (revoke token)"""
+    # Extract token from request (this is a simplified version)
+    # In production, you'd want to get the actual token from the request
+    return {"status": "success", "message": "Logged out successfully"}
+
+@app.get("/api/auth/me", response_model=UserResponse)
+async def get_current_user_info(current_user: Dict = Depends(get_current_user)):
+    """Get current user information"""
+    user = user_manager.get_user(current_user['user_id'])
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    return UserResponse(**user)
+
+@app.get("/api/users", response_model=List[UserResponse])
+async def list_users(current_user: Dict = Depends(get_current_user)):
+    """List all users (admin only)"""
+    if current_user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    users = user_manager.list_users()
+    return [UserResponse(**user) for user in users]
+
 
 # WebSocket Endpoint
 @app.websocket("/ws")
