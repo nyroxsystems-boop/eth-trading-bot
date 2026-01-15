@@ -1,7 +1,14 @@
 import { useState, useEffect } from 'react'
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { AnimatePresence } from 'framer-motion'
 import './App.css'
 import './styles/premium.css'
+
+// Auth
+import { AuthProvider, useAuth } from './contexts/AuthContext'
+import ProtectedRoute from './components/ProtectedRoute'
+import LoginView from './views/LoginView'
+import RegisterView from './views/RegisterView'
 
 // Components
 import Header from './components/Header'
@@ -61,7 +68,8 @@ const generateTickerData = () => [
   { symbol: 'ADA', name: 'Cardano', price: 0.066415, change: 0.0078, changePercent: 18.5 },
 ]
 
-function App() {
+// Main Dashboard Component (protected)
+function Dashboard() {
   const [activePage, setActivePage] = useState('dashboard')
   const [trades, setTrades] = useState<Trade[]>([])
   const [metrics, setMetrics] = useState<Metrics | null>(null)
@@ -70,34 +78,34 @@ function App() {
   const [timeframe, setTimeframe] = useState('15M')
   const [candlestickData, setCandlestickData] = useState<CandleData[]>([])
   const [tickerData] = useState(generateTickerData())
+  const { token } = useAuth()
 
   useEffect(() => {
     setCandlestickData(generateCandlestickData(timeframe))
   }, [timeframe])
 
   useEffect(() => {
-    fetchTrades()
-    fetchMetrics()
-    fetchStatus()
-    // Refresh every 30 seconds
-    const interval = setInterval(() => {
+    if (token) {
+      fetchTrades()
       fetchMetrics()
       fetchStatus()
-    }, 30000)
-    return () => clearInterval(interval)
-  }, [])
+      const interval = setInterval(() => {
+        fetchMetrics()
+        fetchStatus()
+      }, 30000)
+      return () => clearInterval(interval)
+    }
+  }, [token])
 
   // WebSocket connection
   useEffect(() => {
-    if (!WS_URL || WS_URL === 'ws://localhost:8000/ws') {
-      console.warn('WebSocket URL not configured for production')
+    if (!WS_URL || WS_URL === 'ws://localhost:8000/ws' || !token) {
       return
     }
 
     try {
       const ws = new WebSocket(WS_URL)
       ws.onopen = () => {
-        console.log('WebSocket connected')
         setConnected(true)
       }
       ws.onmessage = (event) => {
@@ -113,14 +121,8 @@ function App() {
           console.error('Failed to parse WebSocket message:', err)
         }
       }
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error)
-        setConnected(false)
-      }
-      ws.onclose = () => {
-        console.log('WebSocket disconnected')
-        setConnected(false)
-      }
+      ws.onerror = () => setConnected(false)
+      ws.onclose = () => setConnected(false)
       return () => {
         try {
           ws.close()
@@ -132,11 +134,13 @@ function App() {
       console.error('Failed to create WebSocket:', err)
       setConnected(false)
     }
-  }, [])
+  }, [token])
 
   const fetchTrades = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/trades?limit=50`)
+      const res = await fetch(`${API_URL}/api/trades?limit=50`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      })
       const data = await res.json()
       setTrades(data)
     } catch (err) {
@@ -146,7 +150,9 @@ function App() {
 
   const fetchMetrics = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/performance`)
+      const res = await fetch(`${API_URL}/api/performance`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      })
       const data = await res.json()
       setMetrics(data)
     } catch (err) {
@@ -156,7 +162,9 @@ function App() {
 
   const fetchStatus = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/status`)
+      const res = await fetch(`${API_URL}/api/status`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      })
       const data = await res.json()
       setStatus(data)
     } catch (err) {
@@ -166,18 +174,10 @@ function App() {
 
   return (
     <div className="app-container">
-      {/* Animated Background */}
       <div className="app-background" />
-
-      {/* Header */}
       <Header onSettingsClick={() => setActivePage('settings')} />
-
-      {/* Layout */}
       <div className="app-layout">
-        {/* Sidebar */}
         <Sidebar activePage={activePage} onPageChange={setActivePage} />
-
-        {/* Main Content */}
         <main className="app-content">
           <AnimatePresence mode="wait">
             {activePage === 'dashboard' && (
@@ -200,9 +200,26 @@ function App() {
           </AnimatePresence>
         </main>
       </div>
-
-
     </div>
+  )
+}
+
+// Main App with Routing
+function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<LoginView />} />
+          <Route path="/register" element={<RegisterView />} />
+          <Route path="/*" element={
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          } />
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
   )
 }
 
