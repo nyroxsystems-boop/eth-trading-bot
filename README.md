@@ -243,3 +243,4 @@ nyroxsystems
 - [Quick Start](QUICK_START.md)
 - [Implementation Plan](/Users/xaaronvx/.gemini/antigravity/brain/9f301ab1-69a9-4746-b5bb-2c51ef781c05/implementation_plan.md)
 - [Walkthrough](/Users/xaaronvx/.gemini/antigravity/brain/9f301ab1-69a9-4746-b5bb-2c51ef781c05/walkthrough.md)
+# Trigger Railway Rebuild
