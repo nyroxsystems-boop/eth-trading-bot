@@ -499,11 +499,30 @@ async def logout(current_user: Dict = Depends(get_current_user)):
 @app.get("/api/auth/me", response_model=UserResponse)
 async def get_current_user_info(current_user: Dict = Depends(get_current_user)):
     """Get current user information"""
-    # current_user is already the full user object from get_current_user dependency
-    if not current_user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    return UserResponse(**current_user)
+    try:
+        # current_user is already the full user object from get_current_user dependency
+        if not current_user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Convert created_at to string if it's a datetime object
+        user_data = dict(current_user)
+        if hasattr(user_data.get('created_at'), 'isoformat'):
+            user_data['created_at'] = user_data['created_at'].isoformat()
+        if hasattr(user_data.get('last_login'), 'isoformat'):
+            user_data['last_login'] = user_data['last_login'].isoformat()
+        elif user_data.get('last_login') is None:
+            user_data['last_login'] = None
+        
+        # Ensure all required fields are strings
+        user_data['created_at'] = str(user_data.get('created_at', ''))
+        if user_data.get('last_login'):
+            user_data['last_login'] = str(user_data['last_login'])
+        
+        return UserResponse(**user_data)
+    except Exception as e:
+        print(f"❌ Error in /api/auth/me: {type(e).__name__}: {e}")
+        print(f"   current_user data: {current_user}")
+        raise HTTPException(status_code=500, detail=f"Error processing user data: {str(e)}")
 
 @app.get("/api/users", response_model=List[UserResponse])
 async def list_users(current_user: Dict = Depends(get_current_user)):

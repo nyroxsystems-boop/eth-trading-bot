@@ -80,9 +80,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
 
         const data = await res.json()
+
+        // API returns user data directly with user_id, not nested under 'user'
+        const userData: User = {
+            id: data.user_id,
+            email: data.email,
+            username: data.username,
+            role: data.role,
+            subscription_tier: 'free' // Default, will be fetched from /api/auth/me
+        }
+
         setToken(data.token)
-        setUser(data.user)
+        setUser(userData)
         localStorage.setItem('auth_token', data.token)
+
+        // Fetch full user data including subscription_tier
+        await fetchCurrentUser(data.token)
     }
 
     const register = async (email: string, username: string, password: string) => {
