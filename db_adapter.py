@@ -45,7 +45,7 @@ def get_connection():
         return _pg_pool.getconn()
     else:
         # Fallback to SQLite for local development
-        log_dir = Path(os.getenv("LOG_DIR", "/root/ethbot/logs"))
+        log_dir = Path(os.getenv("LOG_DIR", "./logs"))
         log_dir.mkdir(parents=True, exist_ok=True)
         db_path = log_dir / "ethbot.db"
         return sqlite3.connect(str(db_path))

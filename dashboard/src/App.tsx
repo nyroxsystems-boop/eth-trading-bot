@@ -21,6 +21,7 @@ import LearningView from './views/LearningView'
 import AccountsView from './views/AccountsView'
 import BotsView from './views/BotsView'
 import SettingsView from './views/SettingsView'
+import SubscriptionView from './views/SubscriptionView'
 
 // Types
 import { Trade, Metrics, BotStatus, CandleData } from './types'
@@ -196,6 +197,7 @@ function Dashboard() {
             {activePage === 'learning' && <LearningView key="learning" />}
             {activePage === 'accounts' && <AccountsView key="accounts" />}
             {activePage === 'bots' && <BotsView key="bots" />}
+            {activePage === 'subscription' && <SubscriptionView key="subscription" />}
             {activePage === 'settings' && <SettingsView key="settings" />}
           </AnimatePresence>
         </main>

@@ -1,4 +1,4 @@
-import { Home, TrendingUp, Bot, Settings, Brain, Users } from 'lucide-react'
+import { Home, TrendingUp, Bot, Settings, Brain, Users, Crown } from 'lucide-react'
 
 interface SidebarProps {
     activePage: string
@@ -12,6 +12,7 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
         { id: 'learning', icon: Brain, label: 'Learning' },
         { id: 'accounts', icon: Users, label: 'Accounts' },
         { id: 'bots', icon: Bot, label: 'Bots' },
+        { id: 'subscription', icon: Crown, label: 'Subscription' },
         { id: 'settings', icon: Settings, label: 'Settings' },
     ]
 

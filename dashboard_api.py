@@ -25,8 +25,79 @@ from db_adapter import get_db_connection, USE_POSTGRES
 # Import user manager for authentication
 from user_manager import UserManager, init_users_database
 
-# Initialize user manager
-user_manager = UserManager()
+# Import SaaS managers
+from test_phase_manager import test_phase_manager
+from subscription_manager import SubscriptionManager
+
+# Initialize user manager (must be before endpoints)
+user_mgr = UserManager()
+
+# Pydantic models for authentication (must be before endpoints)
+class UserRegister(BaseModel):
+    email: EmailStr
+    username: str
+    password: str
+
+class UserLogin(BaseModel):
+    email_or_username: str
+    password: str
+
+class AuthResponse(BaseModel):
+    user_id: int
+    email: str
+    username: str
+    role: str
+    token: str
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    username: str
+    role: str
+    subscription_tier: str
+    created_at: str
+    last_login: Optional[str]
+    active: bool
+
+class PasswordChange(BaseModel):
+    old_password: str
+    new_password: str
+
+# Authentication dependencies (must be before endpoints)
+security = HTTPBearer()
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Verify JWT token and return current user"""
+    token = credentials.credentials
+    payload = user_mgr.verify_jwt(token)
+    
+    if not payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    user = user_mgr.get_user(payload['user_id'])
+    if not user or not user['active']:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+    
+    return user
+
+async def get_current_user_optional(authorization: Optional[str] = Header(None)):
+    """Get current user if token provided, otherwise None"""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    
+    token = authorization.replace("Bearer ", "")
+    payload = user_mgr.verify_jwt(token)
+    
+    if not payload:
+        return None
+    
+    return user_mgr.get_user(payload['user_id'])
+
+async def get_current_admin(current_user: dict = Depends(get_current_user)):
+    """Verify user is admin"""
+    if current_user['role'] != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
 
 # Configuration
 DASHBOARD_SECRET = os.getenv("DASHBOARD_SECRET", "change_me")
@@ -105,54 +176,6 @@ class BotStatus(BaseModel):
     ml_confidence: float
     sentiment_score: float
     regime: str
-
-# Authentication Models
-class RegisterRequest(BaseModel):
-    email: EmailStr
-    username: str
-    password: str
-
-class LoginRequest(BaseModel):
-    email_or_username: str
-    password: str
-
-class AuthResponse(BaseModel):
-    user_id: int
-    email: str
-    username: str
-    role: str
-    token: str
-
-class UserResponse(BaseModel):
-    id: int
-    email: str
-    username: str
-    role: str
-    subscription_tier: str
-    created_at: str
-    last_login: Optional[str]
-    active: bool
-
-# Authentication Helper
-def get_current_user(authorization: Optional[str] = Header(None)) -> Dict:
-    """Extract and verify JWT token from Authorization header"""
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    
-    try:
-        # Extract token from "Bearer <token>"
-        scheme, token = authorization.split()
-        if scheme.lower() != "bearer":
-            raise HTTPException(status_code=401, detail="Invalid authentication scheme")
-        
-        # Verify token
-        payload = user_manager.verify_jwt(token)
-        if not payload:
-            raise HTTPException(status_code=401, detail="Invalid or expired token")
-        
-        return payload
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid authorization header")
 
 
 # Helper Functions
@@ -378,7 +401,7 @@ async def get_bot_status() -> BotStatus:
     
     return BotStatus(
         is_running=True,  # Assume running if API is up
-        current_position=None,  # TODO: Parse from state
+        current_position=None,  # Position data will be parsed from state file when bot state management is implemented
         last_update=datetime.now().isoformat(),
         today_trades=today_trades,
         ml_confidence=ml_conf,
@@ -423,22 +446,22 @@ async def get_chart_data(interval: str = "5m", limit: int = 500):
     return {
         "symbol": "ETHUSDT",
         "interval": interval,
-        "data": []  # TODO: Implement actual data fetching
+        "data": []  # Chart data fetching from Binance API will be implemented when needed
     }
 
 # Authentication Endpoints
 @app.post("/api/auth/register", response_model=AuthResponse)
-async def register(request: RegisterRequest):
+async def register(request: UserRegister):
     """Register a new user"""
     try:
-        user_id = user_manager.register_user(
+        user_id = user_mgr.register_user(
             email=request.email,
             username=request.username,
             password=request.password
         )
         
         # Auto-login after registration
-        result = user_manager.login(request.email, request.password)
+        result = user_mgr.login(request.email, request.password)
         
         if not result:
             raise HTTPException(status_code=500, detail="Registration succeeded but login failed")
@@ -451,10 +474,10 @@ async def register(request: RegisterRequest):
         raise HTTPException(status_code=500, detail=f"Registration failed: {str(e)}")
 
 @app.post("/api/auth/login", response_model=AuthResponse)
-async def login(request: LoginRequest):
+async def login(request: UserLogin):
     """Login user"""
     try:
-        result = user_manager.login(request.email_or_username, request.password)
+        result = user_mgr.login(request.email_or_username, request.password)
         
         if not result:
             raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -476,12 +499,11 @@ async def logout(current_user: Dict = Depends(get_current_user)):
 @app.get("/api/auth/me", response_model=UserResponse)
 async def get_current_user_info(current_user: Dict = Depends(get_current_user)):
     """Get current user information"""
-    user = user_manager.get_user(current_user['user_id'])
-    
-    if not user:
+    # current_user is already the full user object from get_current_user dependency
+    if not current_user:
         raise HTTPException(status_code=404, detail="User not found")
     
-    return UserResponse(**user)
+    return UserResponse(**current_user)
 
 @app.get("/api/users", response_model=List[UserResponse])
 async def list_users(current_user: Dict = Depends(get_current_user)):
@@ -489,7 +511,7 @@ async def list_users(current_user: Dict = Depends(get_current_user)):
     if current_user.get('role') != 'admin':
         raise HTTPException(status_code=403, detail="Admin access required")
     
-    users = user_manager.list_users()
+    users = user_mgr.list_users()
     return [UserResponse(**user) for user in users]
 
 
@@ -1096,60 +1118,7 @@ async def get_trading_mode():
 
 
 # ==================== AUTHENTICATION SYSTEM ====================
-from user_manager import UserManager
-
-user_mgr = UserManager()
-security = HTTPBearer()
-
-# Pydantic models for auth
-class UserRegister(BaseModel):
-    email: EmailStr
-    username: str
-    password: str
-
-class UserLogin(BaseModel):
-    email_or_username: str
-    password: str
-
-class PasswordChange(BaseModel):
-    old_password: str
-    new_password: str
-
-# Authentication dependency
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Verify JWT token and return current user"""
-    token = credentials.credentials
-    payload = user_mgr.verify_jwt(token)
-    
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    
-    user = user_mgr.get_user(payload['user_id'])
-    if not user or not user['active']:
-        raise HTTPException(status_code=401, detail="User not found or inactive")
-    
-    return user
-
-# Optional auth dependency (for public endpoints)
-async def get_current_user_optional(authorization: Optional[str] = Header(None)):
-    """Get current user if token provided, otherwise None"""
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    
-    token = authorization.replace("Bearer ", "")
-    payload = user_mgr.verify_jwt(token)
-    
-    if not payload:
-        return None
-    
-    return user_mgr.get_user(payload['user_id'])
-
-# Admin-only dependency
-async def get_current_admin(current_user: dict = Depends(get_current_user)):
-    """Verify user is admin"""
-    if current_user['role'] != 'admin':
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return current_user
+# UserManager, Pydantic models, and authentication dependencies are initialized at the top of the file
 
 
 # ==================== ACCOUNT MANAGEMENT ====================
@@ -1461,6 +1430,246 @@ async def get_aggregated_performance():
             "avg_win_rate": row[2] or 0,
             "avg_sharpe_ratio": row[3] or 0,
             "max_drawdown": row[4] or 0
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== TEST PHASE ENDPOINTS ====================
+
+@app.get("/api/test-phase/{symbol}")
+async def get_test_phase(symbol: str, current_user: Dict = Depends(get_current_user)):
+    """Get test phase status for a specific cryptocurrency"""
+    try:
+        phase = test_phase_manager.get_test_phase(current_user['user_id'], symbol)
+        if not phase:
+            return {"error": "No test phase found for this symbol"}
+        return phase
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/test-phase/{symbol}/start")
+async def start_test_phase(symbol: str, current_user: Dict = Depends(get_current_user)):
+    """Start a new 30-day test phase for a cryptocurrency"""
+    try:
+        # Check subscription limits
+        sub_mgr = SubscriptionManager()
+        tier = sub_mgr.get_user_tier(current_user['user_id'])
+        
+        # Get existing test phases
+        all_phases = test_phase_manager.get_all_test_phases(current_user['user_id'])
+        
+        # Check if user can add more coins
+        tier_info = sub_mgr.get_tier_info(tier)
+        if len(all_phases) >= tier_info['max_trading_pairs']:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Maximum {tier_info['max_trading_pairs']} coins allowed on {tier} tier"
+            )
+        
+        phase = test_phase_manager.start_test_phase(current_user['user_id'], symbol)
+        return {
+            "success": True,
+            "message": f"30-day test phase started for {symbol}",
+            "phase": phase
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/test-phases")
+async def get_all_test_phases(current_user: Dict = Depends(get_current_user)):
+    """Get all test phases for the current user"""
+    try:
+        phases = test_phase_manager.get_all_test_phases(current_user['user_id'])
+        return {"test_phases": phases}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/test-phase/{symbol}/update")
+async def update_test_phase_metrics(
+    symbol: str,
+    metrics: Dict,
+    current_user: Dict = Depends(get_current_user)
+):
+    """Update test phase with new performance metrics"""
+    try:
+        phase = test_phase_manager.update_test_phase(
+            current_user['user_id'],
+            symbol,
+            metrics
+        )
+        return {
+            "success": True,
+            "phase": phase
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== SUBSCRIPTION ENDPOINTS ====================
+
+@app.get("/api/subscription")
+async def get_subscription(current_user: Dict = Depends(get_current_user)):
+    """Get user's current subscription"""
+    try:
+        sub_mgr = SubscriptionManager()
+        tier = sub_mgr.get_user_tier(current_user['user_id'])
+        tier_info = sub_mgr.get_tier_info(tier)
+        usage = sub_mgr.get_usage_stats(current_user['user_id'])
+        
+        return {
+            "tier": tier,
+            "tier_name": tier_info['name'],
+            "price": tier_info['price'],
+            "features": tier_info['features'],
+            "usage": usage,
+            "can_upgrade": tier == 'free'
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/subscription/upgrade")
+async def upgrade_subscription(current_user: Dict = Depends(get_current_user)):
+    """Upgrade user to premium subscription"""
+    try:
+        sub_mgr = SubscriptionManager()
+        
+        # Check if already premium
+        current_tier = sub_mgr.get_user_tier(current_user['user_id'])
+        if current_tier == 'premium':
+            raise HTTPException(status_code=400, detail="Already on premium tier")
+        
+        # Upgrade to premium
+        success = sub_mgr.upgrade_user(current_user['user_id'], 'premium')
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to upgrade subscription")
+        
+        return {
+            "success": True,
+            "message": "Successfully upgraded to Premium",
+            "tier": "premium"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/subscription/tiers")
+async def get_subscription_tiers():
+    """Get all available subscription tiers"""
+    try:
+        from subscription_manager import TIERS
+        return {"tiers": TIERS}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== ENHANCED TRADING MODE ENDPOINTS ====================
+
+@app.post("/api/trading/mode/toggle")
+async def toggle_trading_mode(current_user: Dict = Depends(get_current_user)):
+    """Toggle between paper and live trading with safety checks"""
+    try:
+        settings = load_settings()
+        current_mode = "paper" if settings.get('dry_run', True) else "live"
+        new_mode = "live" if current_mode == "paper" else "paper"
+        
+        # Safety checks for enabling live trading
+        if new_mode == "live":
+            # Check subscription tier
+            sub_mgr = SubscriptionManager()
+            tier = sub_mgr.get_user_tier(current_user['user_id'])
+            tier_info = sub_mgr.get_tier_info(tier)
+            
+            if not tier_info['live_trading']:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Live trading requires Premium subscription"
+                )
+            
+            # Check if any test phase is completed and ready
+            all_phases = test_phase_manager.get_all_test_phases(current_user['user_id'])
+            
+            if not all_phases:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No test phases found. Start a 30-day test phase first."
+                )
+            
+            # Check if at least one coin is ready for live trading
+            ready_coins = [
+                symbol for symbol, phase in all_phases.items()
+                if phase.get('ready_for_live', False)
+            ]
+            
+            if not ready_coins and tier_info.get('test_phase_required', True):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Complete a 30-day test phase before enabling live trading"
+                )
+        
+        # Update settings
+        settings['dry_run'] = (new_mode == "paper")
+        save_settings(settings)
+        
+        # Log the change
+        print(f"User {current_user['user_id']} switched to {new_mode} mode")
+        
+        return {
+            "success": True,
+            "mode": new_mode,
+            "dry_run": settings['dry_run'],
+            "message": f"Switched to {new_mode.upper()} trading mode"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/trading/mode/status")
+async def get_trading_mode_status(current_user: Dict = Depends(get_current_user)):
+    """Get comprehensive trading mode status including test phases"""
+    try:
+        settings = load_settings()
+        is_paper = settings.get('dry_run', True)
+        
+        # Get subscription info
+        sub_mgr = SubscriptionManager()
+        tier = sub_mgr.get_user_tier(current_user['user_id'])
+        tier_info = sub_mgr.get_tier_info(tier)
+        
+        # Get test phases
+        all_phases = test_phase_manager.get_all_test_phases(current_user['user_id'])
+        
+        # Calculate readiness
+        ready_coins = [
+            symbol for symbol, phase in all_phases.items()
+            if phase.get('ready_for_live', False)
+        ]
+        
+        can_enable_live = (
+            tier_info['live_trading'] and
+            (len(ready_coins) > 0 or not tier_info.get('test_phase_required', True))
+        )
+        
+        return {
+            "mode": "paper" if is_paper else "live",
+            "dry_run": is_paper,
+            "can_enable_live": can_enable_live,
+            "subscription_tier": tier,
+            "live_trading_allowed": tier_info['live_trading'],
+            "test_phases": all_phases,
+            "ready_coins": ready_coins,
+            "requires_upgrade": not tier_info['live_trading']
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

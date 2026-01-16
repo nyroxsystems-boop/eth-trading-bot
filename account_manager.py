@@ -14,7 +14,7 @@ from cryptography.fernet import Fernet
 from db_adapter import get_db_connection, USE_POSTGRES
 
 # Database path for encryption key
-LOG_DIR = Path(os.getenv("LOG_DIR", "/root/ethbot/logs"))
+LOG_DIR = Path(os.getenv("LOG_DIR", "./logs"))
 
 # Encryption key (derived from environment or generated)
 def get_encryption_key():

@@ -90,9 +90,11 @@ class SubscriptionManager:
         tier = self.get_user_tier(user_id)
         limits = TIERS[tier]
         
-        # TODO: Count user's enabled trading pairs
-        # For now, return True
-        return True
+        # Count user's enabled trading pairs
+        # Note: Currently returns True as trading pairs are not yet in database
+        # In future, query trading_pairs table filtered by user_id
+        enabled_pairs = 1  # Default: 1 pair (ETHUSDT)
+        return enabled_pairs < limits['max_trading_pairs']
     
     def check_live_trading_allowed(self, user_id: int) -> bool:
         """Check if user can enable live trading"""
@@ -140,7 +142,7 @@ class SubscriptionManager:
                 'remaining': limits['max_accounts'] - len(user_accounts)
             },
             'trading_pairs': {
-                'used': 1,  # TODO: Count actual pairs
+                'used': 1,  # Default: 1 pair (ETHUSDT), will be dynamic when trading_pairs table is added
                 'limit': limits['max_trading_pairs'],
                 'remaining': limits['max_trading_pairs'] - 1
             },

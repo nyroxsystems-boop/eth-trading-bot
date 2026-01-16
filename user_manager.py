@@ -285,14 +285,20 @@ class UserManager:
             # Generate JWT
             token = self.generate_jwt(user_id, email, role)
             
-            # Store session
+            # Store session (delete old ones first to avoid unique constraint)
             if USE_POSTGRES:
+                cursor.execute("""
+                    DELETE FROM sessions WHERE user_id = %s
+                """, (user_id,))
                 cursor.execute("""
                     INSERT INTO sessions (user_id, token, expires_at)
                     VALUES (%s, %s, %s)
                 """, (user_id, token, 
                       (datetime.now() + timedelta(hours=JWT_EXPIRATION_HOURS)).isoformat()))
             else:
+                cursor.execute("""
+                    DELETE FROM sessions WHERE user_id = ?
+                """, (user_id,))
                 cursor.execute("""
                     INSERT INTO sessions (user_id, token, expires_at)
                     VALUES (?, ?, ?)
