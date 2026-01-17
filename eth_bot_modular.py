@@ -16,6 +16,7 @@ from src.core.ml_engine import MLEngine
 from src.core.strategy import TradingStrategy
 from src.core.risk_manager import RiskManager, Position
 from src.core.order_executor import OrderExecutor
+from src.ml.ml_trading_engine import MLTradingEngine
 
 # Setup logger
 logger = setup_logger('ethbot_modular', level='INFO')
@@ -52,7 +53,8 @@ def decide_and_trade(
     ml_engine: MLEngine,
     strategy: TradingStrategy,
     risk_manager: RiskManager,
-    order_executor: OrderExecutor
+    order_executor: OrderExecutor,
+    ml_trading: Optional['MLTradingEngine'] = None
 ):
     """Main trading decision logic"""
     global open_position, today_trades, last_trade_day, bars_in_position
@@ -163,8 +165,28 @@ def decide_and_trade(
     
     should_enter, entry_reason = strategy.should_enter_long(signal, regime)
     
+    # Check DQN override if available
+    dqn_info = ""
+    if ml_trading and ml_trading.is_loaded:
+        dqn_signal = ml_trading.get_dqn_signal(df_with_indicators)
+        dqn_action = dqn_signal.get("signal", "HOLD")
+        dqn_confidence = dqn_signal.get("confidence", 0)
+        
+        # DQN can override entry decision
+        if should_enter and dqn_action == "SELL":
+            # DQN says don't buy - check confidence
+            if dqn_confidence > 0.7:
+                should_enter = False
+                entry_reason = f"DQN Override: SELL ({dqn_confidence:.1%})"
+        elif not should_enter and dqn_action == "BUY" and dqn_confidence > 0.7:
+            # DQN says buy with high confidence
+            should_enter = True
+            entry_reason = f"DQN Signal: BUY ({dqn_confidence:.1%})"
+        
+        dqn_info = f" | DQN={dqn_action}({dqn_confidence:.0%})"
+    
     if not should_enter:
-        logger.debug(f"No entry: {entry_reason}")
+        logger.debug(f"No entry: {entry_reason}{dqn_info}")
         return
     
     # Calculate position size
@@ -216,6 +238,9 @@ def main_loop():
     risk_manager = RiskManager()
     order_executor = OrderExecutor()
     
+    # Initialize ML Trading Engine with DQN
+    ml_trading = MLTradingEngine(use_dqn=True, confidence_threshold=0.6)
+    
     # Startup message
     startup_msg = (
         f"✅ Bot started | "
@@ -233,7 +258,7 @@ def main_loop():
         cycle_start = time.time()
         
         try:
-            decide_and_trade(market_data, ml_engine, strategy, risk_manager, order_executor)
+            decide_and_trade(market_data, ml_engine, strategy, risk_manager, order_executor, ml_trading)
         except Exception as e:
             logger.error(f"Trading cycle error: {e}", exc_info=True)
         

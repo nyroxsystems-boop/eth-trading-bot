@@ -2038,6 +2038,112 @@ async def get_dqn_live_training():
         return {"status": "error", "message": str(e)}
 
 
+@app.get("/api/ml/ensemble/signal")
+async def get_ensemble_signal():
+    """Get ensemble prediction combining DQN + GB + LSTM"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.ml.dqn_ensemble_adapter import UnifiedEnsemble
+        import numpy as np
+        
+        ensemble = UnifiedEnsemble()
+        
+        # Generate test prices (in production, use live data)
+        prices = np.random.uniform(3000, 3500, 30)
+        
+        result = ensemble.predict(prices)
+        result["models_status"] = ensemble.get_status()
+        
+        return result
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/ml/performance")
+async def get_ml_performance():
+    """Get ML model performance metrics"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.ml.ml_performance_tracker import get_performance_tracker
+        
+        tracker = get_performance_tracker()
+        metrics = tracker.get_metrics()
+        
+        return {
+            "status": "success",
+            "metrics": metrics,
+            "prediction_count": len(tracker.predictions),
+            "outcome_count": len(tracker.outcomes)
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/ml/backtest")
+async def get_backtest_results():
+    """Get latest backtest results"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.ml.ml_backtester import MLBacktester
+        
+        backtester = MLBacktester()
+        results = backtester.get_latest_results()
+        
+        return {
+            "status": "success",
+            "results": results[-5:] if results else [],
+            "total_backtests": len(results)
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/ml/backtest/run")
+async def run_backtest(model: str = "ensemble", days: int = 30):
+    """Run a new backtest"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.ml.ml_backtester import MLBacktester
+        from dataclasses import asdict
+        
+        backtester = MLBacktester()
+        prices = backtester.load_price_data(days=days)
+        result = backtester.run_backtest(prices, model=model)
+        
+        return {
+            "status": "success",
+            "result": asdict(result)
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/ml/retrain/status")
+async def get_retrain_status():
+    """Get auto-retrain system status"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.ml.auto_retrain import get_auto_retrainer
+        
+        retrainer = get_auto_retrainer()
+        return {
+            "status": "success",
+            **retrainer.get_status()
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("DASHBOARD_PORT", 8000))
