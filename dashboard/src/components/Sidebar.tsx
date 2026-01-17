@@ -6,6 +6,7 @@ interface MenuItem {
     icon: React.ElementType
     label: string
     adminOnly?: boolean
+    hideForAdmin?: boolean
 }
 
 interface SidebarProps {
@@ -24,13 +25,17 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
         { id: 'ml', icon: Cpu, label: 'ML / AI' },
         { id: 'accounts', icon: Users, label: 'Accounts' },
         { id: 'bots', icon: Bot, label: 'Bots' },
-        { id: 'subscription', icon: Crown, label: 'Subscription' },
+        { id: 'subscription', icon: Crown, label: 'Subscription', hideForAdmin: true },
         { id: 'settings', icon: Settings, label: 'Settings' },
         { id: 'admin', icon: Shield, label: 'Admin', adminOnly: true },
     ]
 
-    // Filter out admin-only items for non-admin users
-    const visibleMenuItems = menuItems.filter(item => !item.adminOnly || isAdmin)
+    // Filter: hide adminOnly for non-admins, hide hideForAdmin for admins
+    const visibleMenuItems = menuItems.filter(item => {
+        if (item.adminOnly && !isAdmin) return false
+        if (item.hideForAdmin && isAdmin) return false
+        return true
+    })
 
     return (
         <div className="fixed left-0 top-0 h-screen w-20 bg-gradient-to-b from-slate-950 to-slate-900 border-r border-slate-800/50 flex flex-col items-center py-6 z-50 backdrop-blur-xl">
