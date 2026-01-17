@@ -360,7 +360,7 @@ class NeuralStrategyPredictor:
             return
         
         try:
-            data = torch.load(self.model_path, map_location=self.device)
+            data = torch.load(self.model_path, map_location=self.device, weights_only=False)
             
             self.scaler_mean = data['scaler_mean']
             self.scaler_std = data['scaler_std']

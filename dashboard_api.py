@@ -1859,7 +1859,7 @@ async def get_dqn_info():
         if not dqn_path.exists():
             return {"status": "not_trained", "message": "DQN model not found"}
         
-        data = torch.load(dqn_path, map_location='cpu')
+        data = torch.load(dqn_path, map_location='cpu', weights_only=False)
         
         # Extract training stats
         training_stats = data.get('training_stats', {})

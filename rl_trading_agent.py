@@ -445,7 +445,7 @@ class DQNAgent:
             return
         
         try:
-            data = torch.load(self.model_path, map_location=self.device)
+            data = torch.load(self.model_path, map_location=self.device, weights_only=False)
             self.policy_net.load_state_dict(data['policy_state'])
             self.target_net.load_state_dict(data['target_state'])
             self.optimizer.load_state_dict(data['optimizer_state'])
