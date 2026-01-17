@@ -1486,7 +1486,7 @@ async def get_aggregated_performance():
 async def get_test_phase(symbol: str, current_user: Dict = Depends(get_current_user)):
     """Get test phase status for a specific cryptocurrency"""
     try:
-        phase = test_phase_manager.get_test_phase(current_user['user_id'], symbol)
+        phase = test_phase_manager.get_test_phase(current_user['id'], symbol)
         if not phase:
             return {"error": "No test phase found for this symbol"}
         return phase
@@ -1500,10 +1500,10 @@ async def start_test_phase(symbol: str, current_user: Dict = Depends(get_current
     try:
         # Check subscription limits
         sub_mgr = SubscriptionManager()
-        tier = sub_mgr.get_user_tier(current_user['user_id'])
+        tier = sub_mgr.get_user_tier(current_user['id'])
         
         # Get existing test phases
-        all_phases = test_phase_manager.get_all_test_phases(current_user['user_id'])
+        all_phases = test_phase_manager.get_all_test_phases(current_user['id'])
         
         # Check if user can add more coins
         tier_info = sub_mgr.get_tier_info(tier)
@@ -1513,7 +1513,7 @@ async def start_test_phase(symbol: str, current_user: Dict = Depends(get_current
                 detail=f"Maximum {tier_info['max_trading_pairs']} coins allowed on {tier} tier"
             )
         
-        phase = test_phase_manager.start_test_phase(current_user['user_id'], symbol)
+        phase = test_phase_manager.start_test_phase(current_user['id'], symbol)
         return {
             "success": True,
             "message": f"30-day test phase started for {symbol}",
@@ -1529,7 +1529,7 @@ async def start_test_phase(symbol: str, current_user: Dict = Depends(get_current
 async def get_all_test_phases(current_user: Dict = Depends(get_current_user)):
     """Get all test phases for the current user"""
     try:
-        phases = test_phase_manager.get_all_test_phases(current_user['user_id'])
+        phases = test_phase_manager.get_all_test_phases(current_user['id'])
         return {"test_phases": phases}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1544,7 +1544,7 @@ async def update_test_phase_metrics(
     """Update test phase with new performance metrics"""
     try:
         phase = test_phase_manager.update_test_phase(
-            current_user['user_id'],
+            current_user['id'],
             symbol,
             metrics
         )
@@ -1563,9 +1563,9 @@ async def get_subscription(current_user: Dict = Depends(get_current_user)):
     """Get user's current subscription"""
     try:
         sub_mgr = SubscriptionManager()
-        tier = sub_mgr.get_user_tier(current_user['user_id'])
+        tier = sub_mgr.get_user_tier(current_user['id'])
         tier_info = sub_mgr.get_tier_info(tier)
-        usage = sub_mgr.get_usage_stats(current_user['user_id'])
+        usage = sub_mgr.get_usage_stats(current_user['id'])
         
         return {
             "tier": tier,
@@ -1586,12 +1586,12 @@ async def upgrade_subscription(current_user: Dict = Depends(get_current_user)):
         sub_mgr = SubscriptionManager()
         
         # Check if already premium
-        current_tier = sub_mgr.get_user_tier(current_user['user_id'])
+        current_tier = sub_mgr.get_user_tier(current_user['id'])
         if current_tier == 'premium':
             raise HTTPException(status_code=400, detail="Already on premium tier")
         
         # Upgrade to premium
-        success = sub_mgr.upgrade_user(current_user['user_id'], 'premium')
+        success = sub_mgr.upgrade_user(current_user['id'], 'premium')
         
         if not success:
             raise HTTPException(status_code=500, detail="Failed to upgrade subscription")
@@ -1631,7 +1631,7 @@ async def toggle_trading_mode(current_user: Dict = Depends(get_current_user)):
         if new_mode == "live":
             # Check subscription tier
             sub_mgr = SubscriptionManager()
-            tier = sub_mgr.get_user_tier(current_user['user_id'])
+            tier = sub_mgr.get_user_tier(current_user['id'])
             tier_info = sub_mgr.get_tier_info(tier)
             
             if not tier_info['live_trading']:
@@ -1641,7 +1641,7 @@ async def toggle_trading_mode(current_user: Dict = Depends(get_current_user)):
                 )
             
             # Check if any test phase is completed and ready
-            all_phases = test_phase_manager.get_all_test_phases(current_user['user_id'])
+            all_phases = test_phase_manager.get_all_test_phases(current_user['id'])
             
             if not all_phases:
                 raise HTTPException(
@@ -1666,7 +1666,7 @@ async def toggle_trading_mode(current_user: Dict = Depends(get_current_user)):
         save_settings(settings)
         
         # Log the change
-        print(f"User {current_user['user_id']} switched to {new_mode} mode")
+        print(f"User {current_user['id']} switched to {new_mode} mode")
         
         return {
             "success": True,
@@ -1689,11 +1689,11 @@ async def get_trading_mode_status(current_user: Dict = Depends(get_current_user)
         
         # Get subscription info
         sub_mgr = SubscriptionManager()
-        tier = sub_mgr.get_user_tier(current_user['user_id'])
+        tier = sub_mgr.get_user_tier(current_user['id'])
         tier_info = sub_mgr.get_tier_info(tier)
         
         # Get test phases
-        all_phases = test_phase_manager.get_all_test_phases(current_user['user_id'])
+        all_phases = test_phase_manager.get_all_test_phases(current_user['id'])
         
         # Calculate readiness
         ready_coins = [
@@ -1728,7 +1728,7 @@ async def create_subscription_checkout(current_user: Dict = Depends(get_current_
     """Create Stripe checkout session for Premium upgrade"""
     try:
         result = create_checkout_session(
-            user_id=current_user['user_id'],
+            user_id=current_user['id'],
             user_email=current_user['email'],
             tier="premium"
         )
