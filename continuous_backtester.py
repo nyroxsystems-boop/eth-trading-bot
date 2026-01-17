@@ -307,16 +307,25 @@ class ContinuousBacktester:
     async def _post_cycle_ml_and_apply(self):
         """Run ML training and auto-apply after each cycle"""
         try:
-            # 1. Train/update ML model
-            from ml_strategy_predictor import MLStrategyPredictor
-            print("\n🧠 Updating ML model...")
-            predictor = MLStrategyPredictor(db_path=str(self.db_path))
-            if predictor.train():
-                # Show feature importance
-                importance = predictor.get_feature_importance()
-                if importance:
-                    top_features = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:3]
-                    print(f"   Top features: {', '.join(f'{k}={v:.3f}' for k, v in top_features)}")
+            # 1. Train/update Ensemble (Gradient Boosting + LSTM)
+            try:
+                from neural_strategy_predictor import EnsemblePredictor
+                print("\n🧠 Updating Ensemble Model (GB + LSTM)...")
+                ensemble = EnsemblePredictor(db_path=str(self.db_path))
+                results = ensemble.train_all()
+                print(f"   Training results: GB={results.get('gradient_boosting', False)}, LSTM={results.get('lstm', False)}")
+                
+                # Show feature importance from GB
+                if ensemble.gb_predictor and ensemble.gb_predictor.is_trained:
+                    importance = ensemble.gb_predictor.get_feature_importance()
+                    if importance:
+                        top_features = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:3]
+                        print(f"   Top features: {', '.join(f'{k}={v:.3f}' for k, v in top_features)}")
+            except Exception as e:
+                print(f"   ⚠️ Ensemble not available, falling back to GB: {e}")
+                from ml_strategy_predictor import MLStrategyPredictor
+                predictor = MLStrategyPredictor(db_path=str(self.db_path))
+                predictor.train()
             
             # 2. Check if should auto-apply new strategy
             from auto_apply import AutoApply
