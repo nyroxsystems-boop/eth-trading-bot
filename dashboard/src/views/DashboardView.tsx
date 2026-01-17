@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { TrendingUp, TrendingDown, Activity, Target, Zap } from 'lucide-react'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts'
 import { LiveTradingToggle } from '../components/LiveTradingToggle'
 import '../styles/premium.css'
 import '../styles/components.css'
@@ -23,6 +24,13 @@ interface TradingModeStatus {
     requires_upgrade: boolean
 }
 
+interface PnLDataPoint {
+    date: string
+    daily_pnl: number
+    cumulative_pnl: number
+    trades: number
+}
+
 const DashboardView = ({ metrics, status }: DashboardViewProps) => {
     const dailyPnl = metrics?.daily_pnl || 0
     const totalPnl = metrics?.total_pnl || 0
@@ -36,9 +44,13 @@ const DashboardView = ({ metrics, status }: DashboardViewProps) => {
         requires_upgrade: true
     })
 
+    const [pnlHistory, setPnlHistory] = useState<PnLDataPoint[]>([])
+    const [chartDays, setChartDays] = useState(7)
+
     useEffect(() => {
         fetchTradingModeStatus()
-    }, [])
+        fetchPnlHistory()
+    }, [chartDays])
 
     const fetchTradingModeStatus = async () => {
         try {
@@ -58,6 +70,18 @@ const DashboardView = ({ metrics, status }: DashboardViewProps) => {
             }
         } catch (err) {
             console.error('Failed to fetch trading mode:', err)
+        }
+    }
+
+    const fetchPnlHistory = async () => {
+        try {
+            const res = await fetch(`${API_URL}/api/performance/history?days=${chartDays}`)
+            if (res.ok) {
+                const data = await res.json()
+                setPnlHistory(data)
+            }
+        } catch (err) {
+            console.error('Failed to fetch P&L history:', err)
         }
     }
 
@@ -245,27 +269,103 @@ const DashboardView = ({ metrics, status }: DashboardViewProps) => {
             >
                 <div className="chart-header">
                     <h3>Performance Overview</h3>
-                    <div className="chart-stats">
-                        <div className="chart-stat">
-                            <span className="chart-stat-label">Total P&L</span>
-                            <span className={`chart-stat-value ${totalPnl >= 0 ? 'positive' : 'negative'}`}>
-                                ${totalPnl.toFixed(2)}
-                            </span>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <div className="chart-stats">
+                            <div className="chart-stat">
+                                <span className="chart-stat-label">Total P&L</span>
+                                <span className={`chart-stat-value ${totalPnl >= 0 ? 'positive' : 'negative'}`}>
+                                    ${totalPnl.toFixed(2)}
+                                </span>
+                            </div>
+                            <div className="chart-stat">
+                                <span className="chart-stat-label">ROI</span>
+                                <span className="chart-stat-value positive">
+                                    {((totalPnl / 10000) * 100).toFixed(2)}%
+                                </span>
+                            </div>
                         </div>
-                        <div className="chart-stat">
-                            <span className="chart-stat-label">ROI</span>
-                            <span className="chart-stat-value positive">
-                                {((totalPnl / 10000) * 100).toFixed(2)}%
-                            </span>
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                            {[7, 14, 30].map(d => (
+                                <button
+                                    key={d}
+                                    onClick={() => setChartDays(d)}
+                                    style={{
+                                        padding: '4px 12px',
+                                        borderRadius: '8px',
+                                        border: 'none',
+                                        background: chartDays === d ? 'linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)' : 'rgba(139, 92, 246, 0.2)',
+                                        color: 'white',
+                                        fontSize: '12px',
+                                        cursor: 'pointer',
+                                        fontWeight: chartDays === d ? 600 : 400
+                                    }}
+                                >
+                                    {d}D
+                                </button>
+                            ))}
                         </div>
                     </div>
                 </div>
-                <div className="chart-placeholder">
-                    <div className="chart-message">
-                        <Activity size={48} opacity={0.3} />
-                        <p>Live chart coming soon...</p>
-                        <span>Real-time P&L visualization</span>
-                    </div>
+                <div style={{ height: '300px', marginTop: '16px' }}>
+                    {pnlHistory.length > 0 ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={pnlHistory} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                                <defs>
+                                    <linearGradient id="colorPnl" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.8} />
+                                        <stop offset="95%" stopColor="#8B5CF6" stopOpacity={0} />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(139, 92, 246, 0.1)" />
+                                <XAxis
+                                    dataKey="date"
+                                    stroke="#64748B"
+                                    fontSize={12}
+                                    tickFormatter={(val) => val.slice(5)}
+                                />
+                                <YAxis
+                                    stroke="#64748B"
+                                    fontSize={12}
+                                    tickFormatter={(val) => `$${val}`}
+                                />
+                                <Tooltip
+                                    contentStyle={{
+                                        background: 'rgba(15, 23, 42, 0.95)',
+                                        border: '1px solid rgba(139, 92, 246, 0.3)',
+                                        borderRadius: '8px',
+                                        color: '#fff'
+                                    }}
+                                    formatter={(value: number, name: string) => [
+                                        `$${value.toFixed(2)}`,
+                                        name === 'cumulative_pnl' ? 'Total P&L' : 'Daily P&L'
+                                    ]}
+                                />
+                                <Area
+                                    type="monotone"
+                                    dataKey="cumulative_pnl"
+                                    stroke="#8B5CF6"
+                                    strokeWidth={2}
+                                    fillOpacity={1}
+                                    fill="url(#colorPnl)"
+                                />
+                                <Line
+                                    type="monotone"
+                                    dataKey="daily_pnl"
+                                    stroke="#10B981"
+                                    strokeWidth={2}
+                                    dot={{ fill: '#10B981', strokeWidth: 2 }}
+                                />
+                            </AreaChart>
+                        </ResponsiveContainer>
+                    ) : (
+                        <div className="chart-placeholder">
+                            <div className="chart-message">
+                                <Activity size={48} opacity={0.3} />
+                                <p>No trading data yet</p>
+                                <span>Start trading to see your P&L chart</span>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </motion.div>
 
