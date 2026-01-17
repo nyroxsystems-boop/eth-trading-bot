@@ -1,7 +1,11 @@
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { TrendingUp, TrendingDown, Activity, Target, Zap } from 'lucide-react'
+import { LiveTradingToggle } from '../components/LiveTradingToggle'
 import '../styles/premium.css'
 import '../styles/components.css'
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 interface DashboardViewProps {
     trades: any[]
@@ -13,12 +17,67 @@ interface DashboardViewProps {
     setTimeframe: (tf: string) => void
 }
 
+interface TradingModeStatus {
+    mode: 'paper' | 'live'
+    can_enable_live: boolean
+    requires_upgrade: boolean
+}
+
 const DashboardView = ({ metrics, status }: DashboardViewProps) => {
     const dailyPnl = metrics?.daily_pnl || 0
     const totalPnl = metrics?.total_pnl || 0
     const winRate = metrics?.win_rate || 0
     const totalTrades = metrics?.total_trades || 0
     const todayTrades = status?.today_trades || 0
+
+    const [tradingMode, setTradingMode] = useState<TradingModeStatus>({
+        mode: 'paper',
+        can_enable_live: false,
+        requires_upgrade: true
+    })
+
+    useEffect(() => {
+        fetchTradingModeStatus()
+    }, [])
+
+    const fetchTradingModeStatus = async () => {
+        try {
+            const token = localStorage.getItem('auth_token') || localStorage.getItem('token')
+            if (!token) return
+
+            const res = await fetch(`${API_URL}/api/trading/mode/status`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            })
+            if (res.ok) {
+                const data = await res.json()
+                setTradingMode({
+                    mode: data.mode,
+                    can_enable_live: data.can_enable_live,
+                    requires_upgrade: data.requires_upgrade
+                })
+            }
+        } catch (err) {
+            console.error('Failed to fetch trading mode:', err)
+        }
+    }
+
+    const handleToggle = async () => {
+        const token = localStorage.getItem('auth_token') || localStorage.getItem('token')
+        const res = await fetch(`${API_URL}/api/trading/mode/toggle`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+        })
+        if (res.ok) {
+            await fetchTradingModeStatus()
+        } else {
+            const error = await res.json()
+            throw new Error(error.detail || 'Failed to toggle')
+        }
+    }
+
+    const handleUpgrade = () => {
+        window.location.href = '/subscription'
+    }
 
     return (
         <div className="dashboard-container">
@@ -138,17 +197,19 @@ const DashboardView = ({ metrics, status }: DashboardViewProps) => {
                     transition={{ delay: 0.4 }}
                 >
                     <div className="stat-header">
-                        <div className="stat-icon" style={{ background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)' }}>
+                        <div className="stat-icon" style={{ background: tradingMode.mode === 'live' ? 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)' : 'linear-gradient(135deg, #10B981 0%, #059669 100%)' }}>
                             <Zap size={24} />
                         </div>
                         <span className="stat-label">Bot Status</span>
                     </div>
                     <div className="stat-value">
                         <div className="status-indicator">
-                            <div className="status-dot active" />
+                            <div className={`status-dot ${tradingMode.mode === 'live' ? 'live' : 'active'}`} />
                             <span className="status-text">Running</span>
                         </div>
-                        <span className="stat-subtext">Paper Trading</span>
+                        <span className="stat-subtext">
+                            {tradingMode.mode === 'live' ? '💰 Live Trading' : '📄 Paper Trading'}
+                        </span>
                     </div>
                     <div className="stat-footer">
                         <span className="stat-trend">
@@ -157,6 +218,23 @@ const DashboardView = ({ metrics, status }: DashboardViewProps) => {
                     </div>
                 </motion.div>
             </div>
+
+            {/* Live Trading Toggle */}
+            <motion.div
+                className="glass-card"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.45 }}
+                style={{ marginTop: '24px', marginBottom: '24px' }}
+            >
+                <LiveTradingToggle
+                    currentMode={tradingMode.mode}
+                    canEnableLive={tradingMode.can_enable_live}
+                    requiresUpgrade={tradingMode.requires_upgrade}
+                    onToggle={handleToggle}
+                    onUpgrade={handleUpgrade}
+                />
+            </motion.div>
 
             {/* Performance Chart */}
             <motion.div
@@ -196,3 +274,4 @@ const DashboardView = ({ metrics, status }: DashboardViewProps) => {
 }
 
 export default DashboardView
+

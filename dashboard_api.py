@@ -29,6 +29,9 @@ from user_manager import UserManager, init_users_database
 from test_phase_manager import test_phase_manager
 from subscription_manager import SubscriptionManager
 
+# Import for chart data
+from src.core.market_data import MarketDataProvider
+
 # Initialize user manager (must be before endpoints)
 user_mgr = UserManager()
 
@@ -439,15 +442,38 @@ async def get_status():
     return await get_bot_status()
 
 @app.get("/api/chart/data")
-async def get_chart_data(interval: str = "5m", limit: int = 500):
-    """Get OHLCV data for charts"""
-    # This would fetch from Binance or local cache
-    # For now, return mock data
-    return {
-        "symbol": "ETHUSDT",
-        "interval": interval,
-        "data": []  # Chart data fetching from Binance API will be implemented when needed
-    }
+async def get_chart_data(symbol: str = "ETHUSDT", interval: str = "5m", limit: int = 100):
+    """Get OHLCV data for charts from Binance"""
+    try:
+        mdp = MarketDataProvider()
+        df = mdp.fetch_klines(symbol=symbol, interval=interval, lookback=limit)
+        
+        # Format data for frontend
+        chart_data = []
+        for _, row in df.iterrows():
+            chart_data.append({
+                "time": row["time"].strftime("%H:%M") if hasattr(row["time"], "strftime") else str(row["time"]),
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "volume": float(row["volume"])
+            })
+        
+        return {
+            "symbol": symbol,
+            "interval": interval,
+            "data": chart_data
+        }
+    except Exception as e:
+        print(f"Error fetching chart data: {e}")
+        # Return empty data on error
+        return {
+            "symbol": symbol,
+            "interval": interval,
+            "data": [],
+            "error": str(e)
+        }
 
 # Authentication Endpoints
 @app.post("/api/auth/register", response_model=AuthResponse)
@@ -1694,8 +1720,68 @@ async def get_trading_mode_status(current_user: Dict = Depends(get_current_user)
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Stripe Payment Endpoints
+from stripe_integration import create_checkout_session, verify_webhook_signature, handle_successful_payment
+
+@app.post("/api/subscription/checkout")
+async def create_subscription_checkout(current_user: Dict = Depends(get_current_user)):
+    """Create Stripe checkout session for Premium upgrade"""
+    try:
+        result = create_checkout_session(
+            user_id=current_user['user_id'],
+            user_email=current_user['email'],
+            tier="premium"
+        )
+        
+        if not result:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create checkout session. Please check Stripe configuration."
+            )
+        
+        return {
+            "checkout_url": result["checkout_url"],
+            "session_id": result["session_id"]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/subscription/webhook")
+async def stripe_webhook(request):
+    """Handle Stripe webhook events"""
+    from fastapi import Request
+    
+    payload = await request.body()
+    signature = request.headers.get("stripe-signature", "")
+    
+    event = verify_webhook_signature(payload, signature)
+    
+    if not event:
+        raise HTTPException(status_code=400, detail="Invalid webhook signature")
+    
+    # Handle the event
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        user_id = int(session.get("client_reference_id", 0))
+        tier = session.get("metadata", {}).get("tier", "premium")
+        
+        if user_id:
+            handle_successful_payment(user_id, tier)
+            print(f"✅ Checkout completed for user {user_id}, tier: {tier}")
+    
+    elif event["type"] == "customer.subscription.deleted":
+        # Handle subscription cancellation - downgrade to free
+        session = event["data"]["object"]
+        # Note: Would need to implement user lookup by Stripe customer ID
+        print(f"Subscription cancelled: {session.get('id')}")
+    
+    return {"status": "success"}
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("DASHBOARD_PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 

@@ -67,8 +67,8 @@ const SubscriptionView = () => {
     const handleUpgrade = async () => {
         setUpgrading(true)
         try {
-            const token = localStorage.getItem('token')
-            const res = await fetch(`${API_URL}/api/subscription/upgrade`, {
+            const token = localStorage.getItem('auth_token') || localStorage.getItem('token')
+            const res = await fetch(`${API_URL}/api/subscription/checkout`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -77,15 +77,20 @@ const SubscriptionView = () => {
             })
 
             if (res.ok) {
-                alert('✅ Successfully upgraded to Premium!')
-                fetchData()
+                const data = await res.json()
+                // Redirect to Stripe Checkout
+                if (data.checkout_url) {
+                    window.location.href = data.checkout_url
+                } else {
+                    alert('❌ No checkout URL received')
+                }
             } else {
                 const error = await res.json()
                 alert(`❌ Upgrade failed: ${error.detail || 'Unknown error'}`)
             }
         } catch (err) {
-            console.error('Failed to upgrade:', err)
-            alert('❌ Error upgrading subscription')
+            console.error('Failed to create checkout:', err)
+            alert('❌ Error starting checkout process')
         } finally {
             setUpgrading(false)
         }

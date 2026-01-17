@@ -1,36 +1,64 @@
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import CandlestickChart from '../components/CandlestickChart'
 
-export default function TradingView() {
-    // Mock candlestick data with volume
-    const candleData = Array.from({ length: 50 }, (_, i) => {
-        const basePrice = 3200 + Math.random() * 100
-        const open = basePrice + (Math.random() - 0.5) * 20
-        const close = open + (Math.random() - 0.5) * 30
-        const high = Math.max(open, close) + Math.random() * 15
-        const low = Math.min(open, close) - Math.random() * 15
-        const volume = Math.random() * 1000 + 500
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
-        return {
-            time: `${i}:00`,
-            open,
-            high,
-            low,
-            close,
-            volume
+interface CandleData {
+    time: string
+    open: number
+    high: number
+    low: number
+    close: number
+    volume: number
+}
+
+export default function TradingView() {
+    const [candleData, setCandleData] = useState<CandleData[]>([])
+    const [loading, setLoading] = useState(true)
+    const [error, setError] = useState<string | null>(null)
+    const [currentPrice, setCurrentPrice] = useState<number>(0)
+    const [priceChange, setPriceChange] = useState<number>(0)
+
+    useEffect(() => {
+        fetchChartData()
+        // Refresh every 30 seconds
+        const interval = setInterval(fetchChartData, 30000)
+        return () => clearInterval(interval)
+    }, [])
+
+    const fetchChartData = async () => {
+        try {
+            const res = await fetch(`${API_URL}/api/chart/data?symbol=ETHUSDT&interval=5m&limit=50`)
+            if (!res.ok) throw new Error('Failed to fetch chart data')
+
+            const data = await res.json()
+            if (data.data && data.data.length > 0) {
+                setCandleData(data.data)
+                const lastCandle = data.data[data.data.length - 1]
+                const firstCandle = data.data[0]
+                setCurrentPrice(lastCandle.close)
+                setPriceChange(((lastCandle.close - firstCandle.open) / firstCandle.open) * 100)
+            }
+            setError(null)
+        } catch (err) {
+            console.error('Chart data error:', err)
+            setError('Failed to load chart data')
+        } finally {
+            setLoading(false)
         }
-    })
+    }
 
     const orderBook = {
         bids: [
-            { price: 3229.50, amount: 1.234, total: 3985.47 },
-            { price: 3229.00, amount: 0.567, total: 1830.84 },
-            { price: 3228.50, amount: 2.345, total: 7570.83 },
+            { price: currentPrice - 0.50, amount: 1.234, total: (currentPrice - 0.50) * 1.234 },
+            { price: currentPrice - 1.00, amount: 0.567, total: (currentPrice - 1.00) * 0.567 },
+            { price: currentPrice - 1.50, amount: 2.345, total: (currentPrice - 1.50) * 2.345 },
         ],
         asks: [
-            { price: 3230.50, amount: 0.789, total: 2548.88 },
-            { price: 3231.00, amount: 1.456, total: 4704.38 },
-            { price: 3231.50, amount: 0.234, total: 756.17 },
+            { price: currentPrice + 0.50, amount: 0.789, total: (currentPrice + 0.50) * 0.789 },
+            { price: currentPrice + 1.00, amount: 1.456, total: (currentPrice + 1.00) * 1.456 },
+            { price: currentPrice + 1.50, amount: 0.234, total: (currentPrice + 1.50) * 0.234 },
         ]
     }
 
@@ -45,7 +73,7 @@ export default function TradingView() {
                 <h1 className="text-3xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
                     Trading
                 </h1>
-                <p className="text-slate-400 mt-2">Advanced trading view with order book</p>
+                <p className="text-slate-400 mt-2">Live ETH/USDT chart from Binance</p>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -59,13 +87,33 @@ export default function TradingView() {
                     <div className="mb-4">
                         <h2 className="text-2xl font-bold mb-1">ETH/USDT</h2>
                         <div className="flex items-center gap-4 text-sm">
-                            <span className="text-green-400 font-semibold">$3,230.12</span>
-                            <span className="text-green-400">+0.26%</span>
-                            <span className="text-slate-400">24h High: $3,245.00</span>
-                            <span className="text-slate-400">24h Low: $3,180.00</span>
+                            {loading ? (
+                                <span className="text-slate-400">Loading...</span>
+                            ) : error ? (
+                                <span className="text-red-400">{error}</span>
+                            ) : (
+                                <>
+                                    <span className={priceChange >= 0 ? "text-green-400 font-semibold" : "text-red-400 font-semibold"}>
+                                        ${currentPrice.toFixed(2)}
+                                    </span>
+                                    <span className={priceChange >= 0 ? "text-green-400" : "text-red-400"}>
+                                        {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)}%
+                                    </span>
+                                </>
+                            )}
                         </div>
                     </div>
-                    <CandlestickChart data={candleData} height={500} />
+                    {loading ? (
+                        <div className="flex items-center justify-center h-[500px]">
+                            <div className="text-slate-400">Loading chart data...</div>
+                        </div>
+                    ) : candleData.length > 0 ? (
+                        <CandlestickChart data={candleData} height={500} />
+                    ) : (
+                        <div className="flex items-center justify-center h-[500px]">
+                            <div className="text-slate-400">No chart data available</div>
+                        </div>
+                    )}
                 </motion.div>
 
                 {/* Order Book & Trade Panel - Takes 1 column */}
@@ -97,7 +145,9 @@ export default function TradingView() {
 
                         {/* Current Price */}
                         <div className="text-center py-2 bg-green-500/10 rounded-lg mb-4">
-                            <span className="text-green-400 font-bold font-mono">$3,230.12</span>
+                            <span className={`font-bold font-mono ${priceChange >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                ${currentPrice.toFixed(2)}
+                            </span>
                         </div>
 
                         {/* Bids */}
