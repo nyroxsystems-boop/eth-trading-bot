@@ -39,7 +39,8 @@ def init_users_database():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     last_login TIMESTAMP,
                     active BOOLEAN DEFAULT true,
-                    email_verified BOOLEAN DEFAULT false
+                    email_verified BOOLEAN DEFAULT false,
+                    test_phases TEXT DEFAULT '{}'
                 )
             """)
         else:
@@ -54,7 +55,8 @@ def init_users_database():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     last_login TIMESTAMP,
                     active BOOLEAN DEFAULT 1,
-                    email_verified BOOLEAN DEFAULT 0
+                    email_verified BOOLEAN DEFAULT 0,
+                    test_phases TEXT DEFAULT '{}'
                 )
             """)
         
@@ -136,6 +138,21 @@ def init_users_database():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token)")
+        
+        # Migration: Add test_phases column if not exists (for existing tables)
+        try:
+            if USE_POSTGRES:
+                cursor.execute("""
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS test_phases TEXT DEFAULT '{}'
+                """)
+            else:
+                # SQLite doesn't have ADD COLUMN IF NOT EXISTS - check first
+                cursor.execute("PRAGMA table_info(users)")
+                columns = [col[1] for col in cursor.fetchall()]
+                if 'test_phases' not in columns:
+                    cursor.execute("ALTER TABLE users ADD COLUMN test_phases TEXT DEFAULT '{}'")
+        except Exception as e:
+            print(f"Note: test_phases column migration: {e}")
         
         print(f"✅ Users database initialized")
 
