@@ -35,7 +35,8 @@ interface PnLDataPoint {
 const DashboardView = ({ metrics, status }: DashboardViewProps) => {
     const { user } = useAuth()
     const isAdmin = user?.role === 'admin'
-
+    // Founders/Team members bypass subscription (Nyrox = admin, Aaron = co-founder)
+    const bypassSubscription = isAdmin || user?.username === 'Aaron'
     const dailyPnl = metrics?.daily_pnl || 0
     const totalPnl = metrics?.total_pnl || 0
     const winRate = metrics?.win_rate || 0
@@ -68,9 +69,9 @@ const DashboardView = ({ metrics, status }: DashboardViewProps) => {
                 const data = await res.json()
                 setTradingMode({
                     mode: data.mode,
-                    can_enable_live: data.can_enable_live || isAdmin,
-                    // Admins never need upgrade - they have full access
-                    requires_upgrade: isAdmin ? false : data.requires_upgrade
+                    can_enable_live: data.can_enable_live || bypassSubscription,
+                    // Founders bypass subscription requirement (Nyrox + Aaron)
+                    requires_upgrade: bypassSubscription ? false : data.requires_upgrade
                 })
             }
         } catch (err) {
