@@ -233,6 +233,20 @@ def init_users_database():
         except Exception as e:
             print(f"Note: test_phases column migration: {e}")
         
+        # Migration: Add trading_pair column to user_api_keys
+        try:
+            if USE_POSTGRES:
+                cursor.execute("""
+                    ALTER TABLE user_api_keys ADD COLUMN IF NOT EXISTS trading_pair TEXT DEFAULT 'ETHUSDT'
+                """)
+            else:
+                cursor.execute("PRAGMA table_info(user_api_keys)")
+                columns = [col[1] for col in cursor.fetchall()]
+                if 'trading_pair' not in columns:
+                    cursor.execute("ALTER TABLE user_api_keys ADD COLUMN trading_pair TEXT DEFAULT 'ETHUSDT'")
+        except Exception as e:
+            print(f"Note: trading_pair column migration: {e}")
+        
         print(f"✅ Users database initialized")
 
 

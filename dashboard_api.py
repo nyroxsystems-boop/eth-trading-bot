@@ -937,6 +937,143 @@ async def save_user_telegram_settings(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ------------ Trading Pair Selection ------------
+
+# Popular trading pairs for quick access
+POPULAR_PAIRS = [
+    {"symbol": "ETHUSDT", "name": "Ethereum", "icon": "🔷"},
+    {"symbol": "BTCUSDT", "name": "Bitcoin", "icon": "🟠"},
+    {"symbol": "SOLUSDT", "name": "Solana", "icon": "🟣"},
+    {"symbol": "BNBUSDT", "name": "BNB", "icon": "🟡"},
+    {"symbol": "XRPUSDT", "name": "XRP", "icon": "⚪"},
+    {"symbol": "ADAUSDT", "name": "Cardano", "icon": "🔵"},
+    {"symbol": "DOGEUSDT", "name": "Dogecoin", "icon": "🐕"},
+    {"symbol": "DOTUSDT", "name": "Polkadot", "icon": "🔴"},
+    {"symbol": "MATICUSDT", "name": "Polygon", "icon": "💜"},
+    {"symbol": "AVAXUSDT", "name": "Avalanche", "icon": "🔺"},
+    {"symbol": "LINKUSDT", "name": "Chainlink", "icon": "🔗"},
+    {"symbol": "LTCUSDT", "name": "Litecoin", "icon": "⬜"},
+]
+
+@app.get("/api/trading/pairs")
+async def get_available_pairs(search: Optional[str] = None):
+    """Get available trading pairs from Binance"""
+    try:
+        import requests
+        res = requests.get("https://api.binance.com/api/v3/exchangeInfo", timeout=10)
+        if res.ok:
+            data = res.json()
+            # Filter for USDT pairs that are trading
+            pairs = []
+            for s in data.get("symbols", []):
+                if s["quoteAsset"] == "USDT" and s["status"] == "TRADING":
+                    symbol = s["symbol"]
+                    base = s["baseAsset"]
+                    
+                    # Apply search filter if provided
+                    if search:
+                        if search.upper() not in symbol and search.upper() not in base:
+                            continue
+                    
+                    # Check if popular
+                    popular_info = next((p for p in POPULAR_PAIRS if p["symbol"] == symbol), None)
+                    
+                    pairs.append({
+                        "symbol": symbol,
+                        "base": base,
+                        "name": popular_info["name"] if popular_info else base,
+                        "icon": popular_info["icon"] if popular_info else "💰",
+                        "popular": popular_info is not None
+                    })
+            
+            # Sort: popular first, then alphabetically
+            pairs.sort(key=lambda x: (not x["popular"], x["symbol"]))
+            
+            return {
+                "pairs": pairs[:100],  # Limit to 100 results
+                "total": len(pairs),
+                "popular": POPULAR_PAIRS
+            }
+    except Exception as e:
+        print(f"Error fetching pairs: {e}")
+    
+    # Fallback to popular pairs
+    return {"pairs": POPULAR_PAIRS, "total": len(POPULAR_PAIRS), "popular": POPULAR_PAIRS}
+
+@app.get("/api/settings/trading-pair")
+async def get_user_trading_pair(current_user: Dict = Depends(get_current_user)):
+    """Get current user's selected trading pair"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT trading_pair FROM user_api_keys WHERE user_id = %s" if USE_POSTGRES 
+                else "SELECT trading_pair FROM user_api_keys WHERE user_id = ?",
+                (current_user['id'],)
+            )
+            row = cursor.fetchone()
+            pair = row[0] if row and row[0] else "ETHUSDT"
+            
+            # Get pair info
+            popular_info = next((p for p in POPULAR_PAIRS if p["symbol"] == pair), None)
+            
+            return {
+                "trading_pair": pair,
+                "name": popular_info["name"] if popular_info else pair.replace("USDT", ""),
+                "icon": popular_info["icon"] if popular_info else "💰"
+            }
+    except Exception as e:
+        return {"trading_pair": "ETHUSDT", "name": "Ethereum", "icon": "🔷"}
+
+@app.post("/api/settings/trading-pair")
+async def set_user_trading_pair(
+    trading_pair: str,
+    current_user: Dict = Depends(get_current_user)
+):
+    """Set current user's trading pair"""
+    try:
+        # Validate pair exists
+        if not trading_pair or len(trading_pair) < 5:
+            raise HTTPException(status_code=400, detail="Invalid trading pair")
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if user has record
+            cursor.execute(
+                "SELECT user_id FROM user_api_keys WHERE user_id = %s" if USE_POSTGRES
+                else "SELECT user_id FROM user_api_keys WHERE user_id = ?",
+                (current_user['id'],)
+            )
+            
+            if cursor.fetchone():
+                cursor.execute(
+                    "UPDATE user_api_keys SET trading_pair = %s, updated_at = CURRENT_TIMESTAMP WHERE user_id = %s" if USE_POSTGRES
+                    else "UPDATE user_api_keys SET trading_pair = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?",
+                    (trading_pair.upper(), current_user['id'])
+                )
+            else:
+                cursor.execute(
+                    "INSERT INTO user_api_keys (user_id, trading_pair) VALUES (%s, %s)" if USE_POSTGRES
+                    else "INSERT INTO user_api_keys (user_id, trading_pair) VALUES (?, ?)",
+                    (current_user['id'], trading_pair.upper())
+                )
+            
+            conn.commit()
+        
+        popular_info = next((p for p in POPULAR_PAIRS if p["symbol"] == trading_pair.upper()), None)
+        
+        return {
+            "status": "success",
+            "trading_pair": trading_pair.upper(),
+            "name": popular_info["name"] if popular_info else trading_pair.replace("USDT", ""),
+            "message": f"Trading pair set to {trading_pair.upper()}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/capital")
 async def get_capital():
     """Get current trading capital"""

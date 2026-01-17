@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Bot, DollarSign, MessageSquare, Brain, AlertTriangle, Key } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { TradingPairSelector } from '../components/TradingPairSelector'
 import '../styles/premium.css'
 import '../styles/components.css'
 
@@ -176,6 +177,9 @@ const SettingsView = () => {
                 </h1>
                 <p style={{ color: '#94A3B8', fontSize: '16px' }}>Manage your trading bot settings</p>
             </div>
+
+            {/* Trading Pair Selection */}
+            <TradingPairSelector />
 
             {/* Bot Status & Mode Toggle */}
             <div className="glass-card" style={{ padding: '32px', marginBottom: '24px' }}>
