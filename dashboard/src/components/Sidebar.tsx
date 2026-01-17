@@ -1,4 +1,12 @@
 import { Home, TrendingUp, Bot, Settings, Brain, Users, Crown, Cpu, Shield } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
+
+interface MenuItem {
+    id: string
+    icon: React.ElementType
+    label: string
+    adminOnly?: boolean
+}
 
 interface SidebarProps {
     activePage: string
@@ -6,7 +14,10 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
-    const menuItems = [
+    const { user } = useAuth()
+    const isAdmin = user?.role === 'admin'
+
+    const menuItems: MenuItem[] = [
         { id: 'dashboard', icon: Home, label: 'Dashboard' },
         { id: 'portfolio', icon: TrendingUp, label: 'Portfolio' },
         { id: 'learning', icon: Brain, label: 'Learning' },
@@ -17,6 +28,9 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
         { id: 'settings', icon: Settings, label: 'Settings' },
         { id: 'admin', icon: Shield, label: 'Admin', adminOnly: true },
     ]
+
+    // Filter out admin-only items for non-admin users
+    const visibleMenuItems = menuItems.filter(item => !item.adminOnly || isAdmin)
 
     return (
         <div className="fixed left-0 top-0 h-screen w-20 bg-gradient-to-b from-slate-950 to-slate-900 border-r border-slate-800/50 flex flex-col items-center py-6 z-50 backdrop-blur-xl">
@@ -29,7 +43,7 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
 
             {/* Menu Items */}
             <nav className="flex-1 flex flex-col gap-4">
-                {menuItems.map((item) => {
+                {visibleMenuItems.map((item) => {
                     const Icon = item.icon
                     const isActive = item.id === activePage
 
@@ -44,6 +58,7 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
                                     ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shadow-lg shadow-cyan-500/20'
                                     : 'text-slate-400 hover:text-cyan-400 hover:bg-slate-800/50 hover:scale-110'
                                 }
+                ${item.adminOnly ? 'ring-1 ring-yellow-500/30' : ''}
               `}
                             title={item.label}
                         >
@@ -57,6 +72,7 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
                             {/* Tooltip */}
                             <div className="absolute left-full ml-4 px-3 py-2 bg-slate-800 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap shadow-xl border border-slate-700">
                                 {item.label}
+                                {item.adminOnly && <span className="ml-2 text-yellow-400">👑</span>}
                             </div>
                         </button>
                     )
