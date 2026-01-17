@@ -2009,6 +2009,35 @@ async def get_training_progress():
     }
 
 
+@app.get("/api/ml/dqn/live")
+async def get_dqn_live_training():
+    """Get live DQN training progress from log file"""
+    log_dir = Path(os.getenv("LOG_DIR", "./logs"))
+    training_log = log_dir / "dqn_training_live.json"
+    
+    if not training_log.exists():
+        return {"status": "no_training", "message": "No active training session"}
+    
+    try:
+        with open(training_log, "r") as f:
+            data = json.load(f)
+        
+        # Check if training log is recent (within last 5 minutes)
+        log_time = datetime.fromisoformat(data.get("timestamp", "2020-01-01"))
+        age_seconds = (datetime.now() - log_time).total_seconds()
+        
+        if age_seconds > 300:  # 5 minutes
+            data["status"] = "stale"
+            data["age_seconds"] = round(age_seconds)
+        else:
+            data["status"] = "active"
+            data["age_seconds"] = round(age_seconds)
+        
+        return data
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("DASHBOARD_PORT", 8000))

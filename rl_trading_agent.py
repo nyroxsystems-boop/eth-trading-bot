@@ -315,6 +315,10 @@ class DQNAgent:
         
         print(f"🎮 Training DQN Agent for {episodes} episodes...")
         
+        # Log file for live monitoring
+        log_dir = Path(os.getenv("LOG_DIR", "./logs"))
+        training_log = log_dir / "dqn_training_live.json"
+        
         env = TradingEnvironment(window_size=20, initial_balance=10000)
         
         episode_rewards = []
@@ -353,11 +357,30 @@ class DQNAgent:
                 best_reward = total_reward
                 self._save_model()
             
-            # Log progress
-            if (episode + 1) % 20 == 0:
-                avg_reward = np.mean(episode_rewards[-20:])
+            # Write live training log every 10 episodes
+            if (episode + 1) % 10 == 0:
+                avg_reward = np.mean(episode_rewards[-20:]) if len(episode_rewards) >= 20 else np.mean(episode_rewards)
                 portfolio_value = env.get_portfolio_value()
                 roi = (portfolio_value - 10000) / 10000 * 100
+                
+                live_data = {
+                    "timestamp": datetime.now().isoformat(),
+                    "episode": episode + 1,
+                    "total_episodes": episodes,
+                    "progress_pct": round((episode + 1) / episodes * 100, 1),
+                    "avg_reward": round(avg_reward, 2),
+                    "best_reward": round(best_reward, 2),
+                    "last_reward": round(total_reward, 2),
+                    "roi": round(roi, 1),
+                    "epsilon": round(self.epsilon, 4),
+                    "trades": trades,
+                    "portfolio_value": round(portfolio_value, 2)
+                }
+                
+                # Write to file (flush immediately)
+                with open(training_log, "w") as f:
+                    json.dump(live_data, f)
+                
                 print(f"   Episode {episode+1}/{episodes} | Avg Reward: {avg_reward:.2f} | ROI: {roi:.1f}% | ε: {self.epsilon:.3f} | Trades: {trades}")
         
         self.is_trained = True

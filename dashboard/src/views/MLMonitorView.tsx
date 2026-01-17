@@ -39,6 +39,22 @@ interface FeatureImportance {
     importance: number
 }
 
+interface LiveTraining {
+    status: string
+    timestamp?: string
+    episode?: number
+    total_episodes?: number
+    progress_pct?: number
+    avg_reward?: number
+    best_reward?: number
+    last_reward?: number
+    roi?: number
+    epsilon?: number
+    trades?: number
+    portfolio_value?: number
+    age_seconds?: number
+}
+
 export default function MLMonitorView() {
     const [models, setModels] = useState<Record<string, MLModel>>({})
     const [trainingActive, setTrainingActive] = useState(false)
@@ -46,6 +62,7 @@ export default function MLMonitorView() {
     const [dqnInfo, setDqnInfo] = useState<DQNInfo | null>(null)
     const [dqnPrediction, setDqnPrediction] = useState<DQNPrediction | null>(null)
     const [features, setFeatures] = useState<FeatureImportance[]>([])
+    const [liveTraining, setLiveTraining] = useState<LiveTraining | null>(null)
     const [loading, setLoading] = useState(true)
     const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
 
@@ -61,6 +78,11 @@ export default function MLMonitorView() {
             const progressData = await progressRes.json()
             setTrainingActive(progressData.training_active)
             setTrainingProcesses(progressData.processes || [])
+
+            // Fetch live DQN training data
+            const liveRes = await fetch(`${API_URL}/api/ml/dqn/live`)
+            const liveData = await liveRes.json()
+            setLiveTraining(liveData)
 
             // Fetch DQN info
             const dqnRes = await fetch(`${API_URL}/api/ml/dqn/info`)
@@ -89,7 +111,7 @@ export default function MLMonitorView() {
 
     useEffect(() => {
         fetchData()
-        const interval = setInterval(fetchData, 10000)
+        const interval = setInterval(fetchData, 5000) // Faster refresh for live data
         return () => clearInterval(interval)
     }, [])
 
@@ -153,19 +175,74 @@ export default function MLMonitorView() {
                 <motion.div
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    className="bg-purple-500/20 border border-purple-500/50 rounded-xl p-4"
+                    className="bg-gradient-to-r from-purple-500/20 to-cyan-500/20 border border-purple-500/50 rounded-xl p-5"
                 >
-                    <div className="flex items-center gap-3">
-                        <div className="animate-pulse">
-                            <Zap className="w-6 h-6 text-purple-400" />
+                    <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                            <div className="animate-pulse">
+                                <Zap className="w-6 h-6 text-purple-400" />
+                            </div>
+                            <div>
+                                <h3 className="text-purple-400 font-semibold">🧠 Live DQN Training</h3>
+                                <p className="text-gray-400 text-sm">
+                                    {trainingProcesses.map(p => `${p.type} (PID: ${p.pid}, CPU: ${p.cpu}%)`).join(', ')}
+                                </p>
+                            </div>
                         </div>
-                        <div>
-                            <h3 className="text-purple-400 font-semibold">Training in Progress</h3>
-                            <p className="text-gray-400 text-sm">
-                                {trainingProcesses.map(p => `${p.type} (PID: ${p.pid}, CPU: ${p.cpu}%)`).join(', ')}
-                            </p>
-                        </div>
+                        {liveTraining?.status === 'active' && (
+                            <span className="text-sm text-emerald-400 flex items-center gap-1">
+                                <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+                                Live
+                            </span>
+                        )}
                     </div>
+
+                    {liveTraining && liveTraining.episode && (
+                        <>
+                            {/* Progress Bar */}
+                            <div className="mb-4">
+                                <div className="flex justify-between text-sm mb-1">
+                                    <span className="text-gray-400">Episode {liveTraining.episode} / {liveTraining.total_episodes}</span>
+                                    <span className="text-cyan-400 font-semibold">{liveTraining.progress_pct}%</span>
+                                </div>
+                                <div className="w-full bg-gray-700/50 rounded-full h-3 overflow-hidden">
+                                    <motion.div
+                                        initial={{ width: 0 }}
+                                        animate={{ width: `${liveTraining.progress_pct}%` }}
+                                        className="h-full bg-gradient-to-r from-purple-500 to-cyan-400 rounded-full"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Stats Grid */}
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                                <div className="bg-gray-800/50 rounded-lg p-3 text-center">
+                                    <span className="text-gray-500 text-xs">Epsilon</span>
+                                    <p className="text-lg font-bold text-cyan-400">{liveTraining.epsilon?.toFixed(4)}</p>
+                                </div>
+                                <div className="bg-gray-800/50 rounded-lg p-3 text-center">
+                                    <span className="text-gray-500 text-xs">Avg Reward</span>
+                                    <p className={`text-lg font-bold ${(liveTraining.avg_reward || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                        {liveTraining.avg_reward?.toFixed(2)}
+                                    </p>
+                                </div>
+                                <div className="bg-gray-800/50 rounded-lg p-3 text-center">
+                                    <span className="text-gray-500 text-xs">Best Reward</span>
+                                    <p className="text-lg font-bold text-yellow-400">{liveTraining.best_reward?.toFixed(2)}</p>
+                                </div>
+                                <div className="bg-gray-800/50 rounded-lg p-3 text-center">
+                                    <span className="text-gray-500 text-xs">Last ROI</span>
+                                    <p className={`text-lg font-bold ${(liveTraining.roi || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                        {liveTraining.roi}%
+                                    </p>
+                                </div>
+                                <div className="bg-gray-800/50 rounded-lg p-3 text-center">
+                                    <span className="text-gray-500 text-xs">Trades</span>
+                                    <p className="text-lg font-bold text-white">{liveTraining.trades}</p>
+                                </div>
+                            </div>
+                        </>
+                    )}
                 </motion.div>
             )}
 
