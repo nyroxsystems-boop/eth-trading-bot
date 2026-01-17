@@ -2,10 +2,12 @@
 User Manager for SaaS Trading Platform
 Handles user registration, authentication, and management
 Uses PostgreSQL in production, SQLite for local development
+Supports multi-tenant API key storage with encryption
 """
 
 import os
 import secrets
+import base64
 from pathlib import Path
 from typing import Optional, Dict
 from datetime import datetime, timedelta
@@ -15,10 +17,57 @@ import bcrypt
 # Import database adapter
 from db_adapter import get_db_connection, USE_POSTGRES
 
+# Encryption for API keys
+try:
+    from cryptography.fernet import Fernet
+    ENCRYPTION_AVAILABLE = True
+except ImportError:
+    ENCRYPTION_AVAILABLE = False
+    print("⚠️ cryptography not installed - API keys will not be encrypted")
+
 # Configuration
 JWT_SECRET = os.getenv("JWT_SECRET", secrets.token_urlsafe(32))
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
+
+# Encryption key for API secrets (generate once and store in env)
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
+if not ENCRYPTION_KEY and ENCRYPTION_AVAILABLE:
+    # Generate a new key if not set (should be set in production!)
+    ENCRYPTION_KEY = Fernet.generate_key().decode()
+    print(f"⚠️ No ENCRYPTION_KEY set! Generated temporary key (set in production!)")
+
+def get_fernet():
+    """Get Fernet instance for encryption/decryption"""
+    if not ENCRYPTION_AVAILABLE:
+        return None
+    try:
+        return Fernet(ENCRYPTION_KEY.encode() if isinstance(ENCRYPTION_KEY, str) else ENCRYPTION_KEY)
+    except Exception as e:
+        print(f"⚠️ Fernet initialization failed: {e}")
+        return None
+
+def encrypt_value(value: str) -> str:
+    """Encrypt a value using Fernet"""
+    if not value:
+        return ""
+    fernet = get_fernet()
+    if not fernet:
+        return value  # Return plaintext if encryption not available
+    return fernet.encrypt(value.encode()).decode()
+
+def decrypt_value(encrypted: str) -> str:
+    """Decrypt a value using Fernet"""
+    if not encrypted:
+        return ""
+    fernet = get_fernet()
+    if not fernet:
+        return encrypted  # Return as-is if decryption not available
+    try:
+        return fernet.decrypt(encrypted.encode()).decode()
+    except Exception as e:
+        print(f"⚠️ Decryption failed: {e}")
+        return ""
 
 
 def init_users_database():
@@ -130,6 +179,36 @@ def init_users_database():
                     token TEXT NOT NULL UNIQUE,
                     expires_at TIMESTAMP NOT NULL,
                     revoked BOOLEAN DEFAULT 0,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
+        
+        # User API Keys table (encrypted storage for Binance/Telegram credentials)
+        if USE_POSTGRES:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_api_keys (
+                    user_id INTEGER PRIMARY KEY,
+                    binance_api_key TEXT,
+                    binance_api_secret TEXT,
+                    telegram_bot_token TEXT,
+                    telegram_chat_id TEXT,
+                    trading_enabled BOOLEAN DEFAULT false,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
+        else:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_api_keys (
+                    user_id INTEGER PRIMARY KEY,
+                    binance_api_key TEXT,
+                    binance_api_secret TEXT,
+                    telegram_bot_token TEXT,
+                    telegram_chat_id TEXT,
+                    trading_enabled BOOLEAN DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 )
             """)
@@ -538,26 +617,168 @@ class UserManager:
     def create_admin(self, email: str, username: str, password: str) -> int:
         """Create an admin user"""
         return self.register_user(email, username, password, role='admin')
+    
+    # ============ API Key Management ============
+    
+    def save_api_keys(self, user_id: int, binance_api_key: str = None, 
+                     binance_api_secret: str = None, telegram_bot_token: str = None,
+                     telegram_chat_id: str = None, trading_enabled: bool = False) -> bool:
+        """Save or update user's API keys (encrypted)"""
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Encrypt sensitive values
+            encrypted_api_key = encrypt_value(binance_api_key) if binance_api_key else ""
+            encrypted_api_secret = encrypt_value(binance_api_secret) if binance_api_secret else ""
+            encrypted_telegram = encrypt_value(telegram_bot_token) if telegram_bot_token else ""
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    INSERT INTO user_api_keys 
+                    (user_id, binance_api_key, binance_api_secret, telegram_bot_token, 
+                     telegram_chat_id, trading_enabled, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        binance_api_key = EXCLUDED.binance_api_key,
+                        binance_api_secret = EXCLUDED.binance_api_secret,
+                        telegram_bot_token = EXCLUDED.telegram_bot_token,
+                        telegram_chat_id = EXCLUDED.telegram_chat_id,
+                        trading_enabled = EXCLUDED.trading_enabled,
+                        updated_at = EXCLUDED.updated_at
+                """, (user_id, encrypted_api_key, encrypted_api_secret, 
+                      encrypted_telegram, telegram_chat_id or "", trading_enabled,
+                      datetime.now().isoformat()))
+            else:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO user_api_keys 
+                    (user_id, binance_api_key, binance_api_secret, telegram_bot_token, 
+                     telegram_chat_id, trading_enabled, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (user_id, encrypted_api_key, encrypted_api_secret, 
+                      encrypted_telegram, telegram_chat_id or "", trading_enabled,
+                      datetime.now().isoformat()))
+            
+            print(f"✅ API keys saved for user {user_id}")
+            return True
+    
+    def get_api_keys(self, user_id: int, decrypt: bool = True) -> Optional[Dict]:
+        """Get user's API keys (optionally decrypted)"""
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    SELECT binance_api_key, binance_api_secret, telegram_bot_token,
+                           telegram_chat_id, trading_enabled, updated_at
+                    FROM user_api_keys WHERE user_id = %s
+                """, (user_id,))
+            else:
+                cursor.execute("""
+                    SELECT binance_api_key, binance_api_secret, telegram_bot_token,
+                           telegram_chat_id, trading_enabled, updated_at
+                    FROM user_api_keys WHERE user_id = ?
+                """, (user_id,))
+            
+            result = cursor.fetchone()
+            
+            if not result:
+                return None
+            
+            api_key, api_secret, telegram_token, telegram_chat, trading_enabled, updated_at = result
+            
+            if decrypt:
+                return {
+                    'binance_api_key': decrypt_value(api_key) if api_key else "",
+                    'binance_api_secret': decrypt_value(api_secret) if api_secret else "",
+                    'telegram_bot_token': decrypt_value(telegram_token) if telegram_token else "",
+                    'telegram_chat_id': telegram_chat or "",
+                    'trading_enabled': bool(trading_enabled),
+                    'updated_at': updated_at
+                }
+            else:
+                # Return masked values for display
+                return {
+                    'binance_api_key': api_key[:10] + "..." if api_key and len(api_key) > 10 else "",
+                    'binance_api_secret': "••••••••" if api_secret else "",
+                    'telegram_bot_token': "••••••••" if telegram_token else "",
+                    'telegram_chat_id': telegram_chat or "",
+                    'trading_enabled': bool(trading_enabled),
+                    'has_binance_keys': bool(api_key and api_secret),
+                    'has_telegram': bool(telegram_token and telegram_chat)
+                }
+    
+    def has_api_keys(self, user_id: int) -> bool:
+        """Check if user has configured API keys"""
+        keys = self.get_api_keys(user_id, decrypt=False)
+        return keys is not None and keys.get('has_binance_keys', False)
 
 
-# Initialize on import
-if __name__ == "__main__":
-    # Test the user manager
+def seed_initial_users():
+    """Seed admin and initial user accounts"""
     manager = UserManager()
     
-    # Create admin user if not exists
+    # 1. Create Admin account
     try:
         admin_id = manager.create_admin(
-            email="admin@ethbot.com",
-            username="admin",
-            password="admin123456"  # Change this!
+            email="nyroxsystems@gmail.com",
+            username="Nyrox",
+            password="Test007!"
         )
-        print(f"✅ Admin user created (ID: {admin_id})")
+        print(f"✅ Admin 'Nyrox' created (ID: {admin_id})")
     except ValueError as e:
-        print(f"ℹ️ Admin user already exists or: {e}")
+        if "already" in str(e).lower():
+            print(f"ℹ️ Admin 'Nyrox' already exists")
+            # Get existing admin ID
+            admin = manager.get_user_by_email("nyroxsystems@gmail.com")
+            admin_id = admin['id'] if admin else None
+        else:
+            print(f"⚠️ Admin creation error: {e}")
+            admin_id = None
+    
+    # 2. Create User account (Aaron) with Binance Keys from environment
+    try:
+        user_id = manager.register_user(
+            email="vogtaaron0@gmail.com",
+            username="Aaron",
+            password="Masterlolli46_",
+            role="user"
+        )
+        print(f"✅ User 'Aaron' created (ID: {user_id})")
+        
+        # Save the Binance/Telegram keys from environment
+        binance_key = os.getenv("BINANCE_API_KEY", "")
+        binance_secret = os.getenv("BINANCE_API_SECRET", "")
+        telegram_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+        telegram_chat = os.getenv("TELEGRAM_CHAT_ID", "")
+        
+        if binance_key and binance_secret:
+            manager.save_api_keys(
+                user_id=user_id,
+                binance_api_key=binance_key,
+                binance_api_secret=binance_secret,
+                telegram_bot_token=telegram_token,
+                telegram_chat_id=telegram_chat,
+                trading_enabled=True
+            )
+            print(f"✅ API keys saved for user 'Aaron'")
+        else:
+            print(f"⚠️ No Binance API keys in environment - skipping key setup")
+            
+    except ValueError as e:
+        if "already" in str(e).lower():
+            print(f"ℹ️ User 'Aaron' already exists")
+        else:
+            print(f"⚠️ User creation error: {e}")
     
     # List all users
     users = manager.list_users()
     print(f"\n📊 Total users: {len(users)}")
     for user in users:
-        print(f"  - {user['username']} ({user['email']}) - {user['role']}")
+        has_keys = manager.has_api_keys(user['id'])
+        keys_status = "🔑" if has_keys else "❌"
+        print(f"  - {user['username']} ({user['email']}) - {user['role']} {keys_status}")
+
+
+# Initialize on import
+if __name__ == "__main__":
+    seed_initial_users()

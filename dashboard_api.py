@@ -648,6 +648,14 @@ async def websocket_endpoint(websocket: WebSocket):
 # Background task to monitor trades file and broadcast updates
 @app.on_event("startup")
 async def startup_event():
+    # Seed initial users (admin + Aaron with API keys)
+    try:
+        from user_manager import seed_initial_users
+        seed_initial_users()
+    except Exception as e:
+        print(f"⚠️ User seeding error (may already exist): {e}")
+    
+    # Start trade monitoring
     asyncio.create_task(monitor_trades())
 
 async def monitor_trades():
@@ -827,6 +835,107 @@ async def update_trading_settings(trading: TradingSettings):
         return {"status": "success", "message": "Trading settings updated"}
     else:
         raise HTTPException(status_code=500, detail="Failed to save settings")
+
+# ============ User-Specific API Key Management ============
+
+class UserApiKeysInput(BaseModel):
+    binance_api_key: Optional[str] = None
+    binance_api_secret: Optional[str] = None
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+
+@app.get("/api/settings/api-keys")
+async def get_user_api_keys(current_user: Dict = Depends(get_current_user)):
+    """Get current user's API keys (masked)"""
+    try:
+        keys = user_mgr.get_api_keys(current_user['id'], decrypt=False)
+        if not keys:
+            return {
+                "has_binance_keys": False,
+                "has_telegram": False,
+                "binance_api_key": "",
+                "binance_api_secret": "",
+                "telegram_bot_token": "",
+                "telegram_chat_id": "",
+                "trading_enabled": False
+            }
+        return keys
+    except Exception as e:
+        print(f"❌ Error getting API keys: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/settings/api-keys")
+async def save_user_api_keys(keys: UserApiKeysInput, current_user: Dict = Depends(get_current_user)):
+    """Save current user's API keys (encrypted)"""
+    try:
+        # Get existing keys to preserve values not being updated
+        existing = user_mgr.get_api_keys(current_user['id'], decrypt=True) or {}
+        
+        # Determine which values to save (new value or keep existing)
+        api_key = keys.binance_api_key if keys.binance_api_key and not keys.binance_api_key.startswith("•") else existing.get('binance_api_key', '')
+        api_secret = keys.binance_api_secret if keys.binance_api_secret and not keys.binance_api_secret.startswith("•") else existing.get('binance_api_secret', '')
+        telegram_token = keys.telegram_bot_token if keys.telegram_bot_token and not keys.telegram_bot_token.startswith("•") else existing.get('telegram_bot_token', '')
+        telegram_chat = keys.telegram_chat_id if keys.telegram_chat_id else existing.get('telegram_chat_id', '')
+        
+        # Determine if trading should be enabled
+        trading_enabled = bool(api_key and api_secret)
+        
+        user_mgr.save_api_keys(
+            user_id=current_user['id'],
+            binance_api_key=api_key,
+            binance_api_secret=api_secret,
+            telegram_bot_token=telegram_token,
+            telegram_chat_id=telegram_chat,
+            trading_enabled=trading_enabled
+        )
+        
+        return {
+            "status": "success", 
+            "message": "API keys saved successfully",
+            "trading_enabled": trading_enabled
+        }
+    except Exception as e:
+        print(f"❌ Error saving API keys: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/settings/user-telegram")
+async def get_user_telegram_settings(current_user: Dict = Depends(get_current_user)):
+    """Get current user's Telegram settings"""
+    try:
+        keys = user_mgr.get_api_keys(current_user['id'], decrypt=False) or {}
+        return {
+            "has_telegram": keys.get('has_telegram', False),
+            "telegram_chat_id": keys.get('telegram_chat_id', ""),
+            "telegram_bot_token": "••••••••" if keys.get('has_telegram') else ""
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/settings/user-telegram")
+async def save_user_telegram_settings(
+    telegram_bot_token: Optional[str] = None,
+    telegram_chat_id: Optional[str] = None,
+    current_user: Dict = Depends(get_current_user)
+):
+    """Save current user's Telegram settings"""
+    try:
+        existing = user_mgr.get_api_keys(current_user['id'], decrypt=True) or {}
+        
+        token = telegram_bot_token if telegram_bot_token and not telegram_bot_token.startswith("•") else existing.get('telegram_bot_token', '')
+        chat_id = telegram_chat_id if telegram_chat_id else existing.get('telegram_chat_id', '')
+        
+        user_mgr.save_api_keys(
+            user_id=current_user['id'],
+            binance_api_key=existing.get('binance_api_key', ''),
+            binance_api_secret=existing.get('binance_api_secret', ''),
+            telegram_bot_token=token,
+            telegram_chat_id=chat_id,
+            trading_enabled=existing.get('trading_enabled', False)
+        )
+        
+        return {"status": "success", "message": "Telegram settings saved"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/capital")
 async def get_capital():
