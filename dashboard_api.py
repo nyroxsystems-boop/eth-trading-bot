@@ -2153,6 +2153,30 @@ async def get_retrain_status():
         return {"status": "error", "message": str(e)}
 
 
+# SPA Catch-all handler - MUST be at the end after all API routes
+# This serves index.html for all non-API routes so React Router can handle them
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    """Serve SPA for all non-API routes (catch-all handler)"""
+    # Skip API routes (they should be handled by their own endpoints)
+    if full_path.startswith("api/"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="API endpoint not found")
+    
+    # Skip asset requests (they're served by StaticFiles mount)
+    if full_path.startswith("assets/"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Asset not found")
+    
+    # Serve index.html for all other routes (SPA routing)
+    dashboard_index = DASHBOARD_DIST / "index.html"
+    if dashboard_index.exists():
+        return FileResponse(dashboard_index)
+    
+    # Fallback if dashboard not built
+    return {"status": "ok", "service": "ETH Bot Dashboard API", "note": "Dashboard not built yet"}
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("DASHBOARD_PORT", 8000))
