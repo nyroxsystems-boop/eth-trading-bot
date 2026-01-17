@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Bot, DollarSign, MessageSquare, Brain, AlertTriangle, Key } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
-import { TradingPairSelector } from '../components/TradingPairSelector'
 import '../styles/premium.css'
 import '../styles/components.css'
 
@@ -178,8 +177,39 @@ const SettingsView = () => {
                 <p style={{ color: '#94A3B8', fontSize: '16px' }}>Manage your trading bot settings</p>
             </div>
 
-            {/* Trading Pair Selection */}
-            <TradingPairSelector />
+            {/* Link to Portfolio for Trading Pairs */}
+            <div className="glass-card" style={{
+                padding: '20px',
+                marginBottom: '24px',
+                background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(236, 72, 153, 0.1) 100%)',
+                border: '1px solid rgba(139, 92, 246, 0.3)'
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div>
+                        <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '4px' }}>
+                            📊 Trading Pairs
+                        </h3>
+                        <p style={{ color: '#94A3B8', fontSize: '14px' }}>
+                            Manage multiple trading pairs with individual settings
+                        </p>
+                    </div>
+                    <a
+                        href="/portfolio"
+                        style={{
+                            padding: '12px 24px',
+                            background: 'linear-gradient(135deg, #8B5CF6 0%, #EC4899 100%)',
+                            border: 'none',
+                            borderRadius: '10px',
+                            color: 'white',
+                            fontWeight: 600,
+                            textDecoration: 'none',
+                            display: 'inline-block'
+                        }}
+                    >
+                        Open Portfolio →
+                    </a>
+                </div>
+            </div>
 
             {/* Bot Status & Mode Toggle */}
             <div className="glass-card" style={{ padding: '32px', marginBottom: '24px' }}>
