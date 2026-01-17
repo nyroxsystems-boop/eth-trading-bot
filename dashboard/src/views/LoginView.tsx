@@ -1,10 +1,12 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { LogIn } from 'lucide-react'
 import '../styles/premium.css'
 
 const LoginView = () => {
     const { login } = useAuth()
+    const navigate = useNavigate()
     const [emailOrUsername, setEmailOrUsername] = useState('')
     const [password, setPassword] = useState('')
     const [error, setError] = useState('')
@@ -17,7 +19,8 @@ const LoginView = () => {
 
         try {
             await login(emailOrUsername, password)
-            // Redirect handled by App.tsx
+            // Redirect to dashboard after successful login
+            navigate('/', { replace: true })
         } catch (err: any) {
             setError(err.message || 'Login failed')
         } finally {
