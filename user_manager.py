@@ -247,6 +247,57 @@ def init_users_database():
         except Exception as e:
             print(f"Note: trading_pair column migration: {e}")
         
+        # User Trading Pairs table (multi-pair portfolio with individual settings)
+        if USE_POSTGRES:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_trading_pairs (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    trading_pair TEXT NOT NULL,
+                    pair_name TEXT,
+                    pair_icon TEXT DEFAULT '💰',
+                    allocated_capital DECIMAL(18,2) DEFAULT 100.00,
+                    risk_per_trade DECIMAL(5,4) DEFAULT 0.01,
+                    max_trades_per_day INTEGER DEFAULT 10,
+                    take_profit_pct DECIMAL(5,4) DEFAULT 0.015,
+                    stop_loss_pct DECIMAL(5,4) DEFAULT 0.01,
+                    enabled BOOLEAN DEFAULT true,
+                    total_pnl DECIMAL(18,2) DEFAULT 0.00,
+                    total_trades INTEGER DEFAULT 0,
+                    win_rate DECIMAL(5,2) DEFAULT 0.00,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    UNIQUE(user_id, trading_pair)
+                )
+            """)
+        else:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_trading_pairs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    trading_pair TEXT NOT NULL,
+                    pair_name TEXT,
+                    pair_icon TEXT DEFAULT '💰',
+                    allocated_capital REAL DEFAULT 100.00,
+                    risk_per_trade REAL DEFAULT 0.01,
+                    max_trades_per_day INTEGER DEFAULT 10,
+                    take_profit_pct REAL DEFAULT 0.015,
+                    stop_loss_pct REAL DEFAULT 0.01,
+                    enabled BOOLEAN DEFAULT 1,
+                    total_pnl REAL DEFAULT 0.00,
+                    total_trades INTEGER DEFAULT 0,
+                    win_rate REAL DEFAULT 0.00,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    UNIQUE(user_id, trading_pair)
+                )
+            """)
+        
+        # Index for fast lookups
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_trading_pairs_user ON user_trading_pairs(user_id)")
+        
         print(f"✅ Users database initialized")
 
 

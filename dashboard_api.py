@@ -1074,6 +1074,339 @@ async def set_user_trading_pair(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ------------ Multi-Pair Portfolio System ------------
+
+@app.get("/api/portfolio/pairs")
+async def get_user_portfolio_pairs(current_user: Dict = Depends(get_current_user)):
+    """Get all trading pairs in user's portfolio"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, trading_pair, pair_name, pair_icon, allocated_capital, 
+                   risk_per_trade, max_trades_per_day, take_profit_pct, stop_loss_pct,
+                   enabled, total_pnl, total_trades, win_rate, created_at
+                   FROM user_trading_pairs WHERE user_id = %s ORDER BY created_at DESC""" if USE_POSTGRES
+                else """SELECT id, trading_pair, pair_name, pair_icon, allocated_capital,
+                   risk_per_trade, max_trades_per_day, take_profit_pct, stop_loss_pct,
+                   enabled, total_pnl, total_trades, win_rate, created_at
+                   FROM user_trading_pairs WHERE user_id = ? ORDER BY created_at DESC""",
+                (current_user['id'],)
+            )
+            rows = cursor.fetchall()
+            
+            pairs = []
+            total_capital = 0
+            total_pnl = 0
+            
+            for row in rows:
+                pair_data = {
+                    "id": row[0],
+                    "trading_pair": row[1],
+                    "pair_name": row[2] or row[1].replace("USDT", ""),
+                    "pair_icon": row[3] or "💰",
+                    "allocated_capital": float(row[4] or 100),
+                    "risk_per_trade": float(row[5] or 0.01) * 100,  # Convert to %
+                    "max_trades_per_day": row[6] or 10,
+                    "take_profit_pct": float(row[7] or 0.015) * 100,
+                    "stop_loss_pct": float(row[8] or 0.01) * 100,
+                    "enabled": bool(row[9]),
+                    "total_pnl": float(row[10] or 0),
+                    "total_trades": row[11] or 0,
+                    "win_rate": float(row[12] or 0),
+                    "pnl_percent": (float(row[10] or 0) / float(row[4] or 100)) * 100 if float(row[4] or 100) > 0 else 0
+                }
+                pairs.append(pair_data)
+                total_capital += pair_data["allocated_capital"]
+                total_pnl += pair_data["total_pnl"]
+            
+            return {
+                "pairs": pairs,
+                "total_pairs": len(pairs),
+                "total_capital": total_capital,
+                "total_pnl": total_pnl,
+                "total_pnl_percent": (total_pnl / total_capital * 100) if total_capital > 0 else 0
+            }
+    except Exception as e:
+        print(f"Error fetching portfolio pairs: {e}")
+        return {"pairs": [], "total_pairs": 0, "total_capital": 0, "total_pnl": 0}
+
+@app.post("/api/portfolio/pairs")
+async def add_portfolio_pair(
+    trading_pair: str,
+    pair_name: Optional[str] = None,
+    pair_icon: Optional[str] = "💰",
+    allocated_capital: float = 100.0,
+    risk_per_trade: float = 1.0,  # In percent
+    max_trades_per_day: int = 10,
+    take_profit_pct: float = 1.5,  # In percent
+    stop_loss_pct: float = 1.0,  # In percent
+    current_user: Dict = Depends(get_current_user)
+):
+    """Add a new trading pair to user's portfolio"""
+    try:
+        if not trading_pair or len(trading_pair) < 5:
+            raise HTTPException(status_code=400, detail="Invalid trading pair")
+        
+        # Validate inputs
+        if allocated_capital < 10:
+            raise HTTPException(status_code=400, detail="Minimum capital is $10")
+        if risk_per_trade <= 0 or risk_per_trade > 10:
+            raise HTTPException(status_code=400, detail="Risk must be between 0.1% and 10%")
+        
+        trading_pair = trading_pair.upper()
+        
+        # Get pair info if available
+        popular_info = next((p for p in POPULAR_PAIRS if p["symbol"] == trading_pair), None)
+        if not pair_name:
+            pair_name = popular_info["name"] if popular_info else trading_pair.replace("USDT", "")
+        if pair_icon == "💰" and popular_info:
+            pair_icon = popular_info["icon"]
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if pair already exists for user
+            cursor.execute(
+                "SELECT id FROM user_trading_pairs WHERE user_id = %s AND trading_pair = %s" if USE_POSTGRES
+                else "SELECT id FROM user_trading_pairs WHERE user_id = ? AND trading_pair = ?",
+                (current_user['id'], trading_pair)
+            )
+            if cursor.fetchone():
+                raise HTTPException(status_code=400, detail=f"{trading_pair} already in your portfolio")
+            
+            # Insert new pair
+            cursor.execute(
+                """INSERT INTO user_trading_pairs 
+                   (user_id, trading_pair, pair_name, pair_icon, allocated_capital, 
+                    risk_per_trade, max_trades_per_day, take_profit_pct, stop_loss_pct)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""" if USE_POSTGRES
+                else """INSERT INTO user_trading_pairs 
+                   (user_id, trading_pair, pair_name, pair_icon, allocated_capital,
+                    risk_per_trade, max_trades_per_day, take_profit_pct, stop_loss_pct)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (current_user['id'], trading_pair, pair_name, pair_icon, allocated_capital,
+                 risk_per_trade / 100, max_trades_per_day, take_profit_pct / 100, stop_loss_pct / 100)
+            )
+            conn.commit()
+            
+            # Get the inserted ID
+            if USE_POSTGRES:
+                cursor.execute("SELECT lastval()")
+            else:
+                cursor.execute("SELECT last_insert_rowid()")
+            new_id = cursor.fetchone()[0]
+        
+        return {
+            "status": "success",
+            "id": new_id,
+            "trading_pair": trading_pair,
+            "pair_name": pair_name,
+            "pair_icon": pair_icon,
+            "message": f"{pair_name} ({trading_pair}) added to your portfolio!"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error adding pair: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/portfolio/pairs/{pair_id}")
+async def update_portfolio_pair(
+    pair_id: int,
+    allocated_capital: Optional[float] = None,
+    risk_per_trade: Optional[float] = None,
+    max_trades_per_day: Optional[int] = None,
+    take_profit_pct: Optional[float] = None,
+    stop_loss_pct: Optional[float] = None,
+    enabled: Optional[bool] = None,
+    current_user: Dict = Depends(get_current_user)
+):
+    """Update settings for a portfolio pair"""
+    try:
+        updates = []
+        params = []
+        
+        if allocated_capital is not None:
+            if allocated_capital < 10:
+                raise HTTPException(status_code=400, detail="Minimum capital is $10")
+            updates.append("allocated_capital = %s" if USE_POSTGRES else "allocated_capital = ?")
+            params.append(allocated_capital)
+        
+        if risk_per_trade is not None:
+            updates.append("risk_per_trade = %s" if USE_POSTGRES else "risk_per_trade = ?")
+            params.append(risk_per_trade / 100)
+        
+        if max_trades_per_day is not None:
+            updates.append("max_trades_per_day = %s" if USE_POSTGRES else "max_trades_per_day = ?")
+            params.append(max_trades_per_day)
+        
+        if take_profit_pct is not None:
+            updates.append("take_profit_pct = %s" if USE_POSTGRES else "take_profit_pct = ?")
+            params.append(take_profit_pct / 100)
+        
+        if stop_loss_pct is not None:
+            updates.append("stop_loss_pct = %s" if USE_POSTGRES else "stop_loss_pct = ?")
+            params.append(stop_loss_pct / 100)
+        
+        if enabled is not None:
+            updates.append("enabled = %s" if USE_POSTGRES else "enabled = ?")
+            params.append(enabled)
+        
+        if not updates:
+            raise HTTPException(status_code=400, detail="No updates provided")
+        
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Verify ownership
+            cursor.execute(
+                "SELECT trading_pair FROM user_trading_pairs WHERE id = %s AND user_id = %s" if USE_POSTGRES
+                else "SELECT trading_pair FROM user_trading_pairs WHERE id = ? AND user_id = ?",
+                (pair_id, current_user['id'])
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Pair not found")
+            
+            trading_pair = row[0]
+            
+            # Update
+            query = f"UPDATE user_trading_pairs SET {', '.join(updates)} WHERE id = %s AND user_id = %s" if USE_POSTGRES \
+                else f"UPDATE user_trading_pairs SET {', '.join(updates)} WHERE id = ? AND user_id = ?"
+            params.extend([pair_id, current_user['id']])
+            cursor.execute(query, params)
+            conn.commit()
+        
+        return {"status": "success", "message": f"{trading_pair} settings updated!"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/portfolio/pairs/{pair_id}")
+async def delete_portfolio_pair(
+    pair_id: int,
+    current_user: Dict = Depends(get_current_user)
+):
+    """Remove a trading pair from user's portfolio"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get pair info before deleting
+            cursor.execute(
+                "SELECT trading_pair, pair_name FROM user_trading_pairs WHERE id = %s AND user_id = %s" if USE_POSTGRES
+                else "SELECT trading_pair, pair_name FROM user_trading_pairs WHERE id = ? AND user_id = ?",
+                (pair_id, current_user['id'])
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Pair not found")
+            
+            trading_pair, pair_name = row
+            
+            # Delete
+            cursor.execute(
+                "DELETE FROM user_trading_pairs WHERE id = %s AND user_id = %s" if USE_POSTGRES
+                else "DELETE FROM user_trading_pairs WHERE id = ? AND user_id = ?",
+                (pair_id, current_user['id'])
+            )
+            conn.commit()
+        
+        return {"status": "success", "message": f"{pair_name} ({trading_pair}) removed from portfolio"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/portfolio/pairs/{pair_id}")
+async def get_portfolio_pair_details(
+    pair_id: int,
+    current_user: Dict = Depends(get_current_user)
+):
+    """Get detailed info for a specific portfolio pair"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, trading_pair, pair_name, pair_icon, allocated_capital,
+                   risk_per_trade, max_trades_per_day, take_profit_pct, stop_loss_pct,
+                   enabled, total_pnl, total_trades, win_rate, created_at, updated_at
+                   FROM user_trading_pairs WHERE id = %s AND user_id = %s""" if USE_POSTGRES
+                else """SELECT id, trading_pair, pair_name, pair_icon, allocated_capital,
+                   risk_per_trade, max_trades_per_day, take_profit_pct, stop_loss_pct,
+                   enabled, total_pnl, total_trades, win_rate, created_at, updated_at
+                   FROM user_trading_pairs WHERE id = ? AND user_id = ?""",
+                (pair_id, current_user['id'])
+            )
+            row = cursor.fetchone()
+            
+            if not row:
+                raise HTTPException(status_code=404, detail="Pair not found")
+            
+            return {
+                "id": row[0],
+                "trading_pair": row[1],
+                "pair_name": row[2],
+                "pair_icon": row[3],
+                "allocated_capital": float(row[4]),
+                "risk_per_trade": float(row[5]) * 100,
+                "max_trades_per_day": row[6],
+                "take_profit_pct": float(row[7]) * 100,
+                "stop_loss_pct": float(row[8]) * 100,
+                "enabled": bool(row[9]),
+                "total_pnl": float(row[10]),
+                "total_trades": row[11],
+                "win_rate": float(row[12]),
+                "created_at": str(row[13]),
+                "updated_at": str(row[14])
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/portfolio/pairs/{pair_id}/toggle")
+async def toggle_portfolio_pair(
+    pair_id: int,
+    current_user: Dict = Depends(get_current_user)
+):
+    """Toggle enabled/disabled state of a portfolio pair"""
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get current state
+            cursor.execute(
+                "SELECT trading_pair, enabled FROM user_trading_pairs WHERE id = %s AND user_id = %s" if USE_POSTGRES
+                else "SELECT trading_pair, enabled FROM user_trading_pairs WHERE id = ? AND user_id = ?",
+                (pair_id, current_user['id'])
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Pair not found")
+            
+            trading_pair, current_enabled = row
+            new_enabled = not current_enabled
+            
+            # Toggle
+            cursor.execute(
+                "UPDATE user_trading_pairs SET enabled = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s" if USE_POSTGRES
+                else "UPDATE user_trading_pairs SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (new_enabled, pair_id)
+            )
+            conn.commit()
+        
+        status = "enabled" if new_enabled else "paused"
+        return {"status": "success", "enabled": new_enabled, "message": f"{trading_pair} is now {status}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/capital")
 async def get_capital():
     """Get current trading capital"""
