@@ -67,6 +67,24 @@ class PasswordChange(BaseModel):
     old_password: str
     new_password: str
 
+class PortfolioPairCreate(BaseModel):
+    trading_pair: str
+    pair_name: Optional[str] = None
+    pair_icon: Optional[str] = "💰"
+    allocated_capital: float = 100.0
+    risk_per_trade: float = 1.0
+    max_trades_per_day: int = 10
+    take_profit_pct: float = 1.5
+    stop_loss_pct: float = 1.0
+
+class PortfolioPairUpdate(BaseModel):
+    allocated_capital: Optional[float] = None
+    risk_per_trade: Optional[float] = None
+    max_trades_per_day: Optional[int] = None
+    take_profit_pct: Optional[float] = None
+    stop_loss_pct: Optional[float] = None
+    enabled: Optional[bool] = None
+
 # Authentication dependencies (must be before endpoints)
 security = HTTPBearer()
 
@@ -1133,18 +1151,20 @@ async def get_user_portfolio_pairs(current_user: Dict = Depends(get_current_user
 
 @app.post("/api/portfolio/pairs")
 async def add_portfolio_pair(
-    trading_pair: str,
-    pair_name: Optional[str] = None,
-    pair_icon: Optional[str] = "💰",
-    allocated_capital: float = 100.0,
-    risk_per_trade: float = 1.0,  # In percent
-    max_trades_per_day: int = 10,
-    take_profit_pct: float = 1.5,  # In percent
-    stop_loss_pct: float = 1.0,  # In percent
+    data: PortfolioPairCreate,
     current_user: Dict = Depends(get_current_user)
 ):
     """Add a new trading pair to user's portfolio"""
     try:
+        trading_pair = data.trading_pair
+        pair_name = data.pair_name
+        pair_icon = data.pair_icon or "💰"
+        allocated_capital = data.allocated_capital
+        risk_per_trade = data.risk_per_trade
+        max_trades_per_day = data.max_trades_per_day
+        take_profit_pct = data.take_profit_pct
+        stop_loss_pct = data.stop_loss_pct
+        
         if not trading_pair or len(trading_pair) < 5:
             raise HTTPException(status_code=400, detail="Invalid trading pair")
         
@@ -1214,18 +1234,20 @@ async def add_portfolio_pair(
 @app.put("/api/portfolio/pairs/{pair_id}")
 async def update_portfolio_pair(
     pair_id: int,
-    allocated_capital: Optional[float] = None,
-    risk_per_trade: Optional[float] = None,
-    max_trades_per_day: Optional[int] = None,
-    take_profit_pct: Optional[float] = None,
-    stop_loss_pct: Optional[float] = None,
-    enabled: Optional[bool] = None,
+    data: PortfolioPairUpdate,
     current_user: Dict = Depends(get_current_user)
 ):
     """Update settings for a portfolio pair"""
     try:
         updates = []
         params = []
+        
+        allocated_capital = data.allocated_capital
+        risk_per_trade = data.risk_per_trade
+        max_trades_per_day = data.max_trades_per_day
+        take_profit_pct = data.take_profit_pct
+        stop_loss_pct = data.stop_loss_pct
+        enabled = data.enabled
         
         if allocated_capital is not None:
             if allocated_capital < 10:
