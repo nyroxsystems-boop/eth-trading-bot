@@ -557,16 +557,25 @@ async def register(request: UserRegister):
 async def login(request: UserLogin):
     """Login user"""
     try:
+        print(f"🔐 Login attempt for: {request.email_or_username}")
         result = user_mgr.login(request.email_or_username, request.password)
         
         if not result:
+            print(f"❌ Login failed: Invalid credentials for {request.email_or_username}")
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
+        print(f"✅ Login successful for: {request.email_or_username}")
         return AuthResponse(**result)
         
     except ValueError as e:
+        print(f"❌ Login ValueError: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
+        import traceback
+        print(f"❌ Login Exception: {type(e).__name__}: {e}")
+        print(f"   Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
 @app.post("/api/auth/logout")
