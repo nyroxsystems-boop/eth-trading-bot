@@ -1785,8 +1785,6 @@ async def stripe_webhook(request):
             handle_successful_payment(user_id, tier)
             print(f"✅ Checkout completed for user {user_id}, tier: {tier}")
     
-    elif event["type"] == "customer.subscription.deleted":
-        # Handle subscription cancellation - downgrade to free
         session = event["data"]["object"]
         # Note: Would need to implement user lookup by Stripe customer ID
         print(f"Subscription cancelled: {session.get('id')}")
@@ -1794,9 +1792,225 @@ async def stripe_webhook(request):
     return {"status": "success"}
 
 
+# =============================================================================
+# ML/AI MONITORING ENDPOINTS
+# =============================================================================
+
+@app.get("/api/ml/status")
+async def get_ml_status():
+    """Get status of all ML models"""
+    log_dir = Path(os.getenv("LOG_DIR", "./logs"))
+    
+    models = {}
+    
+    # Check DQN model
+    dqn_path = log_dir / "dqn_agent.pt"
+    if dqn_path.exists():
+        stat = dqn_path.stat()
+        models["dqn"] = {
+            "status": "trained",
+            "file_size": f"{stat.st_size / 1024:.1f} KB",
+            "last_updated": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "model_type": "Deep Q-Network (Reinforcement Learning)"
+        }
+    else:
+        models["dqn"] = {"status": "not_trained", "model_type": "Deep Q-Network"}
+    
+    # Check Gradient Boosting model
+    gb_path = log_dir / "ml_model.pkl"
+    if gb_path.exists():
+        stat = gb_path.stat()
+        models["gradient_boosting"] = {
+            "status": "trained",
+            "file_size": f"{stat.st_size / 1024:.1f} KB",
+            "last_updated": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "model_type": "Gradient Boosting Regressor"
+        }
+    else:
+        models["gradient_boosting"] = {"status": "not_trained", "model_type": "Gradient Boosting"}
+    
+    # Check LSTM model
+    lstm_path = log_dir / "neural_model.pt"
+    if lstm_path.exists():
+        stat = lstm_path.stat()
+        models["lstm"] = {
+            "status": "trained",
+            "file_size": f"{stat.st_size / 1024:.1f} KB",
+            "last_updated": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "model_type": "LSTM Neural Network"
+        }
+    else:
+        models["lstm"] = {"status": "not_trained", "model_type": "LSTM Neural Network"}
+    
+    return {
+        "models": models,
+        "ensemble_available": all(m.get("status") == "trained" for m in [models.get("gradient_boosting", {}), models.get("lstm", {})])
+    }
+
+
+@app.get("/api/ml/dqn/info")
+async def get_dqn_info():
+    """Get detailed DQN model information"""
+    try:
+        import torch
+        log_dir = Path(os.getenv("LOG_DIR", "./logs"))
+        dqn_path = log_dir / "dqn_agent.pt"
+        
+        if not dqn_path.exists():
+            return {"status": "not_trained", "message": "DQN model not found"}
+        
+        data = torch.load(dqn_path, map_location='cpu')
+        
+        # Extract training stats
+        training_stats = data.get('training_stats', {})
+        
+        return {
+            "status": "trained",
+            "epsilon": round(data.get('epsilon', 1.0), 4),
+            "episodes_trained": training_stats.get('episodes', 0),
+            "last_updated": data.get('timestamp', 'unknown'),
+            "total_rewards": len(training_stats.get('total_rewards', [])),
+            "avg_reward_last_20": round(sum(training_stats.get('total_rewards', [])[-20:]) / max(len(training_stats.get('total_rewards', [])[-20:]), 1), 2) if training_stats.get('total_rewards') else 0
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/ml/dqn/predict")
+async def get_dqn_prediction():
+    """Get current DQN trading recommendation"""
+    try:
+        log_dir = Path(os.getenv("LOG_DIR", "./logs"))
+        
+        # Try to import and use the DQN agent
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from rl_trading_agent import DQNAgent, TradingEnvironment
+        import numpy as np
+        
+        env = TradingEnvironment(window_size=20)
+        agent = DQNAgent(state_size=env.state_size)
+        
+        if not agent.is_trained:
+            return {"status": "not_trained", "message": "DQN agent not trained yet"}
+        
+        # Generate a sample state (in production this would come from live data)
+        test_state = np.random.randn(env.state_size).astype(np.float32)
+        decision = agent.get_trading_decision(test_state)
+        
+        return {
+            "status": "success",
+            "recommendation": decision['action'],
+            "confidence": round(decision['confidence'] * 100, 1),
+            "q_values": {k: round(v, 4) for k, v in decision['q_values'].items()},
+            "probabilities": {k: round(v * 100, 1) for k, v in decision['probabilities'].items()}
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/ml/ensemble/predict")
+async def get_ensemble_prediction():
+    """Get predictions from ensemble model"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from neural_strategy_predictor import EnsemblePredictor
+        
+        ensemble = EnsemblePredictor()
+        
+        # Test strategy
+        test_strategy = {
+            'ml_threshold': 0.55,
+            'risk_per_trade': 0.008,
+            'tp_min': 0.010,
+            'tp_max': 0.020,
+            'stop_floor': 0.008,
+            'max_trades_per_day': 15
+        }
+        
+        predictions = ensemble.predict_score(test_strategy)
+        
+        return {
+            "status": "success",
+            "predictions": {k: round(v, 2) for k, v in predictions.items()},
+            "test_strategy": test_strategy
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/ml/feature-importance")
+async def get_feature_importance():
+    """Get feature importance from Gradient Boosting model"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from ml_strategy_predictor import MLStrategyPredictor
+        
+        predictor = MLStrategyPredictor()
+        
+        if not predictor.is_trained:
+            return {"status": "not_trained", "message": "Model not trained yet"}
+        
+        importance = predictor.get_feature_importance()
+        
+        # Sort by importance
+        sorted_importance = sorted(importance.items(), key=lambda x: x[1], reverse=True)
+        
+        return {
+            "status": "success",
+            "features": [{"name": k, "importance": round(v * 100, 2)} for k, v in sorted_importance]
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/ml/training-progress")
+async def get_training_progress():
+    """Check if any ML training is in progress"""
+    import subprocess
+    
+    result = subprocess.run(
+        ['ps', 'aux'],
+        capture_output=True,
+        text=True
+    )
+    
+    training_processes = []
+    for line in result.stdout.split('\n'):
+        if 'rl_trading_agent' in line and '--train' in line:
+            parts = line.split()
+            if len(parts) >= 11:
+                training_processes.append({
+                    "type": "DQN",
+                    "pid": parts[1],
+                    "cpu": parts[2],
+                    "memory": parts[3],
+                    "time": parts[9]
+                })
+        elif 'continuous_backtester' in line:
+            parts = line.split()
+            if len(parts) >= 11:
+                training_processes.append({
+                    "type": "Backtester",
+                    "pid": parts[1],
+                    "cpu": parts[2],
+                    "memory": parts[3],
+                    "time": parts[9]
+                })
+    
+    return {
+        "training_active": len(training_processes) > 0,
+        "processes": training_processes
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("DASHBOARD_PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
 

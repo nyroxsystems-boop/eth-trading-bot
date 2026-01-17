@@ -22,6 +22,7 @@ import AccountsView from './views/AccountsView'
 import BotsView from './views/BotsView'
 import SettingsView from './views/SettingsView'
 import SubscriptionView from './views/SubscriptionView'
+import MLMonitorView from './views/MLMonitorView'
 
 // Types
 import { Trade, Metrics, BotStatus, CandleData } from './types'
@@ -195,6 +196,7 @@ function Dashboard() {
             )}
             {activePage === 'portfolio' && <PortfolioView key="portfolio" />}
             {activePage === 'learning' && <LearningView key="learning" />}
+            {activePage === 'ml' && <MLMonitorView key="ml" />}
             {activePage === 'accounts' && <AccountsView key="accounts" />}
             {activePage === 'bots' && <BotsView key="bots" />}
             {activePage === 'subscription' && <SubscriptionView key="subscription" />}
