@@ -2262,6 +2262,150 @@ async def get_retrain_status():
         return {"status": "error", "message": str(e)}
 
 
+# ============================================================================
+# ADMIN DASHBOARD API ENDPOINTS
+# ============================================================================
+
+# Global emergency state
+EMERGENCY_TRADING_STOPPED = False
+
+# ------------ User Management ------------
+
+@app.get("/api/admin/users")
+async def admin_list_users(current_user: Dict = Depends(get_current_admin)):
+    """List all users with trading stats"""
+    try:
+        users = user_mgr.list_users()
+        enriched_users = []
+        
+        for user in users:
+            has_keys = user_mgr.has_api_keys(user['id'])
+            enriched_users.append({
+                **user,
+                'has_api_keys': has_keys,
+                'trading_enabled': has_keys,
+                'created_at': str(user.get('created_at', '')),
+                'last_login': str(user.get('last_login', '')) if user.get('last_login') else None
+            })
+        
+        return {"status": "success", "total_users": len(users), "users": enriched_users}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/admin/users/{user_id}")
+async def admin_get_user(user_id: int, current_user: Dict = Depends(get_current_admin)):
+    """Get detailed user info"""
+    user = user_mgr.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    api_keys = user_mgr.get_api_keys(user_id, decrypt=False) or {}
+    return {
+        "status": "success",
+        "user": {**user, 'has_binance_keys': api_keys.get('has_binance_keys', False),
+                 'has_telegram': api_keys.get('has_telegram', False),
+                 'trading_enabled': api_keys.get('trading_enabled', False)}
+    }
+
+@app.post("/api/admin/users/{user_id}/toggle")
+async def admin_toggle_user(user_id: int, current_user: Dict = Depends(get_current_admin)):
+    """Enable/disable a user account"""
+    user = user_mgr.get_user(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    new_status = not user.get('active', True)
+    user_mgr.update_user(user_id, active=new_status)
+    return {"status": "success", "active": new_status}
+
+@app.post("/api/admin/users/{user_id}/subscription")
+async def admin_update_subscription(user_id: int, tier: str, current_user: Dict = Depends(get_current_admin)):
+    """Update user subscription tier"""
+    if tier not in ['free', 'basic', 'pro', 'enterprise']:
+        raise HTTPException(status_code=400, detail="Invalid tier")
+    user_mgr.update_user(user_id, subscription_tier=tier)
+    return {"status": "success", "tier": tier}
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(user_id: int, current_user: Dict = Depends(get_current_admin)):
+    """Delete a user account"""
+    if user_id == current_user.get('id'):
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    if not user_mgr.delete_user(user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"status": "success"}
+
+# ------------ Revenue Dashboard ------------
+
+@app.get("/api/admin/revenue")
+async def admin_get_revenue(current_user: Dict = Depends(get_current_admin)):
+    """Get revenue overview from Stripe"""
+    try:
+        import stripe
+        stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
+        if not stripe.api_key:
+            return {"status": "warning", "message": "Stripe not configured", "mrr": 0, "active_subscriptions": 0}
+        subs = stripe.Subscription.list(status='active', limit=100)
+        mrr = sum(item['price']['unit_amount']/100 for sub in subs.data for item in sub['items']['data'])
+        return {"status": "success", "mrr": mrr, "active_subscriptions": len(subs.data)}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "mrr": 0}
+
+# ------------ Platform Analytics ------------
+
+@app.get("/api/admin/analytics")
+async def admin_get_analytics(current_user: Dict = Depends(get_current_admin)):
+    """Get platform-wide analytics"""
+    users = user_mgr.list_users()
+    return {
+        "status": "success",
+        "total_users": len(users),
+        "active_users": len([u for u in users if u.get('active', True)]),
+        "users_with_api_keys": len([u for u in users if user_mgr.has_api_keys(u['id'])]),
+        "subscription_breakdown": {}
+    }
+
+# ------------ Emergency Controls ------------
+
+@app.get("/api/admin/emergency/status")
+async def admin_emergency_status(current_user: Dict = Depends(get_current_admin)):
+    global EMERGENCY_TRADING_STOPPED
+    return {"trading_stopped": EMERGENCY_TRADING_STOPPED}
+
+@app.post("/api/admin/emergency/stop-all")
+async def admin_emergency_stop(current_user: Dict = Depends(get_current_admin)):
+    global EMERGENCY_TRADING_STOPPED
+    EMERGENCY_TRADING_STOPPED = True
+    try:
+        import requests
+        token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+        if token and chat:
+            requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                         json={"chat_id": chat, "text": f"🚨 EMERGENCY STOP by {current_user.get('username')}"})
+    except: pass
+    return {"status": "success", "trading_stopped": True}
+
+@app.post("/api/admin/emergency/resume")
+async def admin_emergency_resume(current_user: Dict = Depends(get_current_admin)):
+    global EMERGENCY_TRADING_STOPPED
+    EMERGENCY_TRADING_STOPPED = False
+    return {"status": "success", "trading_stopped": False}
+
+# ------------ System Health ------------
+
+@app.get("/api/admin/system/health")
+async def admin_system_health(current_user: Dict = Depends(get_current_admin)):
+    health = {"status": "success", "timestamp": datetime.now().isoformat(), "services": {}}
+    try:
+        from db_adapter import get_db_connection, USE_POSTGRES
+        with get_db_connection() as conn:
+            conn.cursor().execute("SELECT 1")
+        health["services"]["database"] = {"status": "healthy", "type": "PostgreSQL" if USE_POSTGRES else "SQLite"}
+    except Exception as e:
+        health["services"]["database"] = {"status": "unhealthy", "error": str(e)}
+    health["services"]["api"] = {"status": "healthy"}
+    health["emergency_stop_active"] = EMERGENCY_TRADING_STOPPED
+    return health
+
+
 # SPA Catch-all handler - MUST be at the end after all API routes
 # This serves index.html for all non-API routes so React Router can handle them
 @app.get("/{full_path:path}")

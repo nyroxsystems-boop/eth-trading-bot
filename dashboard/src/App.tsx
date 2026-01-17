@@ -23,6 +23,8 @@ import BotsView from './views/BotsView'
 import SettingsView from './views/SettingsView'
 import SubscriptionView from './views/SubscriptionView'
 import MLMonitorView from './views/MLMonitorView'
+import AdminDashboardView from './views/AdminDashboardView'
+import './views/AdminDashboardView.css'
 
 // Types
 import { Trade, Metrics, BotStatus, CandleData } from './types'
@@ -201,6 +203,7 @@ function Dashboard() {
             {activePage === 'bots' && <BotsView key="bots" />}
             {activePage === 'subscription' && <SubscriptionView key="subscription" />}
             {activePage === 'settings' && <SettingsView key="settings" />}
+            {activePage === 'admin' && <AdminDashboardView key="admin" />}
           </AnimatePresence>
         </main>
       </div>
