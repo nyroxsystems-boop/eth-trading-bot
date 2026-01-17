@@ -7,12 +7,28 @@ Tests strategies 24/7 and saves results
 import asyncio
 import aiohttp
 import json
+import sqlite3
+import os
 from datetime import datetime
 from typing import List, Dict, Any
 from pathlib import Path
+from contextlib import contextmanager
 
 from strategy_generator import StrategyGenerator
-from db_adapter import get_db_connection, USE_POSTGRES
+
+# Learning DB path
+LEARNING_DB = Path(os.getenv("LOG_DIR", "./logs")) / "learning.db"
+
+@contextmanager
+def get_learning_db():
+    """Context manager for learning.db connection"""
+    conn = sqlite3.connect(LEARNING_DB)
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
 
 class ContinuousBacktester:
     def __init__(
@@ -29,10 +45,10 @@ class ContinuousBacktester:
     
     def init_database(self):
         """Initialize database for learning"""
-        with get_db_connection('learning') as conn:
+        with get_learning_db() as conn:
             cursor = conn.cursor()
             
-            if USE_POSTGRES:
+            if False:  # SQLite only
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS strategies (
                         id SERIAL PRIMARY KEY,
@@ -141,10 +157,10 @@ class ContinuousBacktester:
     
     def save_result(self, strategy: Dict[str, Any], metrics: Dict[str, Any], score: float):
         """Save backtest result to database"""
-        with get_db_connection('learning') as conn:
+        with get_learning_db() as conn:
             cursor = conn.cursor()
             
-            if USE_POSTGRES:
+            if False:  # SQLite only
                 cursor.execute("""
                     INSERT INTO strategies (
                         ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
@@ -171,10 +187,10 @@ class ContinuousBacktester:
             else:
                 cursor.execute("""
                     INSERT INTO strategies (
-                        ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                        timestamp, ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
                         total_trades, winning_trades, losing_trades, win_rate, total_pnl, roi,
                         sharpe_ratio, max_drawdown, score
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     strategy['ml_threshold'],
                     strategy['risk_per_trade'],
@@ -195,10 +211,10 @@ class ContinuousBacktester:
     
     def get_top_strategies(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Get top performing strategies"""
-        with get_db_connection('learning') as conn:
+        with get_learning_db() as conn:
             cursor = conn.cursor()
             
-            if USE_POSTGRES:
+            if False:  # SQLite only
                 cursor.execute("""
                     SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
                            total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score
