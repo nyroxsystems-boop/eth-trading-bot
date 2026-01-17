@@ -2406,6 +2406,125 @@ async def admin_system_health(current_user: Dict = Depends(get_current_admin)):
     return health
 
 
+# ------------ Jarvis Monitoring System ------------
+
+@app.get("/api/admin/jarvis/status")
+async def get_jarvis_status(current_user: Dict = Depends(get_current_admin)):
+    """Get full Jarvis system status"""
+    try:
+        from jarvis import get_jarvis
+        jarvis = get_jarvis()
+        
+        # Run health checks
+        import asyncio
+        asyncio.create_task(jarvis.check_all_services())
+        
+        return {
+            "status": "success",
+            **jarvis.get_status()
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/admin/jarvis/workers")
+async def get_jarvis_workers(current_user: Dict = Depends(get_current_admin)):
+    """Get all monitored workers/services"""
+    try:
+        from jarvis import get_jarvis
+        jarvis = get_jarvis()
+        
+        workers = []
+        for name, health in jarvis.services.items():
+            workers.append({
+                "name": name,
+                "status": health.status.value,
+                "last_check": health.last_check.isoformat() if health.last_check else None,
+                "response_time_ms": health.response_time_ms,
+                "error": health.error_message,
+                "consecutive_failures": health.consecutive_failures,
+                "metadata": health.metadata
+            })
+        
+        return {"status": "success", "workers": workers}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "workers": []}
+
+@app.get("/api/admin/jarvis/alerts")
+async def get_jarvis_alerts(
+    limit: int = 20, 
+    unresolved_only: bool = False,
+    current_user: Dict = Depends(get_current_admin)
+):
+    """Get recent Jarvis alerts"""
+    try:
+        from jarvis import get_jarvis
+        jarvis = get_jarvis()
+        
+        return {
+            "status": "success",
+            "alerts": jarvis.get_alerts(limit=limit, unresolved_only=unresolved_only)
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e), "alerts": []}
+
+@app.post("/api/admin/jarvis/alerts/{alert_id}/resolve")
+async def resolve_jarvis_alert(alert_id: str, current_user: Dict = Depends(get_current_admin)):
+    """Mark an alert as resolved"""
+    try:
+        from jarvis import get_jarvis
+        jarvis = get_jarvis()
+        
+        if jarvis.resolve_alert(alert_id):
+            return {"status": "success", "message": f"Alert {alert_id} resolved"}
+        else:
+            raise HTTPException(status_code=404, detail="Alert not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/admin/jarvis/anomalies")
+async def get_jarvis_anomalies(
+    limit: int = 20,
+    current_user: Dict = Depends(get_current_admin)
+):
+    """Get detected anomalies"""
+    try:
+        from jarvis import get_anomaly_detector
+        detector = get_anomaly_detector()
+        
+        return {
+            "status": "success",
+            "anomalies": detector.get_recent_anomalies(limit=limit),
+            "summary": detector.get_summary()
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e), "anomalies": []}
+
+@app.post("/api/admin/jarvis/check")
+async def trigger_jarvis_check(current_user: Dict = Depends(get_current_admin)):
+    """Manually trigger a full health check"""
+    try:
+        from jarvis import get_jarvis
+        jarvis = get_jarvis()
+        
+        results = await jarvis.check_all_services()
+        
+        return {
+            "status": "success",
+            "message": "Health check completed",
+            "results": {
+                name: {
+                    "status": health.status.value,
+                    "response_time_ms": health.response_time_ms
+                }
+                for name, health in results.items()
+            }
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 # SPA Catch-all handler - MUST be at the end after all API routes
 # This serves index.html for all non-API routes so React Router can handle them
 @app.get("/{full_path:path}")
