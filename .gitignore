@@ -66,3 +66,6 @@ trades.csv
 # Temporary
 *.tmp
 *.temp
+
+# Archived old files
+archive/
