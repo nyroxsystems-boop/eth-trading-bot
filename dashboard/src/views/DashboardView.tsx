@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { TrendingUp, TrendingDown, Activity, Target, Zap } from 'lucide-react'
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts'
 import { LiveTradingToggle } from '../components/LiveTradingToggle'
+import { useAuth } from '../contexts/AuthContext'
 import '../styles/premium.css'
 import '../styles/components.css'
 
@@ -32,6 +33,9 @@ interface PnLDataPoint {
 }
 
 const DashboardView = ({ metrics, status }: DashboardViewProps) => {
+    const { user } = useAuth()
+    const isAdmin = user?.role === 'admin'
+
     const dailyPnl = metrics?.daily_pnl || 0
     const totalPnl = metrics?.total_pnl || 0
     const winRate = metrics?.win_rate || 0
@@ -64,8 +68,9 @@ const DashboardView = ({ metrics, status }: DashboardViewProps) => {
                 const data = await res.json()
                 setTradingMode({
                     mode: data.mode,
-                    can_enable_live: data.can_enable_live,
-                    requires_upgrade: data.requires_upgrade
+                    can_enable_live: data.can_enable_live || isAdmin,
+                    // Admins never need upgrade - they have full access
+                    requires_upgrade: isAdmin ? false : data.requires_upgrade
                 })
             }
         } catch (err) {

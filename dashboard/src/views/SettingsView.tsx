@@ -1,19 +1,25 @@
 import { useState, useEffect } from 'react'
-import { Bot, DollarSign, MessageSquare, Brain, AlertTriangle } from 'lucide-react'
+import { Bot, DollarSign, MessageSquare, Brain, AlertTriangle, Key } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
 import '../styles/premium.css'
 import '../styles/components.css'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 const SettingsView = () => {
+    const { token } = useAuth()
     const [mode, setMode] = useState('paper')
     const [capital, setCapital] = useState(10000)
     const [telegramToken, setTelegramToken] = useState('')
     const [telegramChatId, setTelegramChatId] = useState('')
+    const [binanceApiKey, setBinanceApiKey] = useState('')
+    const [binanceApiSecret, setBinanceApiSecret] = useState('')
+    const [hasBinanceKeys, setHasBinanceKeys] = useState(false)
     const [switching, setSwitching] = useState(false)
 
     useEffect(() => {
         fetchSettings()
+        fetchApiKeys()
     }, [])
 
     const fetchSettings = async () => {
@@ -32,6 +38,55 @@ const SettingsView = () => {
             setTelegramChatId(settingsData.telegram_chat_id || '')
         } catch (err) {
             console.error('Failed to fetch settings:', err)
+        }
+    }
+
+    const fetchApiKeys = async () => {
+        if (!token) return
+        try {
+            const res = await fetch(`${API_URL}/api/settings/api-keys`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            })
+            if (res.ok) {
+                const data = await res.json()
+                setHasBinanceKeys(data.has_binance_keys || false)
+                // Keys are masked, only show placeholder if they exist
+                if (data.has_binance_keys) {
+                    setBinanceApiKey(data.binance_api_key || '')
+                    setBinanceApiSecret(data.binance_api_secret || '')
+                }
+            }
+        } catch (err) {
+            console.error('Failed to fetch API keys:', err)
+        }
+    }
+
+    const saveBinanceKeys = async () => {
+        if (!token) return
+        try {
+            const res = await fetch(`${API_URL}/api/settings/api-keys`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    binance_api_key: binanceApiKey,
+                    binance_api_secret: binanceApiSecret
+                })
+            })
+
+            if (res.ok) {
+                alert('✅ Binance API Keys saved!')
+                setHasBinanceKeys(true)
+                fetchApiKeys() // Refresh to get masked version
+            } else {
+                const err = await res.json()
+                alert(`❌ Failed: ${err.detail || 'Unknown error'}`)
+            }
+        } catch (err) {
+            console.error('Failed to save API keys:', err)
+            alert('❌ Error saving API keys')
         }
     }
 
@@ -212,6 +267,55 @@ const SettingsView = () => {
                     >
                         Save
                     </button>
+                </div>
+            </div>
+
+            {/* Binance API Keys */}
+            <div className="glass-card" style={{ padding: '24px', marginBottom: '24px' }}>
+                <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Key size={20} />
+                    Binance API Keys
+                    {hasBinanceKeys && (
+                        <span style={{ marginLeft: 'auto', fontSize: '12px', padding: '4px 8px', background: 'rgba(16, 185, 129, 0.2)', color: '#10B981', borderRadius: '4px' }}>
+                            ✓ Configured
+                        </span>
+                    )}
+                </h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div>
+                        <label style={{ display: 'block', fontSize: '14px', color: '#94A3B8', marginBottom: '8px' }}>
+                            API Key
+                        </label>
+                        <input
+                            type="text"
+                            value={binanceApiKey}
+                            onChange={(e) => setBinanceApiKey(e.target.value)}
+                            placeholder={hasBinanceKeys ? '••••••••••••••••' : 'Enter your Binance API Key'}
+                            style={{ width: '100%', padding: '12px', background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)', borderRadius: '8px', color: 'white', fontSize: '14px' }}
+                        />
+                    </div>
+                    <div>
+                        <label style={{ display: 'block', fontSize: '14px', color: '#94A3B8', marginBottom: '8px' }}>
+                            API Secret
+                        </label>
+                        <input
+                            type="password"
+                            value={binanceApiSecret}
+                            onChange={(e) => setBinanceApiSecret(e.target.value)}
+                            placeholder={hasBinanceKeys ? '••••••••••••••••' : 'Enter your Binance API Secret'}
+                            style={{ width: '100%', padding: '12px', background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.3)', borderRadius: '8px', color: 'white', fontSize: '14px' }}
+                        />
+                    </div>
+                    <button
+                        onClick={saveBinanceKeys}
+                        className="btn-primary"
+                        style={{ alignSelf: 'flex-start' }}
+                    >
+                        {hasBinanceKeys ? 'Update Binance Keys' : 'Save Binance Keys'}
+                    </button>
+                    <div style={{ padding: '12px', background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '8px', fontSize: '13px', color: '#F59E0B' }}>
+                        ⚠️ Your API keys are encrypted and stored securely. Never share your API secret with anyone!
+                    </div>
                 </div>
             </div>
 
