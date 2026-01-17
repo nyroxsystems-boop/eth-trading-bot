@@ -300,24 +300,88 @@ class ContinuousBacktester:
             print(f"  Sharpe: {best['metrics']['sharpe_ratio']:.2f}")
         
         print(f"Cycle complete. Tested {len(results)} strategies.")
+        
+        # === ML & AUTO-APPLY INTEGRATION ===
+        await self._post_cycle_ml_and_apply()
+    
+    async def _post_cycle_ml_and_apply(self):
+        """Run ML training and auto-apply after each cycle"""
+        try:
+            # 1. Train/update ML model
+            from ml_strategy_predictor import MLStrategyPredictor
+            print("\n🧠 Updating ML model...")
+            predictor = MLStrategyPredictor(db_path=str(self.db_path))
+            if predictor.train():
+                # Show feature importance
+                importance = predictor.get_feature_importance()
+                if importance:
+                    top_features = sorted(importance.items(), key=lambda x: x[1], reverse=True)[:3]
+                    print(f"   Top features: {', '.join(f'{k}={v:.3f}' for k, v in top_features)}")
+            
+            # 2. Check if should auto-apply new strategy
+            from auto_apply import AutoApply
+            print("\n🔄 Checking for auto-apply...")
+            auto_apply = AutoApply(
+                db_path=str(self.db_path),
+                settings_file=str(LEARNING_DB.parent / "bot_settings.json")
+            )
+            auto_apply.check_and_apply()
+            
+        except Exception as e:
+            print(f"⚠️ ML/Auto-apply error (non-critical): {e}")
     
     async def run_continuous(self):
         """Run continuous backtesting loop"""
-        print("Starting continuous backtester...")
-        print(f"Testing {self.strategies_per_hour} strategies per hour")
+        print("🚀 Starting continuous backtester...")
+        print(f"   Testing {self.strategies_per_hour} strategies per hour")
+        print(f"   ML-enhanced: Smart strategy prioritization")
+        print(f"   Auto-apply: Best strategies applied automatically")
+        
+        # Try to use ML for smarter strategy selection
+        try:
+            from ml_strategy_predictor import MLStrategyPredictor
+            self.ml_predictor = MLStrategyPredictor(db_path=str(self.db_path))
+            if self.ml_predictor.is_trained:
+                print(f"   ✅ ML Model loaded - will prioritize promising strategies")
+            else:
+                self.ml_predictor = None
+                print(f"   ⏳ ML Model will train after {self.ml_predictor.min_samples if hasattr(self, 'ml_predictor') else 30} samples")
+        except Exception as e:
+            self.ml_predictor = None
+            print(f"   ⚠️ ML not available: {e}")
         
         while True:
             try:
                 await self.run_cycle()
                 
-                # Wait 1 hour
-                print(f"Waiting 1 hour until next cycle...\n")
-                await asyncio.sleep(3600)
+                # Wait 1 hour (but check more frequently for first few cycles)
+                total_strategies = self._count_strategies()
+                if total_strategies < 100:
+                    wait_time = 300  # 5 minutes for first 100 strategies
+                    print(f"⏱️  Fast mode: Next cycle in 5 minutes ({total_strategies}/100 strategies)...")
+                else:
+                    wait_time = 3600  # 1 hour normally
+                    print(f"⏱️  Waiting 1 hour until next cycle...")
+                
+                await asyncio.sleep(wait_time)
                 
             except Exception as e:
-                print(f"Error in backtest cycle: {e}")
+                print(f"❌ Error in backtest cycle: {e}")
+                import traceback
+                traceback.print_exc()
                 await asyncio.sleep(60)  # Wait 1 minute on error
+    
+    def _count_strategies(self) -> int:
+        """Count total strategies in database"""
+        try:
+            with get_learning_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM strategies")
+                return cursor.fetchone()[0] or 0
+        except:
+            return 0
 
 if __name__ == "__main__":
     backtester = ContinuousBacktester()
     asyncio.run(backtester.run_continuous())
+

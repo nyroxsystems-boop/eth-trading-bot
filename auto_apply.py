@@ -6,12 +6,26 @@ Automatically applies best strategies to live bot
 
 import json
 import os
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
+from contextlib import contextmanager
 import requests
 
-from db_adapter import get_db_connection, USE_POSTGRES
+# Learning DB path
+LOG_DIR = Path(os.getenv("LOG_DIR", "./logs"))
+LEARNING_DB = LOG_DIR / "learning.db"
+
+@contextmanager
+def get_learning_db():
+    """Context manager for learning.db connection"""
+    conn = sqlite3.connect(LEARNING_DB)
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 class AutoApply:
     def __init__(
@@ -36,10 +50,10 @@ class AutoApply:
     
     def get_current_strategy(self) -> Optional[Dict[str, Any]]:
         """Get currently applied strategy"""
-        with get_db_connection('learning') as conn:
+        with get_learning_db() as conn:
             cursor = conn.cursor()
             
-            if USE_POSTGRES:
+            if False:  # SQLite only
                 cursor.execute("""
                     SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
                            score, win_rate, roi, max_drawdown
@@ -80,7 +94,7 @@ class AutoApply:
     
     def get_best_strategy(self) -> Optional[Dict[str, Any]]:
         """Get best strategy from database"""
-        with get_db_connection('learning') as conn:
+        with get_learning_db() as conn:
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -168,10 +182,10 @@ class AutoApply:
                 json.dump(settings, f, indent=2)
             
             # Mark as applied in database
-            with get_db_connection('learning') as conn:
+            with get_learning_db() as conn:
                 cursor = conn.cursor()
                 
-                if USE_POSTGRES:
+                if False:  # SQLite only
                     cursor.execute("""
                         UPDATE strategies
                         SET applied = true, applied_at = %s
