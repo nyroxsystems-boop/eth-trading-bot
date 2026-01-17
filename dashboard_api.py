@@ -442,9 +442,9 @@ async def get_performance_history(days: int = 7):
     """Get P&L history for chart"""
     trades = await read_trades_csv()
     
-    # Group trades by date and calculate daily P&L
+    # Group trades by date and calculate daily P&L from BUY/SELL pairs
     daily_pnl = {}
-    cumulative_pnl = 0
+    last_buy = None
     
     for trade in trades:
         try:
@@ -458,13 +458,27 @@ async def get_performance_history(days: int = 7):
             if date not in daily_pnl:
                 daily_pnl[date] = {"date": date, "pnl": 0, "trades": 0}
             
-            daily_pnl[date]["pnl"] += trade.pnl
-            daily_pnl[date]["trades"] += 1
-        except:
+            # Calculate P&L from trade pairs
+            if trade.action == "BUY":
+                last_buy = trade
+            elif trade.action == "SELL" and last_buy:
+                # Calculate PnL: (sell_price - buy_price) * qty
+                pnl = (trade.price - last_buy.price) * trade.qty
+                daily_pnl[date]["pnl"] += pnl
+                daily_pnl[date]["trades"] += 1
+                last_buy = None
+            else:
+                # Use pnl from trade if available
+                if hasattr(trade, 'pnl') and trade.pnl != 0:
+                    daily_pnl[date]["pnl"] += trade.pnl
+                    daily_pnl[date]["trades"] += 1
+        except Exception as e:
+            print(f"Error processing trade: {e}")
             continue
     
     # Convert to sorted list with cumulative P&L
     history = []
+    cumulative_pnl = 0
     for date in sorted(daily_pnl.keys())[-days:]:
         cumulative_pnl += daily_pnl[date]["pnl"]
         history.append({
