@@ -1,4 +1,4 @@
-import { Home, TrendingUp, Bot, Settings, Brain, Users, Crown, Cpu, Shield, BarChart3 } from 'lucide-react'
+import { Home, TrendingUp, Bot, Settings, Brain, Users, Crown, Cpu, Shield, BarChart3, BookOpen } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 interface MenuItem {
@@ -24,6 +24,7 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
         { id: 'learning', icon: Brain, label: 'Learning' },
         { id: 'ml', icon: Cpu, label: 'ML / AI' },
         { id: 'analytics', icon: BarChart3, label: 'Analytics' },
+        { id: 'journal', icon: BookOpen, label: 'Journal' },
         { id: 'accounts', icon: Users, label: 'Accounts' },
         { id: 'bots', icon: Bot, label: 'Bots' },
         { id: 'subscription', icon: Crown, label: 'Subscription', hideForAdmin: true },
