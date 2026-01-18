@@ -1,0 +1,10 @@
+{
+  "999_1001": {
+    "follower_id": 999,
+    "leader_id": 1001,
+    "copy_percentage": 0.5,
+    "max_position_size": 500,
+    "created_at": "2026-01-18T03:45:30.925747",
+    "is_active": true
+  }
+}

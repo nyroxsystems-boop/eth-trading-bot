@@ -1,0 +1,14 @@
+[
+  {
+    "trade_id": "1ece40b8-68fb-48af-817c-71816b400ed2",
+    "leader_id": 1001,
+    "follower_id": 999,
+    "original_trade_id": "test_1",
+    "symbol": "ETHUSDT",
+    "side": "BUY",
+    "entry_price": 3200,
+    "quantity": 0.15625,
+    "timestamp": "2026-01-18T03:45:30.925929",
+    "status": "pending"
+  }
+]

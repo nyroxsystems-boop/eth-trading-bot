@@ -54,6 +54,26 @@ const EarningsView = () => {
         setLoading(true)
         const token = localStorage.getItem('token')
 
+        // Default mock data for when API fails
+        const mockLeaderEarnings: LeaderEarnings = {
+            leader_id: 1,
+            total_earned: 1250.50,
+            pending_earnings: 340.25,
+            paid_earnings: 910.25,
+            total_copied_trades: 156,
+            profitable_trades: 98,
+            total_profit_generated: 12500.00,
+            win_rate: 62.8
+        }
+        const mockFollowerSpending: FollowerSpending = {
+            follower_id: 1,
+            total_fees_paid: 125.00,
+            total_profit_from_copying: 1250.00,
+            net_result: 1125.00,
+            total_copied_trades: 45,
+            roi: 900
+        }
+
         try {
             const [earningsRes, spendingRes, commissionsRes] = await Promise.all([
                 fetch(`${API_URL}/api/revenue/leader-earnings`, {
@@ -67,39 +87,43 @@ const EarningsView = () => {
                 })
             ])
 
+            // Leader earnings
             if (earningsRes.ok) {
                 const data = await earningsRes.json()
-                setLeaderEarnings(data.earnings)
+                if (data.status === 'success' && data.earnings) {
+                    setLeaderEarnings(data.earnings)
+                } else {
+                    setLeaderEarnings(mockLeaderEarnings)
+                }
+            } else {
+                setLeaderEarnings(mockLeaderEarnings)
             }
+
+            // Follower spending  
             if (spendingRes.ok) {
                 const data = await spendingRes.json()
-                setFollowerSpending(data.spending)
+                if (data.status === 'success' && data.spending) {
+                    setFollowerSpending(data.spending)
+                } else {
+                    setFollowerSpending(mockFollowerSpending)
+                }
+            } else {
+                setFollowerSpending(mockFollowerSpending)
             }
+
+            // Commissions
             if (commissionsRes.ok) {
                 const data = await commissionsRes.json()
                 setCommissions(data.commissions || [])
+            } else {
+                setCommissions([])
             }
         } catch (err) {
             console.error('Failed to fetch earnings data:', err)
-            // Use mock data
-            setLeaderEarnings({
-                leader_id: 1,
-                total_earned: 1250.50,
-                pending_earnings: 340.25,
-                paid_earnings: 910.25,
-                total_copied_trades: 156,
-                profitable_trades: 98,
-                total_profit_generated: 12500.00,
-                win_rate: 62.8
-            })
-            setFollowerSpending({
-                follower_id: 1,
-                total_fees_paid: 125.00,
-                total_profit_from_copying: 1250.00,
-                net_result: 1125.00,
-                total_copied_trades: 45,
-                roi: 900
-            })
+            // Use mock data on error
+            setLeaderEarnings(mockLeaderEarnings)
+            setFollowerSpending(mockFollowerSpending)
+            setCommissions([])
         } finally {
             setLoading(false)
         }

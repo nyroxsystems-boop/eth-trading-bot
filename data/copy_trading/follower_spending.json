@@ -1,0 +1,30 @@
+{
+  "999": {
+    "follower_id": 999,
+    "total_fees_paid": 4.0,
+    "total_profit_from_copying": 40.0,
+    "net_result": 36.0,
+    "total_copied_trades": 1
+  },
+  "2": {
+    "follower_id": 2,
+    "total_fees_paid": 100.0,
+    "total_profit_from_copying": 900.0,
+    "net_result": 800.0,
+    "total_copied_trades": 11
+  },
+  "3": {
+    "follower_id": 3,
+    "total_fees_paid": 20.0,
+    "total_profit_from_copying": 200.0,
+    "net_result": 180.0,
+    "total_copied_trades": 1
+  },
+  "4": {
+    "follower_id": 4,
+    "total_fees_paid": 100.0,
+    "total_profit_from_copying": 1000.0,
+    "net_result": 900.0,
+    "total_copied_trades": 1
+  }
+}

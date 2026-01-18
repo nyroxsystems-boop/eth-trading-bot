@@ -1,0 +1,32 @@
+{
+  "1001": {
+    "leader_id": 1001,
+    "total_earned": 3.2,
+    "pending_earnings": 3.2,
+    "paid_earnings": 0.0,
+    "total_copied_trades": 1,
+    "profitable_trades": 1,
+    "total_profit_generated": 40.0,
+    "last_updated": "2026-01-18T03:45:30.926115"
+  },
+  "1": {
+    "leader_id": 1,
+    "total_earned": 84.0,
+    "pending_earnings": 42.0,
+    "paid_earnings": 42.0,
+    "total_copied_trades": 12,
+    "profitable_trades": 11,
+    "total_profit_generated": 1200.0,
+    "last_updated": "2026-01-18T03:55:49.964817"
+  },
+  "3": {
+    "leader_id": 3,
+    "total_earned": 70.0,
+    "pending_earnings": 70.0,
+    "paid_earnings": 0.0,
+    "total_copied_trades": 1,
+    "profitable_trades": 1,
+    "total_profit_generated": 1000.0,
+    "last_updated": "2026-01-18T03:55:49.965101"
+  }
+}
