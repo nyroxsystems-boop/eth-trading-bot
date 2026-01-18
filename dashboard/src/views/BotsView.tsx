@@ -76,12 +76,12 @@ export default function BotsView() {
                                 <p className="text-emerald-400 font-semibold">Active</p>
                             </div>
                         </div>
-                        <a
-                            href="/learning"
-                            className="block mt-4 text-center bg-purple-500/20 text-purple-400 border border-purple-500/30 py-2 rounded-lg hover:bg-purple-500/30 transition-colors"
+                        <button
+                            onClick={() => window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'learning' } }))}
+                            className="block w-full mt-4 text-center bg-purple-500/20 text-purple-400 border border-purple-500/30 py-2 rounded-lg hover:bg-purple-500/30 transition-colors cursor-pointer"
                         >
                             View Learning Progress →
-                        </a>
+                        </button>
                     </div>
                 </motion.div>
 

@@ -119,6 +119,17 @@ function Dashboard() {
     setCandlestickData(generateCandlestickData(timeframe))
   }, [timeframe])
 
+  // Listen for custom navigation events from child components
+  useEffect(() => {
+    const handleNavigate = (e: CustomEvent) => {
+      if (e.detail?.page) {
+        setActivePage(e.detail.page)
+      }
+    }
+    window.addEventListener('navigate' as any, handleNavigate as any)
+    return () => window.removeEventListener('navigate' as any, handleNavigate as any)
+  }, [])
+
   useEffect(() => {
     if (token) {
       fetchTrades()
