@@ -2922,6 +2922,161 @@ async def get_retrain_status():
 
 
 # ============================================================================
+# ADVANCED ANALYTICS API ENDPOINTS
+# ============================================================================
+
+@app.get("/api/analytics/sentiment")
+async def get_sentiment_analysis():
+    """Get LLM-based market sentiment analysis"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.ml.llm_sentiment import get_sentiment_analyzer
+        
+        analyzer = get_sentiment_analyzer()
+        result = await analyzer.get_market_sentiment("ETH")
+        
+        return {
+            "status": "success",
+            "sentiment": {
+                "score": result.score,
+                "confidence": result.confidence,
+                "summary": result.summary,
+                "key_topics": result.key_topics,
+                "source": result.source,
+                "timestamp": result.timestamp
+            },
+            "interpretation": {
+                "direction": "bullish" if result.score > 0.2 else "bearish" if result.score < -0.2 else "neutral",
+                "strength": abs(result.score)
+            }
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/analytics/onchain")
+async def get_onchain_metrics():
+    """Get on-chain metrics and whale activity"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.data.onchain_metrics import get_onchain_analyzer
+        
+        analyzer = get_onchain_analyzer()
+        metrics = await analyzer.analyze()
+        signal = analyzer.get_trading_signal(metrics)
+        
+        return {
+            "status": "success",
+            "metrics": {
+                "gas_price_gwei": metrics.gas_price_gwei,
+                "gas_trend": metrics.gas_price_trend,
+                "active_addresses_24h": metrics.active_addresses_24h,
+                "active_addresses_change": metrics.active_addresses_change,
+                "exchange_inflow_eth": metrics.exchange_inflow_eth,
+                "exchange_outflow_eth": metrics.exchange_outflow_eth,
+                "net_flow": metrics.net_flow,
+                "whale_sentiment": metrics.whale_sentiment,
+                "whale_count": len(metrics.whale_transactions)
+            },
+            "signal": signal,
+            "timestamp": metrics.timestamp
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/analytics/correlation")
+async def get_correlation_analysis():
+    """Get multi-asset correlation and market regime"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.ml.multi_asset_correlation import get_multi_asset_analyzer
+        
+        analyzer = get_multi_asset_analyzer()
+        regime = await analyzer.analyze_market_regime()
+        adjustments = analyzer.get_trading_adjustment(regime)
+        divergences = await analyzer.get_divergence_signals()
+        
+        return {
+            "status": "success",
+            "regime": {
+                "type": regime.regime_type,
+                "confidence": regime.confidence,
+                "recommendations": regime.recommendations
+            },
+            "correlations": regime.correlations,
+            "trading_adjustments": adjustments,
+            "divergence_signals": divergences,
+            "timestamp": regime.timestamp
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/analytics/combined")
+async def get_combined_analytics():
+    """Get all analytics in one call (sentiment + on-chain + correlation)"""
+    try:
+        import asyncio
+        
+        # Run all analytics in parallel
+        sentiment_task = get_sentiment_analysis()
+        onchain_task = get_onchain_metrics()
+        correlation_task = get_correlation_analysis()
+        
+        results = await asyncio.gather(
+            sentiment_task,
+            onchain_task,
+            correlation_task,
+            return_exceptions=True
+        )
+        
+        # Combine results
+        combined = {
+            "status": "success",
+            "sentiment": results[0] if not isinstance(results[0], Exception) else {"error": str(results[0])},
+            "onchain": results[1] if not isinstance(results[1], Exception) else {"error": str(results[1])},
+            "correlation": results[2] if not isinstance(results[2], Exception) else {"error": str(results[2])},
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Calculate combined signal
+        signals = []
+        weights = []
+        
+        if isinstance(results[0], dict) and "sentiment" in results[0]:
+            signals.append(results[0]["sentiment"]["score"])
+            weights.append(0.3)
+        
+        if isinstance(results[1], dict) and "signal" in results[1]:
+            signals.append(results[1]["signal"]["direction"])
+            weights.append(0.4)
+        
+        if isinstance(results[2], dict) and "regime" in results[2]:
+            regime_signal = 1 if results[2]["regime"]["type"] == "risk_on" else -1 if results[2]["regime"]["type"] == "risk_off" else 0
+            signals.append(regime_signal * results[2]["regime"]["confidence"])
+            weights.append(0.3)
+        
+        if signals and weights:
+            combined_score = sum(s * w for s, w in zip(signals, weights)) / sum(weights)
+            combined["combined_signal"] = {
+                "score": round(combined_score, 3),
+                "direction": "bullish" if combined_score > 0.15 else "bearish" if combined_score < -0.15 else "neutral",
+                "confidence": round(sum(weights) / 3, 2)
+            }
+        
+        return combined
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# ============================================================================
 # ADMIN DASHBOARD API ENDPOINTS
 # ============================================================================
 

@@ -26,6 +26,7 @@ const MLMonitorView = lazy(() => import('./views/MLMonitorView'))
 const AdminDashboardView = lazy(() => import('./views/AdminDashboardView'))
 const ForgotPasswordView = lazy(() => import('./views/ForgotPasswordView'))
 const PricingView = lazy(() => import('./views/PricingView'))
+const AnalyticsView = lazy(() => import('./views/AnalyticsView'))
 import './views/AdminDashboardView.css'
 
 // Loading fallback component
@@ -224,6 +225,7 @@ function Dashboard() {
               {activePage === 'ml' && <MLMonitorView key="ml" />}
               {activePage === 'accounts' && <AccountsView key="accounts" />}
               {activePage === 'bots' && <BotsView key="bots" />}
+              {activePage === 'analytics' && <AnalyticsView key="analytics" />}
               {activePage === 'subscription' && <SubscriptionView key="subscription" />}
               {activePage === 'pricing' && <PricingView key="pricing" />}
               {activePage === 'settings' && <SettingsView key="settings" />}
