@@ -6,6 +6,7 @@ Real-time WebSocket API for Premium Trading Dashboard
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -133,6 +134,9 @@ SETTINGS_FILE = LOG_DIR / "bot_settings.json"
 
 app = FastAPI(title="ETH Bot Dashboard API", version="1.0.0")
 
+# Gzip Compression - reduces response size by 60-80%
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -141,6 +145,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Simple in-memory cache for frequent endpoints
+from functools import lru_cache
+import time as time_module
+
+_cache = {}
+_cache_ttl = {}
+
+def cached_response(key: str, ttl_seconds: int = 30):
+    """Simple response caching decorator"""
+    def decorator(func):
+        async def wrapper(*args, **kwargs):
+            now = time_module.time()
+            if key in _cache and _cache_ttl.get(key, 0) > now:
+                return _cache[key]
+            result = await func(*args, **kwargs)
+            _cache[key] = result
+            _cache_ttl[key] = now + ttl_seconds
+            return result
+        return wrapper
+    return decorator
 
 # Mount static files for dashboard (if built)
 DASHBOARD_DIST = Path(__file__).parent / "dashboard" / "dist"
