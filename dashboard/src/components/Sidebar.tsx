@@ -1,4 +1,4 @@
-import { Home, TrendingUp, Bot, Settings, Brain, Users, Crown, Cpu, Shield, BarChart3, BookOpen, Users2, Banknote } from 'lucide-react'
+import { Home, TrendingUp, Bot, Settings, Brain, Users, Crown, Cpu, Shield, BarChart3, BookOpen, Users2, Banknote, Beaker } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 interface MenuItem {
@@ -29,6 +29,7 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
         { id: 'earnings', icon: Banknote, label: 'Earnings' },
         { id: 'accounts', icon: Users, label: 'Accounts' },
         { id: 'bots', icon: Bot, label: 'Bots' },
+        { id: 'strategy-lab', icon: Beaker, label: 'Strategy Lab' },
         { id: 'subscription', icon: Crown, label: 'Subscription', hideForAdmin: true },
         { id: 'settings', icon: Settings, label: 'Settings' },
         { id: 'admin', icon: Shield, label: 'Admin', adminOnly: true },

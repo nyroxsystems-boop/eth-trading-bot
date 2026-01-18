@@ -30,6 +30,7 @@ const AnalyticsView = lazy(() => import('./views/AnalyticsView'))
 const TradingJournalView = lazy(() => import('./views/TradingJournalView'))
 const LeaderboardView = lazy(() => import('./views/LeaderboardView'))
 const EarningsView = lazy(() => import('./views/EarningsView'))
+const StrategyLabView = lazy(() => import('./views/StrategyLabView'))
 import './views/AdminDashboardView.css'
 
 // Loading fallback component
@@ -234,6 +235,7 @@ function Dashboard() {
               {activePage === 'journal' && <TradingJournalView key="journal" />}
               {activePage === 'leaderboard' && <LeaderboardView key="leaderboard" />}
               {activePage === 'earnings' && <EarningsView key="earnings" />}
+              {activePage === 'strategy-lab' && <StrategyLabView key="strategy-lab" />}
               {activePage === 'settings' && <SettingsView key="settings" />}
               {activePage === 'admin' && <AdminDashboardView key="admin" />}
             </AnimatePresence>

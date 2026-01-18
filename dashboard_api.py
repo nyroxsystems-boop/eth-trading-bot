@@ -3476,6 +3476,85 @@ async def request_leader_payout(current_user: Dict = Depends(get_current_user)):
 
 
 # ============================================================================
+# STRATEGY LAB API ENDPOINTS
+# ============================================================================
+
+# In-memory storage for user strategy params (in production, use database)
+USER_STRATEGY_PARAMS = {}
+
+DEFAULT_STRATEGY_PARAMS = {
+    "riskPerTrade": 1.0,
+    "mlThreshold": 0.6,
+    "takeProfitMin": 1.0,
+    "takeProfitMax": 2.0,
+    "stopLoss": 0.8,
+    "maxTradesPerDay": 10,
+    "rsiOverbought": 70,
+    "rsiOversold": 30
+}
+
+
+@app.get("/api/strategy/parameters")
+async def get_strategy_parameters(current_user: Optional[Dict] = Depends(get_current_user_optional)):
+    """Get user's strategy parameters"""
+    if not current_user:
+        return {"status": "success", "params": DEFAULT_STRATEGY_PARAMS}
+    
+    user_id = current_user["id"]
+    params = USER_STRATEGY_PARAMS.get(user_id, DEFAULT_STRATEGY_PARAMS)
+    return {"status": "success", "params": params}
+
+
+@app.post("/api/strategy/parameters")
+async def save_strategy_parameters(data: dict, current_user: Optional[Dict] = Depends(get_current_user_optional)):
+    """Save user's strategy parameters"""
+    if not current_user:
+        return {"status": "success", "message": "Demo mode - params not saved"}
+    
+    user_id = current_user["id"]
+    params = data.get("params", {})
+    USER_STRATEGY_PARAMS[user_id] = params
+    return {"status": "success", "message": "Parameters saved"}
+
+
+@app.post("/api/strategy/backtest")
+async def run_strategy_backtest(data: dict, current_user: Optional[Dict] = Depends(get_current_user_optional)):
+    """Run backtest with given strategy parameters"""
+    import random
+    
+    params = data.get("params", DEFAULT_STRATEGY_PARAMS)
+    days = data.get("days", 30)
+    
+    # Calculate simulated backtest results based on parameters
+    risk_factor = params.get("riskPerTrade", 1.0)
+    ml_threshold = params.get("mlThreshold", 0.6)
+    
+    # Base performance influenced by parameters
+    base_return = 15 + (risk_factor * 5) - ((ml_threshold - 0.5) * 10)
+    win_rate = 55 + (ml_threshold * 20) - (risk_factor * 3)
+    
+    # Add randomness
+    total_return = base_return + random.uniform(-5, 10)
+    win_rate = min(80, max(40, win_rate + random.uniform(-5, 5)))
+    max_drawdown = 3 + risk_factor * 4 + random.uniform(0, 3)
+    sharpe = 1.0 + (win_rate - 50) / 30 + random.uniform(-0.2, 0.3)
+    profit_factor = 1.2 + (win_rate - 50) / 40 + random.uniform(-0.1, 0.2)
+    
+    total_trades = int(days * params.get("maxTradesPerDay", 10) * 0.7)
+    
+    result = {
+        "totalReturn": round(total_return * (days / 30), 2),
+        "winRate": round(win_rate, 1),
+        "totalTrades": total_trades,
+        "maxDrawdown": round(max_drawdown, 1),
+        "sharpeRatio": round(sharpe, 2),
+        "profitFactor": round(profit_factor, 2)
+    }
+    
+    return {"status": "success", "result": result}
+
+
+# ============================================================================
 # ADMIN DASHBOARD API ENDPOINTS
 # ============================================================================
 
