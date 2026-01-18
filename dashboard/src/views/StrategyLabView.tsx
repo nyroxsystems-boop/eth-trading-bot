@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import {
     Beaker, Layers, Sliders, LineChart, Play, Save, RotateCcw,
     TrendingUp, Shield, Zap, Target, Clock, AlertTriangle, Sparkles,
-    Share2, Download, Copy, Star, Cpu, Brain, Wand2, ChevronRight,
-    Plus, Trash2, GripVertical, ArrowRight, Check, X, Eye, Settings
+    Share2, Download, Star, Brain, Wand2, ChevronRight,
+    Plus, GripVertical, ArrowRight, Check, X, Eye
 } from 'lucide-react'
-import { motion, AnimatePresence, Reorder } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import '../styles/premium.css'
 import './StrategyLabView.css'
 
@@ -264,7 +264,7 @@ const StrategyLabView = () => {
         }
     }
 
-    const applyAISuggestion = (suggestion: typeof AI_SUGGESTIONS[0]) => {
+    const applyAISuggestion = (_suggestion: typeof AI_SUGGESTIONS[0]) => {
         // Simulate applying AI suggestion
         setEntryConditions([
             { id: '1', type: 'rsi', name: 'RSI', icon: '📈', config: { period: 14, value: 25 }, condition: 'below' },
@@ -627,8 +627,8 @@ const StrategyLabView = () => {
                                                 style={{ borderColor: ind.color }}
                                                 whileHover={{ scale: 1.05, x: 5 }}
                                                 draggable
-                                                onDragEnd={(e) => {
-                                                    // Simple drop logic
+                                                onDragEnd={() => {
+                                                    // Drag end handler
                                                 }}
                                             >
                                                 <span className="palette-icon" style={{ background: ind.color }}>{ind.icon}</span>
