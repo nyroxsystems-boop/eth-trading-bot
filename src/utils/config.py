@@ -224,3 +224,49 @@ def load_active_strategy() -> bool:
     
     return False
 
+
+# Hot reload state
+_last_strategy_mtime: float = 0.0
+
+
+def check_strategy_changed() -> bool:
+    """
+    Check if the active strategy file has been modified since last check.
+    Returns True if file was modified, False otherwise.
+    """
+    global _last_strategy_mtime
+    from pathlib import Path
+    
+    strategy_file = Path("data/user_strategies/active_strategy.json")
+    
+    if not strategy_file.exists():
+        return False
+    
+    try:
+        current_mtime = strategy_file.stat().st_mtime
+        
+        if _last_strategy_mtime == 0.0:
+            # First check - just record mtime
+            _last_strategy_mtime = current_mtime
+            return False
+        
+        if current_mtime > _last_strategy_mtime:
+            _last_strategy_mtime = current_mtime
+            return True
+    except Exception:
+        pass
+    
+    return False
+
+
+def hot_reload_strategy() -> bool:
+    """
+    Check for strategy changes and reload if needed.
+    Returns True if strategy was reloaded, False otherwise.
+    
+    Call this periodically in the bot main loop.
+    """
+    if check_strategy_changed():
+        if load_active_strategy():
+            return True
+    return False

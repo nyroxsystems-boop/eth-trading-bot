@@ -9,7 +9,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Optional
 
-from src.utils.config import get_config, load_active_strategy
+from src.utils.config import get_config, load_active_strategy, hot_reload_strategy
 from src.utils.logger import setup_logger
 from src.core.market_data import MarketDataProvider
 from src.core.ml_engine import MLEngine
@@ -262,6 +262,12 @@ def main_loop():
     # Main loop
     while not STOP.is_set():
         cycle_start = time.time()
+        
+        # Hot reload strategy if changed (only when no open position)
+        if open_position is None:
+            if hot_reload_strategy():
+                config = get_config()  # Re-fetch updated config
+                logger.info("♻️ Strategy parameters reloaded from Strategy Lab")
         
         try:
             decide_and_trade(market_data, ml_engine, strategy, risk_manager, order_executor, ml_trading)
