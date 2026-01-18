@@ -20,9 +20,10 @@ export const LiveTradingToggle: React.FC<LiveTradingToggleProps> = ({
     const [understood, setUnderstood] = useState(false)
     const [loading, setLoading] = useState(false)
 
-    const handleToggleClick = () => {
-        if (currentMode === 'paper') {
-            // Switching to LIVE - show confirmation
+    const handleModeSelect = (mode: 'paper' | 'live') => {
+        if (mode === currentMode) return
+
+        if (mode === 'live') {
             if (requiresUpgrade) {
                 onUpgrade()
                 return
@@ -33,7 +34,6 @@ export const LiveTradingToggle: React.FC<LiveTradingToggleProps> = ({
             }
             setShowConfirmModal(true)
         } else {
-            // Switching to PAPER - no confirmation needed
             handleConfirm()
         }
     }
@@ -54,50 +54,55 @@ export const LiveTradingToggle: React.FC<LiveTradingToggleProps> = ({
 
     return (
         <>
-            <div className="live-trading-toggle">
-                <div className="toggle-header">
-                    <h3>Trading Mode</h3>
-                    <span className={`mode-badge ${currentMode}`}>
-                        {currentMode === 'paper' ? '📄 PAPER TRADING' : '💰 LIVE TRADING'}
-                    </span>
-                </div>
-
-                <div className="toggle-description">
-                    {currentMode === 'paper' ? (
-                        <p>
-                            <strong>Paper Trading Mode:</strong> All trades are simulated. No real money is used.
-                            {canEnableLive && !requiresUpgrade && (
-                                <span className="ready-badge">✅ Ready for Live Trading</span>
-                            )}
-                        </p>
-                    ) : (
-                        <p className="warning">
-                            <strong>⚠️ Live Trading Active:</strong> Real money is being used for trades!
-                        </p>
+            <div className="trading-mode-card">
+                <div className="mode-header">
+                    <span className="mode-title">Trading Mode</span>
+                    {requiresUpgrade && (
+                        <span className="premium-badge" onClick={onUpgrade}>
+                            🔒 Premium
+                        </span>
                     )}
                 </div>
 
-                <div className="toggle-control">
-                    <label className="switch">
-                        <input
-                            type="checkbox"
-                            checked={currentMode === 'live'}
-                            onChange={handleToggleClick}
-                            disabled={loading}
-                        />
-                        <span className="slider"></span>
-                    </label>
-                    <span className="toggle-label">
-                        {currentMode === 'paper' ? 'Enable Live Trading' : 'Switch to Paper Trading'}
-                    </span>
+                {/* Segmented Control */}
+                <div className="segmented-control">
+                    <button
+                        className={`segment ${currentMode === 'paper' ? 'active paper' : ''}`}
+                        onClick={() => handleModeSelect('paper')}
+                        disabled={loading}
+                    >
+                        <span className="segment-icon">📄</span>
+                        <span className="segment-label">Paper</span>
+                    </button>
+                    <button
+                        className={`segment ${currentMode === 'live' ? 'active live' : ''}`}
+                        onClick={() => handleModeSelect('live')}
+                        disabled={loading}
+                    >
+                        <span className="segment-icon">💰</span>
+                        <span className="segment-label">Live</span>
+                    </button>
+                    <div className={`segment-slider ${currentMode}`}></div>
                 </div>
 
-                {requiresUpgrade && currentMode === 'paper' && (
-                    <div className="upgrade-prompt">
-                        <p>🔒 Live trading requires Premium subscription</p>
-                        <button onClick={onUpgrade} className="upgrade-button">
-                            Upgrade to Premium
-                        </button>
+                {/* Status Message */}
+                <div className={`mode-status ${currentMode}`}>
+                    {currentMode === 'paper' ? (
+                        <>
+                            <span className="status-dot paper"></span>
+                            Simulated trading • No real funds used
+                        </>
+                    ) : (
+                        <>
+                            <span className="status-dot live"></span>
+                            Real trading active • Use caution
+                        </>
+                    )}
+                </div>
+
+                {canEnableLive && !requiresUpgrade && currentMode === 'paper' && (
+                    <div className="ready-hint">
+                        ✅ Ready for live trading
                     </div>
                 )}
             </div>
