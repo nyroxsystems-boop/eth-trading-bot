@@ -432,6 +432,26 @@ class RevenueEngine:
         )[:limit]
         
         return [asdict(c) for c in sorted_commissions]
+    
+    def get_commissions(
+        self, 
+        user_id: int, 
+        as_leader: bool = True, 
+        limit: int = 50
+    ) -> List[Dict]:
+        """Get commissions for a user, either as leader or follower"""
+        filtered = []
+        
+        for commission in self._commissions:
+            if as_leader and commission.leader_id == user_id:
+                filtered.append(commission)
+            elif not as_leader and commission.follower_id == user_id:
+                filtered.append(commission)
+        
+        # Sort by date, most recent first
+        filtered = sorted(filtered, key=lambda c: c.created_at, reverse=True)[:limit]
+        
+        return [asdict(c) for c in filtered]
 
 
 # Singleton instance
