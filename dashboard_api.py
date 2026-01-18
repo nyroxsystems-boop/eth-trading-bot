@@ -2582,41 +2582,49 @@ async def get_feature_importance():
 @app.get("/api/ml/training-progress")
 async def get_training_progress():
     """Check if any ML training is in progress"""
-    import subprocess
-    
-    result = subprocess.run(
-        ['ps', 'aux'],
-        capture_output=True,
-        text=True
-    )
-    
-    training_processes = []
-    for line in result.stdout.split('\n'):
-        if 'rl_trading_agent' in line and '--train' in line:
-            parts = line.split()
-            if len(parts) >= 11:
-                training_processes.append({
-                    "type": "DQN",
-                    "pid": parts[1],
-                    "cpu": parts[2],
-                    "memory": parts[3],
-                    "time": parts[9]
-                })
-        elif 'continuous_backtester' in line:
-            parts = line.split()
-            if len(parts) >= 11:
-                training_processes.append({
-                    "type": "Backtester",
-                    "pid": parts[1],
-                    "cpu": parts[2],
-                    "memory": parts[3],
-                    "time": parts[9]
-                })
-    
-    return {
-        "training_active": len(training_processes) > 0,
-        "processes": training_processes
-    }
+    try:
+        import subprocess
+        
+        result = subprocess.run(
+            ['ps', 'aux'],
+            capture_output=True,
+            text=True,
+            timeout=5  # Add timeout
+        )
+        
+        training_processes = []
+        for line in result.stdout.split('\n'):
+            if 'rl_trading_agent' in line and '--train' in line:
+                parts = line.split()
+                if len(parts) >= 11:
+                    training_processes.append({
+                        "type": "DQN",
+                        "pid": parts[1],
+                        "cpu": parts[2],
+                        "memory": parts[3],
+                        "time": parts[9]
+                    })
+            elif 'continuous_backtester' in line:
+                parts = line.split()
+                if len(parts) >= 11:
+                    training_processes.append({
+                        "type": "Backtester",
+                        "pid": parts[1],
+                        "cpu": parts[2],
+                        "memory": parts[3],
+                        "time": parts[9]
+                    })
+        
+        return {
+            "training_active": len(training_processes) > 0,
+            "processes": training_processes
+        }
+    except Exception:
+        # Return safe defaults if subprocess fails (e.g., on Railway)
+        return {
+            "training_active": False,
+            "processes": []
+        }
 
 
 @app.get("/api/ml/dqn/live")

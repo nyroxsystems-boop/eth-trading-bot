@@ -34,15 +34,28 @@ const AccountsView = () => {
     const [validating, setValidating] = useState(false)
     const [error, setError] = useState('')
 
+    // Helper function to get auth headers
+    const getAuthHeaders = () => {
+        const token = localStorage.getItem('auth_token') || localStorage.getItem('token')
+        return {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        }
+    }
+
     useEffect(() => {
         fetchAccounts()
     }, [])
 
     const fetchAccounts = async () => {
         try {
-            const res = await fetch(`${API_URL}/api/accounts`)
-            const data = await res.json()
-            setAccounts(data.accounts || [])
+            const res = await fetch(`${API_URL}/api/accounts`, {
+                headers: getAuthHeaders()
+            })
+            if (res.ok) {
+                const data = await res.json()
+                setAccounts(data.accounts || [])
+            }
             setLoading(false)
         } catch (err) {
             console.error('Failed to fetch accounts:', err)
@@ -62,7 +75,7 @@ const AccountsView = () => {
         try {
             const res = await fetch(`${API_URL}/api/accounts/validate`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: getAuthHeaders(),
                 body: JSON.stringify({
                     api_key: formData.api_key,
                     api_secret: formData.api_secret
@@ -92,7 +105,7 @@ const AccountsView = () => {
         try {
             const res = await fetch(`${API_URL}/api/accounts`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: getAuthHeaders(),
                 body: JSON.stringify(formData)
             })
 
@@ -121,7 +134,8 @@ const AccountsView = () => {
     const handleToggleAccount = async (id: number) => {
         try {
             await fetch(`${API_URL}/api/accounts/${id}/toggle`, {
-                method: 'POST'
+                method: 'POST',
+                headers: getAuthHeaders()
             })
             fetchAccounts()
         } catch (err) {
@@ -136,7 +150,8 @@ const AccountsView = () => {
 
         try {
             await fetch(`${API_URL}/api/accounts/${id}`, {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: getAuthHeaders()
             })
             fetchAccounts()
         } catch (err) {
