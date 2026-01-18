@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import {
     Brain, TrendingUp, Target, Zap, CheckCircle, Activity,
     BarChart3, Clock, Cpu, Database, RefreshCw, Settings,
-    ChevronRight, Sparkles, AlertTriangle, Play, Pause
+    ChevronRight, Sparkles, Play, Pause
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import '../styles/premium.css'
@@ -62,7 +62,7 @@ const LearningView = () => {
         today_tested: 0, this_hour_tested: 0
     })
     const [strategies, setStrategies] = useState<Strategy[]>([])
-    const [loading, setLoading] = useState(true)
+    const [, setLoading] = useState(true)
     const [activeTab, setActiveTab] = useState<'overview' | 'training' | 'models' | 'logs'>('overview')
     const [trainingActive, setTrainingActive] = useState(true)
 
