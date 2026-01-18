@@ -641,6 +641,95 @@ async def list_users(current_user: Dict = Depends(get_current_user)):
     return [UserResponse(**user) for user in users]
 
 
+# ============ Password Reset Endpoints ============
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest):
+    """Request a password reset - sends reset token (in production: via email)"""
+    try:
+        token = user_mgr.generate_reset_token(request.email)
+        
+        # In production: Send email with reset link
+        # For now, we'll return success regardless (don't reveal if email exists)
+        
+        if token:
+            # TODO: Send email with reset link containing token
+            # For development, we log the token
+            print(f"🔐 Reset token for {request.email}: {token}")
+            
+            # In production, you would NOT return the token
+            # Reset link would be: https://yourdomain.com/reset-password?token={token}
+        
+        return {
+            "status": "success",
+            "message": "If this email exists, a password reset link has been sent."
+        }
+        
+    except Exception as e:
+        # Don't reveal errors that could expose user existence
+        return {
+            "status": "success", 
+            "message": "If this email exists, a password reset link has been sent."
+        }
+
+@app.post("/api/auth/reset-password")
+async def reset_password(request: ResetPasswordRequest):
+    """Reset password using a valid token"""
+    try:
+        success = user_mgr.reset_password_with_token(request.token, request.new_password)
+        
+        if success:
+            return {
+                "status": "success",
+                "message": "Password has been reset successfully. Please login with your new password."
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Password reset failed")
+            
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Password reset failed: {str(e)}")
+
+@app.post("/api/auth/verify-reset-token")
+async def verify_reset_token(token: str):
+    """Verify if a reset token is still valid"""
+    user_id = user_mgr.verify_reset_token(token)
+    
+    if user_id:
+        return {"valid": True, "message": "Token is valid"}
+    else:
+        raise HTTPException(status_code=400, detail="Invalid or expired token")
+
+@app.post("/api/admin/reset-user-password")
+async def admin_reset_user_password(
+    user_id: int,
+    new_password: str,
+    current_user: Dict = Depends(get_current_user)
+):
+    """Admin endpoint to reset any user's password"""
+    if current_user.get('role') != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    try:
+        success = user_mgr.admin_reset_password(user_id, new_password)
+        
+        if success:
+            return {"status": "success", "message": f"Password reset for user {user_id}"}
+        else:
+            raise HTTPException(status_code=404, detail="User not found")
+            
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # WebSocket Endpoint
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

@@ -776,6 +776,171 @@ class UserManager:
         """Check if user has configured API keys"""
         keys = self.get_api_keys(user_id, decrypt=False)
         return keys is not None and keys.get('has_binance_keys', False)
+    
+    # ============ Password Reset ============
+    
+    def generate_reset_token(self, email: str) -> Optional[str]:
+        """Generate a password reset token for a user"""
+        user = self.get_user_by_email(email)
+        if not user:
+            return None  # Don't reveal if email exists
+        
+        # Generate secure token
+        token = secrets.token_urlsafe(32)
+        expires_at = datetime.now() + timedelta(hours=1)  # 1 hour expiry
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Invalidate any existing tokens for this user
+            if USE_POSTGRES:
+                cursor.execute(
+                    "UPDATE password_reset_tokens SET used = true WHERE user_id = %s",
+                    (user['id'],)
+                )
+                cursor.execute("""
+                    INSERT INTO password_reset_tokens (user_id, token, expires_at)
+                    VALUES (%s, %s, %s)
+                """, (user['id'], token, expires_at.isoformat()))
+            else:
+                cursor.execute(
+                    "UPDATE password_reset_tokens SET used = 1 WHERE user_id = ?",
+                    (user['id'],)
+                )
+                cursor.execute("""
+                    INSERT INTO password_reset_tokens (user_id, token, expires_at)
+                    VALUES (?, ?, ?)
+                """, (user['id'], token, expires_at.isoformat()))
+        
+        print(f"✅ Reset token generated for {email}")
+        return token
+    
+    def verify_reset_token(self, token: str) -> Optional[int]:
+        """Verify a reset token and return user_id if valid"""
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute("""
+                    SELECT user_id, expires_at, used
+                    FROM password_reset_tokens
+                    WHERE token = %s
+                """, (token,))
+            else:
+                cursor.execute("""
+                    SELECT user_id, expires_at, used
+                    FROM password_reset_tokens
+                    WHERE token = ?
+                """, (token,))
+            
+            result = cursor.fetchone()
+            
+            if not result:
+                return None
+            
+            user_id, expires_at, used = result
+            
+            # Check if token is used
+            if used:
+                return None
+            
+            # Check if token is expired
+            if isinstance(expires_at, str):
+                expires_at = datetime.fromisoformat(expires_at)
+            
+            if datetime.now() > expires_at:
+                return None
+            
+            return user_id
+    
+    def reset_password_with_token(self, token: str, new_password: str) -> bool:
+        """Reset password using a valid reset token"""
+        if len(new_password) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        
+        user_id = self.verify_reset_token(token)
+        if not user_id:
+            raise ValueError("Invalid or expired reset token")
+        
+        new_hash = self.hash_password(new_password)
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Update password
+            if USE_POSTGRES:
+                cursor.execute(
+                    "UPDATE users SET password_hash = %s WHERE id = %s",
+                    (new_hash, user_id)
+                )
+                # Mark token as used
+                cursor.execute(
+                    "UPDATE password_reset_tokens SET used = true WHERE token = %s",
+                    (token,)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    (new_hash, user_id)
+                )
+                cursor.execute(
+                    "UPDATE password_reset_tokens SET used = 1 WHERE token = ?",
+                    (token,)
+                )
+            
+            # Revoke all sessions for this user (force re-login)
+            if USE_POSTGRES:
+                cursor.execute(
+                    "UPDATE sessions SET revoked = true WHERE user_id = %s",
+                    (user_id,)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE sessions SET revoked = 1 WHERE user_id = ?",
+                    (user_id,)
+                )
+        
+        print(f"✅ Password reset for user {user_id}")
+        return True
+    
+    def admin_reset_password(self, user_id: int, new_password: str) -> bool:
+        """Admin function to reset a user's password directly"""
+        if len(new_password) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        
+        new_hash = self.hash_password(new_password)
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            if USE_POSTGRES:
+                cursor.execute(
+                    "UPDATE users SET password_hash = %s WHERE id = %s",
+                    (new_hash, user_id)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    (new_hash, user_id)
+                )
+            
+            if cursor.rowcount == 0:
+                return False
+            
+            # Revoke all sessions
+            if USE_POSTGRES:
+                cursor.execute(
+                    "UPDATE sessions SET revoked = true WHERE user_id = %s",
+                    (user_id,)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE sessions SET revoked = 1 WHERE user_id = ?",
+                    (user_id,)
+                )
+        
+        print(f"✅ Admin password reset for user {user_id}")
+        return True
 
 
 def seed_initial_users():

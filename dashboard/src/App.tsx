@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { AnimatePresence } from 'framer-motion'
 import './App.css'
@@ -7,24 +7,45 @@ import './styles/premium.css'
 // Auth
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
-import LoginView from './views/LoginView'
-import RegisterView from './views/RegisterView'
 
-// Components
+// Core components (not lazy - needed immediately)
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
 
-// Views
-import DashboardView from './views/DashboardView'
-import PortfolioView from './views/PortfolioView'
-import LearningView from './views/LearningView'
-import AccountsView from './views/AccountsView'
-import BotsView from './views/BotsView'
-import SettingsView from './views/SettingsView'
-import SubscriptionView from './views/SubscriptionView'
-import MLMonitorView from './views/MLMonitorView'
-import AdminDashboardView from './views/AdminDashboardView'
+// Lazy-loaded Views for code-splitting
+const LoginView = lazy(() => import('./views/LoginView'))
+const RegisterView = lazy(() => import('./views/RegisterView'))
+const DashboardView = lazy(() => import('./views/DashboardView'))
+const PortfolioView = lazy(() => import('./views/PortfolioView'))
+const LearningView = lazy(() => import('./views/LearningView'))
+const AccountsView = lazy(() => import('./views/AccountsView'))
+const BotsView = lazy(() => import('./views/BotsView'))
+const SettingsView = lazy(() => import('./views/SettingsView'))
+const SubscriptionView = lazy(() => import('./views/SubscriptionView'))
+const MLMonitorView = lazy(() => import('./views/MLMonitorView'))
+const AdminDashboardView = lazy(() => import('./views/AdminDashboardView'))
+const ForgotPasswordView = lazy(() => import('./views/ForgotPasswordView'))
 import './views/AdminDashboardView.css'
+
+// Loading fallback component
+const LoadingFallback = () => (
+  <div className="loading-fallback" style={{
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: '100%',
+    minHeight: '400px'
+  }}>
+    <div className="loading-spinner" style={{
+      width: '48px',
+      height: '48px',
+      border: '4px solid rgba(139, 92, 246, 0.2)',
+      borderTopColor: '#8B5CF6',
+      borderRadius: '50%',
+      animation: 'spin 1s linear infinite'
+    }} />
+  </div>
+)
 
 // Types
 import { Trade, Metrics, BotStatus, CandleData } from './types'
@@ -183,28 +204,30 @@ function Dashboard() {
       <div className="app-layout">
         <Sidebar activePage={activePage} onPageChange={setActivePage} />
         <main className="app-content">
-          <AnimatePresence mode="wait">
-            {activePage === 'dashboard' && (
-              <DashboardView
-                key="dashboard"
-                trades={trades}
-                metrics={metrics}
-                status={status}
-                candlestickData={candlestickData}
-                tickerData={tickerData}
-                timeframe={timeframe}
-                setTimeframe={setTimeframe}
-              />
-            )}
-            {activePage === 'portfolio' && <PortfolioView key="portfolio" />}
-            {activePage === 'learning' && <LearningView key="learning" />}
-            {activePage === 'ml' && <MLMonitorView key="ml" />}
-            {activePage === 'accounts' && <AccountsView key="accounts" />}
-            {activePage === 'bots' && <BotsView key="bots" />}
-            {activePage === 'subscription' && <SubscriptionView key="subscription" />}
-            {activePage === 'settings' && <SettingsView key="settings" />}
-            {activePage === 'admin' && <AdminDashboardView key="admin" />}
-          </AnimatePresence>
+          <Suspense fallback={<LoadingFallback />}>
+            <AnimatePresence mode="wait">
+              {activePage === 'dashboard' && (
+                <DashboardView
+                  key="dashboard"
+                  trades={trades}
+                  metrics={metrics}
+                  status={status}
+                  candlestickData={candlestickData}
+                  tickerData={tickerData}
+                  timeframe={timeframe}
+                  setTimeframe={setTimeframe}
+                />
+              )}
+              {activePage === 'portfolio' && <PortfolioView key="portfolio" />}
+              {activePage === 'learning' && <LearningView key="learning" />}
+              {activePage === 'ml' && <MLMonitorView key="ml" />}
+              {activePage === 'accounts' && <AccountsView key="accounts" />}
+              {activePage === 'bots' && <BotsView key="bots" />}
+              {activePage === 'subscription' && <SubscriptionView key="subscription" />}
+              {activePage === 'settings' && <SettingsView key="settings" />}
+              {activePage === 'admin' && <AdminDashboardView key="admin" />}
+            </AnimatePresence>
+          </Suspense>
         </main>
       </div>
     </div>
@@ -216,15 +239,19 @@ function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<LoginView />} />
-          <Route path="/register" element={<RegisterView />} />
-          <Route path="/*" element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          } />
-        </Routes>
+        <Suspense fallback={<LoadingFallback />}>
+          <Routes>
+            <Route path="/login" element={<LoginView />} />
+            <Route path="/register" element={<RegisterView />} />
+            <Route path="/forgot-password" element={<ForgotPasswordView />} />
+            <Route path="/reset-password" element={<ForgotPasswordView />} />
+            <Route path="/*" element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            } />
+          </Routes>
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   )

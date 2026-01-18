@@ -208,6 +208,25 @@ const LoginView = () => {
                         Sign up
                     </a>
                 </div>
+
+                {/* Forgot Password Link */}
+                <div style={{
+                    marginTop: '16px',
+                    textAlign: 'center',
+                    fontSize: '14px',
+                    color: '#94A3B8'
+                }}>
+                    <a
+                        href="/forgot-password"
+                        style={{
+                            color: '#64748B',
+                            textDecoration: 'none',
+                            fontSize: '13px'
+                        }}
+                    >
+                        Forgot your password?
+                    </a>
+                </div>
             </div>
         </div>
     )
