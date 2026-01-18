@@ -63,6 +63,8 @@
 
 .tab-content {
     min-height: 400px;
+    overflow: hidden;
+    position: relative;
 }
 
 /* Templates Grid */
@@ -487,16 +489,32 @@
     color: var(--success);
 }
 
+/* Share Button - Blue themed */
+.share-btn {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.3);
+    color: #60A5FA;
+}
+
 .share-btn:hover {
-    background: rgba(59, 130, 246, 0.2);
+    background: rgba(59, 130, 246, 0.3);
     border-color: #3B82F6;
     color: #3B82F6;
+    transform: translateY(-2px);
+}
+
+/* Export Button - Orange/Gold themed */
+.export-btn {
+    background: rgba(245, 158, 11, 0.15);
+    border-color: rgba(245, 158, 11, 0.3);
+    color: #FBBF24;
 }
 
 .export-btn:hover {
-    background: rgba(245, 158, 11, 0.2);
+    background: rgba(245, 158, 11, 0.3);
     border-color: #F59E0B;
     color: #F59E0B;
+    transform: translateY(-2px);
 }
 
 /* AI Suggestions Panel */
