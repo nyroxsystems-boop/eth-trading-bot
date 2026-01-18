@@ -787,6 +787,19 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ User seeding error (may already exist): {e}")
     
+    # FORCE PAPER TRADING MODE ON STARTUP
+    # This ensures users always start in paper mode for safety
+    try:
+        settings = load_settings()
+        if not settings.get('dry_run', True):
+            settings['dry_run'] = True
+            save_settings(settings)
+            print("📄 Forced paper trading mode on startup (safety default)")
+        else:
+            print("📄 Paper trading mode active")
+    except Exception as e:
+        print(f"⚠️ Could not force paper mode: {e}")
+    
     # Start trade monitoring
     asyncio.create_task(monitor_trades())
     
@@ -1033,14 +1046,21 @@ class TradingSettings(BaseModel):
 
 def load_settings() -> dict:
     """Load settings from file or environment"""
+    settings = {}
     try:
         if SETTINGS_FILE.exists():
             with open(SETTINGS_FILE, 'r') as f:
-                return json.load(f)
+                settings = json.load(f)
     except:
         pass
     
-    # Default from environment
+    # If we loaded from file, ensure dry_run defaults to True (paper trading)
+    if settings:
+        # CRITICAL: Default to paper trading if dry_run not set
+        settings.setdefault('dry_run', True)
+        return settings
+    
+    # Default from environment (fresh start = paper trading)
     return {
         "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
         "telegram_chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
@@ -1054,7 +1074,7 @@ def load_settings() -> dict:
         "tp_min": float(os.getenv("TP_MIN", "0.010")),
         "tp_max": float(os.getenv("TP_MAX", "0.015")),
         "stop_floor": float(os.getenv("STOP_FLOOR", "0.005")),
-        "dry_run": os.getenv("DRY_RUN", "true").lower() == "true"
+        "dry_run": True  # Always default to paper trading
     }
 
 def save_settings(settings: dict):
