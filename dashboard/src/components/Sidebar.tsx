@@ -1,10 +1,11 @@
 import { Home, TrendingUp, Bot, Brain, Users, Shield, BarChart3, BookOpen, Users2 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { useLanguage } from '../contexts/LanguageContext'
 
 interface MenuItem {
     id: string
     icon: React.ElementType
-    label: string
+    labelKey: string
     adminOnly?: boolean
 }
 
@@ -15,19 +16,20 @@ interface SidebarProps {
 
 export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
     const { user } = useAuth()
+    const { t } = useLanguage()
     const isAdmin = user?.role === 'admin'
 
-    // Consolidated menu items (reduced from 13 to 8)
+    // Consolidated menu items with translation keys
     const menuItems: MenuItem[] = [
-        { id: 'dashboard', icon: Home, label: 'Dashboard' },
-        { id: 'portfolio', icon: TrendingUp, label: 'Portfolio' },
-        { id: 'trading', icon: Bot, label: 'Trading' },           // Bots + Strategy Lab
-        { id: 'analytics', icon: BarChart3, label: 'Analytics' },
-        { id: 'social', icon: Users2, label: 'Social' },          // Copy Trading + Earnings
-        { id: 'learning', icon: Brain, label: 'Learning' },       // Learning + ML/AI
-        { id: 'journal', icon: BookOpen, label: 'Journal' },
-        { id: 'account', icon: Users, label: 'Account' },         // Accounts + Subscription + Settings
-        { id: 'admin', icon: Shield, label: 'Admin', adminOnly: true },
+        { id: 'dashboard', icon: Home, labelKey: 'nav.dashboard' },
+        { id: 'portfolio', icon: TrendingUp, labelKey: 'nav.portfolio' },
+        { id: 'trading', icon: Bot, labelKey: 'nav.trading' },
+        { id: 'analytics', icon: BarChart3, labelKey: 'nav.analytics' },
+        { id: 'social', icon: Users2, labelKey: 'nav.social' },
+        { id: 'learning', icon: Brain, labelKey: 'nav.learning' },
+        { id: 'journal', icon: BookOpen, labelKey: 'nav.journal' },
+        { id: 'account', icon: Users, labelKey: 'settings.account' },
+        { id: 'admin', icon: Shield, labelKey: 'Admin', adminOnly: true },
     ]
 
     const visibleMenuItems = menuItems.filter(item => {
@@ -63,7 +65,7 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
                                 }
                 ${item.adminOnly ? 'ring-1 ring-yellow-500/30' : ''}
               `}
-                            title={item.label}
+                            title={t(item.labelKey)}
                         >
                             <Icon className={`w-5 h-5 transition-transform duration-300 ${isActive ? 'scale-110' : 'group-hover:scale-110'}`} />
 
@@ -74,7 +76,7 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
 
                             {/* Tooltip */}
                             <div className="absolute left-full ml-4 px-3 py-2 bg-slate-800 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap shadow-xl border border-slate-700">
-                                {item.label}
+                                {t(item.labelKey)}
                                 {item.adminOnly && <span className="ml-2 text-yellow-400">👑</span>}
                             </div>
                         </button>
