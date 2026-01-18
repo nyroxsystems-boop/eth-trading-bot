@@ -3077,6 +3077,120 @@ async def get_combined_analytics():
 
 
 # ============================================================================
+# COPY-TRADING API ENDPOINTS
+# ============================================================================
+
+@app.get("/api/copy-trading/leaderboard")
+async def get_leaderboard(limit: int = 50):
+    """Get top traders leaderboard"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.social.copy_trading import get_copy_trading_engine
+        from dataclasses import asdict
+        
+        engine = get_copy_trading_engine()
+        traders = engine.get_leaderboard(limit)
+        
+        return {
+            "status": "success",
+            "traders": [asdict(t) for t in traders],
+            "total": len(traders)
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/copy-trading/follow")
+async def follow_trader(
+    data: dict,
+    current_user: Dict = Depends(get_current_user)
+):
+    """Follow a trader to copy their trades"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.social.copy_trading import get_copy_trading_engine
+        
+        engine = get_copy_trading_engine()
+        result = engine.follow_trader(
+            follower_id=current_user["id"],
+            leader_id=data.get("leader_id"),
+            copy_percentage=data.get("copy_percentage", 1.0),
+            max_position_size=data.get("max_position_size", 1000.0)
+        )
+        
+        return result
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/copy-trading/unfollow")
+async def unfollow_trader(
+    data: dict,
+    current_user: Dict = Depends(get_current_user)
+):
+    """Stop following a trader"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.social.copy_trading import get_copy_trading_engine
+        
+        engine = get_copy_trading_engine()
+        result = engine.unfollow_trader(
+            follower_id=current_user["id"],
+            leader_id=data.get("leader_id")
+        )
+        
+        return result
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/copy-trading/following")
+async def get_following(current_user: Dict = Depends(get_current_user)):
+    """Get list of traders the user is following"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.social.copy_trading import get_copy_trading_engine
+        
+        engine = get_copy_trading_engine()
+        following = engine.get_following(current_user["id"])
+        
+        return {
+            "status": "success",
+            "following": following
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/copy-trading/stats")
+async def get_copy_trading_stats(current_user: Dict = Depends(get_current_user)):
+    """Get copy trading statistics for the user"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.social.copy_trading import get_copy_trading_engine
+        
+        engine = get_copy_trading_engine()
+        stats = engine.get_copy_trading_stats(current_user["id"])
+        
+        return {
+            "status": "success",
+            **stats
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# ============================================================================
 # ADMIN DASHBOARD API ENDPOINTS
 # ============================================================================
 
