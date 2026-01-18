@@ -2549,8 +2549,21 @@ async def toggle_trading_mode(current_user: Dict = Depends(get_current_user)):
 
 
 @app.get("/api/trading/mode/status")
-async def get_trading_mode_status(current_user: Dict = Depends(get_current_user)):
+async def get_trading_mode_status(current_user: Optional[Dict] = Depends(get_current_user_optional)):
     """Get comprehensive trading mode status including test phases"""
+    # Return paper mode for unauthenticated users
+    if not current_user:
+        return {
+            "mode": "paper",
+            "dry_run": True,
+            "can_enable_live": False,
+            "subscription_tier": "free",
+            "live_trading_allowed": False,
+            "test_phases": {},
+            "ready_coins": [],
+            "requires_upgrade": True
+        }
+    
     try:
         settings = load_settings()
         is_paper = settings.get('dry_run', True)
@@ -3346,8 +3359,12 @@ async def unfollow_trader(
 
 
 @app.get("/api/copy-trading/following")
-async def get_following(current_user: Dict = Depends(get_current_user)):
+async def get_following(current_user: Optional[Dict] = Depends(get_current_user_optional)):
     """Get list of traders the user is following"""
+    # Return empty for guests
+    if not current_user:
+        return {"status": "success", "following": []}
+    
     try:
         import sys
         sys.path.insert(0, str(Path(__file__).parent))
@@ -3362,7 +3379,7 @@ async def get_following(current_user: Dict = Depends(get_current_user)):
             "following": following
         }
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "success", "following": []}
 
 
 @app.get("/api/copy-trading/stats")

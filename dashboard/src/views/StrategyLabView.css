@@ -370,40 +370,212 @@
     color: var(--error);
 }
 
-/* Builder Coming Soon */
+/* Strategy Builder */
 .builder-container {
+    min-height: 500px;
+}
+
+.builder-layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 24px;
+}
+
+.indicators-panel {
+    padding: 20px;
+}
+
+.indicators-panel h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.panel-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+}
+
+.indicator-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.indicator-item {
     display: flex;
     align-items: center;
-    justify-content: center;
-    min-height: 400px;
+    gap: 12px;
+    padding: 12px;
+    background: var(--bg-tertiary);
+    border-radius: 10px;
+    cursor: grab;
+    transition: all 0.2s;
 }
 
-.builder-coming-soon {
-    text-align: center;
-    padding: 60px;
+.indicator-item:hover {
+    background: rgba(139, 92, 246, 0.15);
+    transform: translateX(4px);
 }
 
-.builder-coming-soon svg {
-    color: var(--primary-purple);
-    opacity: 0.6;
-    margin-bottom: 24px;
+.indicator-item:active {
+    cursor: grabbing;
 }
 
-.builder-coming-soon h2 {
-    font-size: 24px;
-    font-weight: 700;
+.ind-icon {
+    font-size: 20px;
+}
+
+.ind-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.ind-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.ind-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.strategy-canvas {
+    padding: 24px;
+}
+
+.strategy-canvas h3 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 20px;
+}
+
+.canvas-content {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.condition-block {
+    padding: 16px;
+    background: var(--bg-tertiary);
+    border-radius: 12px;
+}
+
+.condition-block.entry {
+    border-left: 3px solid var(--success);
+}
+
+.condition-block.exit {
+    border-left: 3px solid var(--error);
+}
+
+.condition-block.risk {
+    border-left: 3px solid var(--warning);
+}
+
+.block-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
     color: var(--text-primary);
     margin-bottom: 12px;
 }
 
-.builder-coming-soon p {
-    color: var(--text-muted);
-    font-size: 14px;
+.block-icon {
+    font-size: 16px;
 }
 
-.builder-coming-soon .hint {
-    margin-top: 8px;
-    color: var(--text-secondary);
+.drop-zone {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.active-indicator {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    background: rgba(139, 92, 246, 0.1);
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+.active-indicator .condition {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.connector {
+    text-align: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 4px 0;
+}
+
+.add-placeholder {
+    padding: 12px;
+    border: 2px dashed rgba(139, 92, 246, 0.3);
+    border-radius: 8px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.add-placeholder:hover {
+    border-color: var(--primary-purple);
+    background: rgba(139, 92, 246, 0.05);
+}
+
+.risk-settings {
+    display: flex;
+    gap: 16px;
+}
+
+.risk-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 16px;
+    background: rgba(139, 92, 246, 0.1);
+    border-radius: 8px;
+    flex: 1;
+}
+
+.risk-item span {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.risk-item strong {
+    font-size: 16px;
+    color: var(--text-primary);
+}
+
+.canvas-actions {
+    margin-top: 20px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+@media (max-width: 900px) {
+    .builder-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .risk-settings {
+        flex-direction: column;
+    }
 }
 
 /* Responsive */

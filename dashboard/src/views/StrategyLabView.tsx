@@ -420,11 +420,111 @@ const StrategyLabView = () => {
                     {/* Builder Tab */}
                     {activeTab === 'builder' && (
                         <div className="builder-container">
-                            <div className="builder-coming-soon">
-                                <Beaker size={64} />
-                                <h2>Strategy Builder</h2>
-                                <p>Visual strategy editor coming soon!</p>
-                                <p className="hint">Build custom strategies with drag & drop indicators</p>
+                            <div className="builder-layout">
+                                {/* Available Indicators */}
+                                <div className="indicators-panel glass-card">
+                                    <h3>📊 Available Indicators</h3>
+                                    <p className="panel-hint">Drag indicators to build your strategy</p>
+                                    <div className="indicator-list">
+                                        {[
+                                            { id: 'rsi', name: 'RSI', icon: '📈', desc: 'Relative Strength Index' },
+                                            { id: 'macd', name: 'MACD', icon: '📉', desc: 'Moving Average Convergence' },
+                                            { id: 'bb', name: 'Bollinger Bands', icon: '📊', desc: 'Volatility bands' },
+                                            { id: 'ema', name: 'EMA', icon: '〰️', desc: 'Exponential Moving Average' },
+                                            { id: 'sma', name: 'SMA', icon: '➖', desc: 'Simple Moving Average' },
+                                            { id: 'vol', name: 'Volume', icon: '📶', desc: 'Trading volume analysis' },
+                                            { id: 'atr', name: 'ATR', icon: '📏', desc: 'Average True Range' },
+                                            { id: 'stoch', name: 'Stochastic', icon: '🔄', desc: 'Stochastic Oscillator' }
+                                        ].map(ind => (
+                                            <div key={ind.id} className="indicator-item" draggable>
+                                                <span className="ind-icon">{ind.icon}</span>
+                                                <div className="ind-info">
+                                                    <span className="ind-name">{ind.name}</span>
+                                                    <span className="ind-desc">{ind.desc}</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Strategy Canvas */}
+                                <div className="strategy-canvas glass-card">
+                                    <h3>🎯 Your Strategy</h3>
+                                    <div className="canvas-content">
+                                        {/* Entry Conditions */}
+                                        <div className="condition-block entry">
+                                            <div className="block-header">
+                                                <span className="block-icon">🟢</span>
+                                                <span>Entry Conditions</span>
+                                            </div>
+                                            <div className="drop-zone" data-type="entry">
+                                                <div className="active-indicator">
+                                                    <span>📈 RSI</span>
+                                                    <span className="condition">{'<'} 30 (Oversold)</span>
+                                                </div>
+                                                <div className="connector">AND</div>
+                                                <div className="active-indicator">
+                                                    <span>📉 MACD</span>
+                                                    <span className="condition">Bullish Cross</span>
+                                                </div>
+                                                <div className="add-placeholder">
+                                                    <span>+ Drop indicator here</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Exit Conditions */}
+                                        <div className="condition-block exit">
+                                            <div className="block-header">
+                                                <span className="block-icon">🔴</span>
+                                                <span>Exit Conditions</span>
+                                            </div>
+                                            <div className="drop-zone" data-type="exit">
+                                                <div className="active-indicator">
+                                                    <span>📈 RSI</span>
+                                                    <span className="condition">{'>'} 70 (Overbought)</span>
+                                                </div>
+                                                <div className="connector">OR</div>
+                                                <div className="active-indicator">
+                                                    <span>🎯 Take Profit</span>
+                                                    <span className="condition">+{params.takeProfitMax}%</span>
+                                                </div>
+                                                <div className="add-placeholder">
+                                                    <span>+ Drop indicator here</span>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Risk Management */}
+                                        <div className="condition-block risk">
+                                            <div className="block-header">
+                                                <span className="block-icon">🛡️</span>
+                                                <span>Risk Management</span>
+                                            </div>
+                                            <div className="risk-settings">
+                                                <div className="risk-item">
+                                                    <span>Stop Loss:</span>
+                                                    <strong>-{params.stopLoss}%</strong>
+                                                </div>
+                                                <div className="risk-item">
+                                                    <span>Max Trades/Day:</span>
+                                                    <strong>{params.maxTradesPerDay}</strong>
+                                                </div>
+                                                <div className="risk-item">
+                                                    <span>Position Size:</span>
+                                                    <strong>{params.riskPerTrade}%</strong>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Save Button */}
+                                    <div className="canvas-actions">
+                                        <button className="btn-save" onClick={saveParams}>
+                                            <Save size={16} /> Save Strategy
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     )}
