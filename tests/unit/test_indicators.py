@@ -33,7 +33,9 @@ class TestIndicators:
         # EMA should be smooth and follow trend
         assert len(ema) == len(data)
         assert not ema.isna().all()
-        assert ema.iloc[-1] > ema.iloc[0]  # Uptrend
+        # Compare valid (non-NaN) values only
+        valid_ema = ema.dropna()
+        assert valid_ema.iloc[-1] > valid_ema.iloc[0]  # Uptrend
     
     def test_rsi_bounds(self):
         """Test RSI stays within 0-100 bounds"""
@@ -43,8 +45,10 @@ class TestIndicators:
         data = pd.Series(np.random.uniform(3000, 4000, 100))
         rsi = RSIIndicator(data, window=14).rsi()
         
-        assert (rsi >= 0).all(), "RSI below 0"
-        assert (rsi <= 100).all(), "RSI above 100"
+        # RSI has NaN values for first N periods, so only check valid values
+        valid_rsi = rsi.dropna()
+        assert (valid_rsi >= 0).all(), "RSI below 0"
+        assert (valid_rsi <= 100).all(), "RSI above 100"
     
     def test_atr_positive(self):
         """Test ATR is always positive"""
@@ -68,7 +72,9 @@ class TestIndicators:
         upper = bb.bollinger_hband()
         lower = bb.bollinger_lband()
         
-        assert (upper >= lower).all(), "Upper band should be >= lower band"
+        # Bollinger Bands have NaN for first N periods, only check valid values
+        valid_mask = ~upper.isna() & ~lower.isna()
+        assert (upper[valid_mask] >= lower[valid_mask]).all(), "Upper band should be >= lower band"
 
 
 class TestDrawdownCandle:
