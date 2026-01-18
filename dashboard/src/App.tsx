@@ -31,6 +31,10 @@ const TradingJournalView = lazy(() => import('./views/TradingJournalView'))
 const LeaderboardView = lazy(() => import('./views/LeaderboardView'))
 const EarningsView = lazy(() => import('./views/EarningsView'))
 const StrategyLabView = lazy(() => import('./views/StrategyLabView'))
+// Combined views for consolidated sidebar
+const TradingView = lazy(() => import('./views/TradingView'))
+const SocialView = lazy(() => import('./views/SocialView'))
+const AccountView = lazy(() => import('./views/AccountView'))
 import './views/AdminDashboardView.css'
 
 // Loading fallback component
@@ -226,18 +230,22 @@ function Dashboard() {
               )}
               {activePage === 'portfolio' && <PortfolioView key="portfolio" />}
               {activePage === 'learning' && <LearningView key="learning" />}
+              {activePage === 'trading' && <TradingView key="trading" />}
+              {activePage === 'analytics' && <AnalyticsView key="analytics" />}
+              {activePage === 'social' && <SocialView key="social" />}
+              {activePage === 'journal' && <TradingJournalView key="journal" />}
+              {activePage === 'account' && <AccountView key="account" />}
+              {activePage === 'admin' && <AdminDashboardView key="admin" />}
+              {/* Legacy routes for direct navigation */}
               {activePage === 'ml' && <MLMonitorView key="ml" />}
               {activePage === 'accounts' && <AccountsView key="accounts" />}
               {activePage === 'bots' && <BotsView key="bots" />}
-              {activePage === 'analytics' && <AnalyticsView key="analytics" />}
               {activePage === 'subscription' && <SubscriptionView key="subscription" />}
               {activePage === 'pricing' && <PricingView key="pricing" />}
-              {activePage === 'journal' && <TradingJournalView key="journal" />}
               {activePage === 'leaderboard' && <LeaderboardView key="leaderboard" />}
               {activePage === 'earnings' && <EarningsView key="earnings" />}
               {activePage === 'strategy-lab' && <StrategyLabView key="strategy-lab" />}
               {activePage === 'settings' && <SettingsView key="settings" />}
-              {activePage === 'admin' && <AdminDashboardView key="admin" />}
             </AnimatePresence>
           </Suspense>
         </main>

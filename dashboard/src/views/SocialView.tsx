@@ -1,20 +1,20 @@
 import { useState } from 'react'
-import { Bot, Beaker } from 'lucide-react'
+import { Users2, Banknote } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import '../styles/premium.css'
 
 // Import existing views
-import BotsView from './BotsView'
-import StrategyLabView from './StrategyLabView'
+import LeaderboardView from './LeaderboardView'
+import EarningsView from './EarningsView'
 
-type TabType = 'bots' | 'strategy'
+type TabType = 'leaderboard' | 'earnings'
 
-const TradingView = () => {
-    const [activeTab, setActiveTab] = useState<TabType>('bots')
+const SocialView = () => {
+    const [activeTab, setActiveTab] = useState<TabType>('leaderboard')
 
     const tabs = [
-        { id: 'bots' as TabType, label: 'Bots', icon: Bot },
-        { id: 'strategy' as TabType, label: 'Strategy Lab', icon: Beaker },
+        { id: 'leaderboard' as TabType, label: 'Copy Trading', icon: Users2 },
+        { id: 'earnings' as TabType, label: 'Earnings', icon: Banknote },
     ]
 
     return (
@@ -68,12 +68,12 @@ const TradingView = () => {
                     exit={{ opacity: 0, x: -20 }}
                     transition={{ duration: 0.2 }}
                 >
-                    {activeTab === 'bots' && <BotsView />}
-                    {activeTab === 'strategy' && <StrategyLabView />}
+                    {activeTab === 'leaderboard' && <LeaderboardView />}
+                    {activeTab === 'earnings' && <EarningsView />}
                 </motion.div>
             </AnimatePresence>
         </motion.div>
     )
 }
 
-export default TradingView
+export default SocialView

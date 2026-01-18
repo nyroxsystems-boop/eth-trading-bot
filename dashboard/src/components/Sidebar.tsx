@@ -1,4 +1,4 @@
-import { Home, TrendingUp, Bot, Settings, Brain, Users, Crown, Cpu, Shield, BarChart3, BookOpen, Users2, Banknote, Beaker } from 'lucide-react'
+import { Home, TrendingUp, Bot, Settings, Brain, Users, Shield, BarChart3, BookOpen, Users2 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 interface MenuItem {
@@ -6,7 +6,6 @@ interface MenuItem {
     icon: React.ElementType
     label: string
     adminOnly?: boolean
-    hideForAdmin?: boolean
 }
 
 interface SidebarProps {
@@ -18,27 +17,21 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
     const { user } = useAuth()
     const isAdmin = user?.role === 'admin'
 
+    // Consolidated menu items (reduced from 13 to 8)
     const menuItems: MenuItem[] = [
         { id: 'dashboard', icon: Home, label: 'Dashboard' },
         { id: 'portfolio', icon: TrendingUp, label: 'Portfolio' },
-        { id: 'learning', icon: Brain, label: 'Learning' },
-        { id: 'ml', icon: Cpu, label: 'ML / AI' },
+        { id: 'trading', icon: Bot, label: 'Trading' },           // Bots + Strategy Lab
         { id: 'analytics', icon: BarChart3, label: 'Analytics' },
+        { id: 'social', icon: Users2, label: 'Social' },          // Copy Trading + Earnings
+        { id: 'learning', icon: Brain, label: 'Learning' },       // Learning + ML/AI
         { id: 'journal', icon: BookOpen, label: 'Journal' },
-        { id: 'leaderboard', icon: Users2, label: 'Copy Trading' },
-        { id: 'earnings', icon: Banknote, label: 'Earnings' },
-        { id: 'accounts', icon: Users, label: 'Accounts' },
-        { id: 'bots', icon: Bot, label: 'Bots' },
-        { id: 'strategy-lab', icon: Beaker, label: 'Strategy Lab' },
-        { id: 'subscription', icon: Crown, label: 'Subscription', hideForAdmin: true },
-        { id: 'settings', icon: Settings, label: 'Settings' },
+        { id: 'account', icon: Users, label: 'Account' },         // Accounts + Subscription + Settings
         { id: 'admin', icon: Shield, label: 'Admin', adminOnly: true },
     ]
 
-    // Filter: hide adminOnly for non-admins, hide hideForAdmin for admins
     const visibleMenuItems = menuItems.filter(item => {
         if (item.adminOnly && !isAdmin) return false
-        if (item.hideForAdmin && isAdmin) return false
         return true
     })
 
@@ -52,7 +45,7 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
             </div>
 
             {/* Menu Items */}
-            <nav className="flex-1 flex flex-col gap-4">
+            <nav className="flex-1 flex flex-col gap-3">
                 {visibleMenuItems.map((item) => {
                     const Icon = item.icon
                     const isActive = item.id === activePage
@@ -62,7 +55,7 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
                             key={item.id}
                             onClick={() => onPageChange(item.id)}
                             className={`
-                w-14 h-14 rounded-xl flex items-center justify-center
+                w-12 h-12 rounded-xl flex items-center justify-center
                 transition-all duration-300 relative group
                 ${isActive
                                     ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 shadow-lg shadow-cyan-500/20'
@@ -72,11 +65,11 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
               `}
                             title={item.label}
                         >
-                            <Icon className={`w-6 h-6 transition-transform duration-300 ${isActive ? 'scale-110' : 'group-hover:scale-110'}`} />
+                            <Icon className={`w-5 h-5 transition-transform duration-300 ${isActive ? 'scale-110' : 'group-hover:scale-110'}`} />
 
                             {/* Active indicator */}
                             {isActive && (
-                                <div className="absolute -right-1 top-1/2 -translate-y-1/2 w-1 h-8 bg-cyan-400 rounded-full shadow-lg shadow-cyan-400/50" />
+                                <div className="absolute -right-1 top-1/2 -translate-y-1/2 w-1 h-6 bg-cyan-400 rounded-full shadow-lg shadow-cyan-400/50" />
                             )}
 
                             {/* Tooltip */}

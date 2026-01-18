@@ -1,20 +1,22 @@
 import { useState } from 'react'
-import { Bot, Beaker } from 'lucide-react'
+import { Users, Crown, Settings } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import '../styles/premium.css'
 
 // Import existing views
-import BotsView from './BotsView'
-import StrategyLabView from './StrategyLabView'
+import AccountsView from './AccountsView'
+import SubscriptionView from './SubscriptionView'
+import SettingsView from './SettingsView'
 
-type TabType = 'bots' | 'strategy'
+type TabType = 'accounts' | 'subscription' | 'settings'
 
-const TradingView = () => {
-    const [activeTab, setActiveTab] = useState<TabType>('bots')
+const AccountView = () => {
+    const [activeTab, setActiveTab] = useState<TabType>('accounts')
 
     const tabs = [
-        { id: 'bots' as TabType, label: 'Bots', icon: Bot },
-        { id: 'strategy' as TabType, label: 'Strategy Lab', icon: Beaker },
+        { id: 'accounts' as TabType, label: 'Accounts', icon: Users },
+        { id: 'subscription' as TabType, label: 'Subscription', icon: Crown },
+        { id: 'settings' as TabType, label: 'Settings', icon: Settings },
     ]
 
     return (
@@ -68,12 +70,13 @@ const TradingView = () => {
                     exit={{ opacity: 0, x: -20 }}
                     transition={{ duration: 0.2 }}
                 >
-                    {activeTab === 'bots' && <BotsView />}
-                    {activeTab === 'strategy' && <StrategyLabView />}
+                    {activeTab === 'accounts' && <AccountsView />}
+                    {activeTab === 'subscription' && <SubscriptionView />}
+                    {activeTab === 'settings' && <SettingsView />}
                 </motion.div>
             </AnimatePresence>
         </motion.div>
     )
 }
 
-export default TradingView
+export default AccountView
