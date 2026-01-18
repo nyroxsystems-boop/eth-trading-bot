@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Bell, User, Settings, LogOut, TrendingUp } from 'lucide-react'
+import ThemeToggle from './ThemeToggle'
 import '../styles/premium.css'
 import '../styles/components.css'
 
@@ -78,6 +79,9 @@ const Header = ({ onSettingsClick }: HeaderProps) => {
 
                 {/* Right Side */}
                 <div className="header-actions">
+                    {/* Theme Toggle */}
+                    <ThemeToggle />
+
                     {/* Notification Bell */}
                     <div className="header-action-item">
                         <button

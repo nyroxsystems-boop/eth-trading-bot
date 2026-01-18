@@ -12,12 +12,22 @@
     --gradient-secondary: linear-gradient(135deg, #06B6D4 0%, #8B5CF6 100%);
     --gradient-gold: linear-gradient(135deg, #F59E0B 0%, #EF4444 100%);
 
+    /* Status Colors */
+    --success: #10B981;
+    --error: #EF4444;
+    --warning: #F59E0B;
+    --info: #06B6D4;
+}
+
+/* Dark Theme (Default) */
+[data-theme="dark"],
+:root {
     /* Glass Effect */
     --glass-bg: rgba(15, 23, 42, 0.7);
     --glass-border: rgba(139, 92, 246, 0.2);
     --glass-shadow: 0 8px 32px 0 rgba(139, 92, 246, 0.15);
 
-    /* Dark Theme */
+    /* Backgrounds */
     --bg-primary: #0F172A;
     --bg-secondary: #1E293B;
     --bg-tertiary: #334155;
@@ -27,11 +37,55 @@
     --text-secondary: #CBD5E1;
     --text-muted: #64748B;
 
-    /* Status Colors */
-    --success: #10B981;
-    --error: #EF4444;
-    --warning: #F59E0B;
-    --info: #06B6D4;
+    /* Input */
+    --input-bg: rgba(139, 92, 246, 0.05);
+    --input-border: rgba(139, 92, 246, 0.2);
+}
+
+/* Light Theme */
+[data-theme="light"] {
+    /* Glass Effect */
+    --glass-bg: rgba(255, 255, 255, 0.9);
+    --glass-border: rgba(139, 92, 246, 0.15);
+    --glass-shadow: 0 8px 32px 0 rgba(100, 116, 139, 0.15);
+
+    /* Backgrounds */
+    --bg-primary: #F8FAFC;
+    --bg-secondary: #FFFFFF;
+    --bg-tertiary: #E2E8F0;
+
+    /* Text */
+    --text-primary: #0F172A;
+    --text-secondary: #334155;
+    --text-muted: #64748B;
+
+    /* Input */
+    --input-bg: rgba(139, 92, 246, 0.05);
+    --input-border: rgba(139, 92, 246, 0.3);
+}
+
+/* System preference detection */
+@media (prefers-color-scheme: light) {
+    :root:not([data-theme]) {
+        /* Glass Effect */
+        --glass-bg: rgba(255, 255, 255, 0.9);
+        --glass-border: rgba(139, 92, 246, 0.15);
+        --glass-shadow: 0 8px 32px 0 rgba(100, 116, 139, 0.15);
+
+        /* Backgrounds */
+        --bg-primary: #F8FAFC;
+        --bg-secondary: #FFFFFF;
+        --bg-tertiary: #E2E8F0;
+
+        /* Text */
+        --text-primary: #0F172A;
+        --text-secondary: #334155;
+        --text-muted: #64748B;
+
+        /* Input */
+        --input-bg: rgba(139, 92, 246, 0.05);
+        --input-border: rgba(139, 92, 246, 0.3);
+    }
 }
 
 * {

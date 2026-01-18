@@ -11,35 +11,127 @@ from datetime import datetime
 # Import database adapter
 from db_adapter import get_db_connection, USE_POSTGRES
 
-# Subscription tier definitions
+# Subscription tier definitions - Comprehensive 4-Tier System
 TIERS = {
     'free': {
         'name': 'Free',
+        'display_name': 'Starter',
         'max_accounts': 1,
         'max_trading_pairs': 1,
+        'max_trades_per_day': 10,
         'live_trading': False,
+        'ml_training': False,
+        'api_access': False,
+        'priority_support': False,
+        'custom_strategies': False,
+        'telegram_notifications': False,
         'price': 0,
+        'price_yearly': 0,
+        'stripe_price_id': None,
+        'color': '#64748B',
         'features': [
-            '1 Binance Account',
-            '1 Trading Pair (ETH only)',
             'Paper Trading Only',
-            'Basic Support'
+            '1 Trading Pair (ETH)',
+            '10 Trades/Day Limit',
+            'Basic Dashboard',
+            'Community Support'
+        ],
+        'limitations': [
+            'No Live Trading',
+            'No ML Features',
+            'No API Access'
         ]
     },
-    'premium': {
-        'name': 'Premium',
+    'basic': {
+        'name': 'Basic',
+        'display_name': 'Trader',
+        'max_accounts': 1,
+        'max_trading_pairs': 3,
+        'max_trades_per_day': 50,
+        'live_trading': True,
+        'ml_training': False,
+        'api_access': False,
+        'priority_support': False,
+        'custom_strategies': False,
+        'telegram_notifications': True,
+        'price': 29,
+        'price_yearly': 290,  # ~17% discount
+        'stripe_price_id': 'price_basic_monthly',
+        'color': '#06B6D4',
+        'features': [
+            'Live Trading Enabled',
+            '3 Trading Pairs',
+            '50 Trades/Day',
+            'Telegram Notifications',
+            'Email Support',
+            'Basic Analytics'
+        ],
+        'limitations': [
+            'No ML Training',
+            'No API Access'
+        ]
+    },
+    'pro': {
+        'name': 'Pro',
+        'display_name': 'Professional',
         'max_accounts': 5,
         'max_trading_pairs': 10,
+        'max_trades_per_day': None,  # Unlimited
         'live_trading': True,
-        'price': 29,  # USD/month
+        'ml_training': True,
+        'api_access': True,
+        'priority_support': True,
+        'custom_strategies': False,
+        'telegram_notifications': True,
+        'price': 99,
+        'price_yearly': 990,  # ~17% discount
+        'stripe_price_id': 'price_pro_monthly',
+        'color': '#8B5CF6',
         'features': [
-            '5 Binance Accounts',
+            'Unlimited Trades',
             '10 Trading Pairs',
-            'Live Trading Enabled',
+            '5 Bot Instances',
+            'ML Model Training',
+            'REST API Access',
             'Priority Support',
-            'Advanced Analytics'
-        ]
+            'Advanced Analytics',
+            'Custom Alerts'
+        ],
+        'limitations': []
+    },
+    'enterprise': {
+        'name': 'Enterprise',
+        'display_name': 'Enterprise',
+        'max_accounts': None,  # Unlimited
+        'max_trading_pairs': None,  # Unlimited
+        'max_trades_per_day': None,  # Unlimited
+        'live_trading': True,
+        'ml_training': True,
+        'api_access': True,
+        'priority_support': True,
+        'custom_strategies': True,
+        'telegram_notifications': True,
+        'price': 299,
+        'price_yearly': 2990,  # ~17% discount
+        'stripe_price_id': 'price_enterprise_monthly',
+        'color': '#F59E0B',
+        'features': [
+            'Everything in Pro',
+            'Unlimited Accounts',
+            'Unlimited Trading Pairs',
+            'Custom Strategy Builder',
+            'White-Label Option',
+            'Dedicated Account Manager',
+            'SLA Guarantee',
+            'On-Call Support'
+        ],
+        'limitations': []
     }
+}
+
+# Legacy mapping for backwards compatibility
+LEGACY_TIER_MAPPING = {
+    'premium': 'pro'  # Old 'premium' tier maps to new 'pro'
 }
 
 
