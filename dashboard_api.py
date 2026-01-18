@@ -3191,6 +3191,148 @@ async def get_copy_trading_stats(current_user: Dict = Depends(get_current_user))
 
 
 # ============================================================================
+# REVENUE API ENDPOINTS
+# ============================================================================
+
+@app.get("/api/revenue/leader-earnings")
+async def get_leader_earnings(current_user: Dict = Depends(get_current_user)):
+    """Get earnings for the current user as a leader"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.social.revenue_engine import get_revenue_engine
+        
+        engine = get_revenue_engine()
+        earnings = engine.get_leader_earnings(current_user["id"])
+        
+        return {
+            "status": "success",
+            "earnings": earnings
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/revenue/follower-spending")
+async def get_follower_spending(current_user: Dict = Depends(get_current_user)):
+    """Get spending summary for the current user as a copier"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.social.revenue_engine import get_revenue_engine
+        
+        engine = get_revenue_engine()
+        spending = engine.get_follower_spending(current_user["id"])
+        
+        return {
+            "status": "success",
+            "spending": spending
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/revenue/record-commission")
+async def record_trade_commission(data: dict, current_user: Dict = Depends(get_current_user)):
+    """Record a commission when a copied trade is closed"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.social.revenue_engine import get_revenue_engine
+        
+        engine = get_revenue_engine()
+        commission = engine.record_commission(
+            trade_id=data.get("trade_id"),
+            leader_id=data.get("leader_id"),
+            follower_id=current_user["id"],
+            symbol=data.get("symbol", "ETHUSDT"),
+            entry_price=data.get("entry_price", 0),
+            exit_price=data.get("exit_price", 0),
+            quantity=data.get("quantity", 0),
+            is_verified_leader=data.get("is_verified", False),
+            follower_tier=data.get("tier", "free")
+        )
+        
+        from dataclasses import asdict
+        return {
+            "status": "success",
+            "commission": asdict(commission)
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/revenue/commissions")
+async def get_recent_commissions(current_user: Dict = Depends(get_current_user)):
+    """Get recent commissions for the user"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.social.revenue_engine import get_revenue_engine
+        
+        engine = get_revenue_engine()
+        commissions = engine.get_recent_commissions(limit=50)
+        
+        # Filter to user's commissions
+        user_commissions = [
+            c for c in commissions 
+            if c["leader_id"] == current_user["id"] or c["follower_id"] == current_user["id"]
+        ]
+        
+        return {
+            "status": "success",
+            "commissions": user_commissions
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/revenue/platform-stats")
+async def get_platform_revenue_stats(current_user: Dict = Depends(get_current_user)):
+    """Get platform revenue statistics (admin only)"""
+    try:
+        # Check if admin
+        if current_user.get("username") != "Nyrox":
+            return {"status": "error", "message": "Admin access required"}
+        
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.social.revenue_engine import get_revenue_engine
+        
+        engine = get_revenue_engine()
+        stats = engine.get_platform_revenue(days=30)
+        
+        return {
+            "status": "success",
+            "revenue": stats
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/revenue/request-payout")
+async def request_leader_payout(current_user: Dict = Depends(get_current_user)):
+    """Request payout of pending earnings"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.social.revenue_engine import get_revenue_engine
+        
+        engine = get_revenue_engine()
+        result = engine.process_payout(current_user["id"])
+        
+        return result
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# ============================================================================
 # ADMIN DASHBOARD API ENDPOINTS
 # ============================================================================
 
