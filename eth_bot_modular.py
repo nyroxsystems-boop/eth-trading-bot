@@ -9,7 +9,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Optional
 
-from src.utils.config import get_config
+from src.utils.config import get_config, load_active_strategy
 from src.utils.logger import setup_logger
 from src.core.market_data import MarketDataProvider
 from src.core.ml_engine import MLEngine
@@ -229,6 +229,12 @@ def decide_and_trade(
 def main_loop():
     """Main trading loop"""
     config = get_config()
+    
+    # Load user strategy from Strategy Lab (if configured)
+    if load_active_strategy():
+        logger.info("✓ Loaded user strategy from Strategy Lab")
+        # Re-fetch config to get updated values
+        config = get_config()
     
     # Initialize components
     logger.info("Initializing trading components...")

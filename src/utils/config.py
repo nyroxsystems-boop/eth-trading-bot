@@ -89,6 +89,42 @@ class BotConfig:
     api: APIConfig = field(default_factory=APIConfig)
     system: SystemConfig = field(default_factory=SystemConfig)
     
+    def apply_user_strategy(self, params: dict):
+        """
+        Apply user strategy parameters from Strategy Lab.
+        Maps Strategy Lab parameter names to config fields.
+        """
+        if not params:
+            return
+        
+        # Risk settings
+        if "riskPerTrade" in params:
+            # Convert percentage to decimal (1.0% -> 0.01)
+            self.risk.risk_pct_per_trade = params["riskPerTrade"] / 100.0
+        
+        if "stopLoss" in params:
+            self.risk.stop_floor = params["stopLoss"] / 100.0
+        
+        if "takeProfitMin" in params:
+            self.risk.tp_min = params["takeProfitMin"] / 100.0
+        
+        if "takeProfitMax" in params:
+            self.risk.tp_max = params["takeProfitMax"] / 100.0
+        
+        # Trading settings
+        if "maxTradesPerDay" in params:
+            self.trading.max_trades_per_day = int(params["maxTradesPerDay"])
+        
+        if "rsiOversold" in params:
+            self.trading.rsi_min = float(params["rsiOversold"])
+        
+        if "rsiOverbought" in params:
+            self.trading.rsi_max = float(params["rsiOverbought"])
+        
+        # ML threshold (stored as ml_threshold attribute)
+        if "mlThreshold" in params:
+            self.ml.threshold = float(params["mlThreshold"])
+    
     @classmethod
     def from_env(cls) -> 'BotConfig':
         """Load configuration from environment variables"""
@@ -160,3 +196,31 @@ def reload_config() -> BotConfig:
     global config
     config = BotConfig.from_env()
     return config
+
+
+def load_active_strategy() -> bool:
+    """
+    Load active strategy from JSON file created by Strategy Lab.
+    Returns True if strategy was loaded, False otherwise.
+    """
+    import json
+    from pathlib import Path
+    
+    strategy_file = Path("data/user_strategies/active_strategy.json")
+    
+    if not strategy_file.exists():
+        return False
+    
+    try:
+        data = json.loads(strategy_file.read_text())
+        params = data.get("params", {})
+        
+        if params:
+            cfg = get_config()
+            cfg.apply_user_strategy(params)
+            return True
+    except Exception as e:
+        print(f"Warning: Failed to load active strategy: {e}")
+    
+    return False
+

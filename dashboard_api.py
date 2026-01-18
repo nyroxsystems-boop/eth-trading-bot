@@ -3479,8 +3479,8 @@ async def request_leader_payout(current_user: Dict = Depends(get_current_user)):
 # STRATEGY LAB API ENDPOINTS
 # ============================================================================
 
-# In-memory storage for user strategy params (in production, use database)
-USER_STRATEGY_PARAMS = {}
+STRATEGY_DIR = Path("data/user_strategies")
+STRATEGY_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_STRATEGY_PARAMS = {
     "riskPerTrade": 1.0,
@@ -3494,6 +3494,36 @@ DEFAULT_STRATEGY_PARAMS = {
 }
 
 
+def get_user_strategy_file(user_id: int) -> Path:
+    """Get the strategy file path for a user"""
+    return STRATEGY_DIR / f"user_{user_id}.json"
+
+
+def load_user_strategy(user_id: int) -> dict:
+    """Load user strategy from JSON file"""
+    strategy_file = get_user_strategy_file(user_id)
+    if strategy_file.exists():
+        try:
+            return json.loads(strategy_file.read_text())
+        except Exception:
+            pass
+    return DEFAULT_STRATEGY_PARAMS.copy()
+
+
+def save_user_strategy(user_id: int, params: dict):
+    """Save user strategy to JSON file"""
+    strategy_file = get_user_strategy_file(user_id)
+    strategy_file.write_text(json.dumps(params, indent=2))
+    
+    # Also save as 'active' strategy for the bot to use
+    active_file = STRATEGY_DIR / "active_strategy.json"
+    active_file.write_text(json.dumps({
+        "user_id": user_id,
+        "params": params,
+        "updated_at": datetime.now().isoformat()
+    }, indent=2))
+
+
 @app.get("/api/strategy/parameters")
 async def get_strategy_parameters(current_user: Optional[Dict] = Depends(get_current_user_optional)):
     """Get user's strategy parameters"""
@@ -3501,7 +3531,7 @@ async def get_strategy_parameters(current_user: Optional[Dict] = Depends(get_cur
         return {"status": "success", "params": DEFAULT_STRATEGY_PARAMS}
     
     user_id = current_user["id"]
-    params = USER_STRATEGY_PARAMS.get(user_id, DEFAULT_STRATEGY_PARAMS)
+    params = load_user_strategy(user_id)
     return {"status": "success", "params": params}
 
 
@@ -3513,8 +3543,8 @@ async def save_strategy_parameters(data: dict, current_user: Optional[Dict] = De
     
     user_id = current_user["id"]
     params = data.get("params", {})
-    USER_STRATEGY_PARAMS[user_id] = params
-    return {"status": "success", "message": "Parameters saved"}
+    save_user_strategy(user_id, params)
+    return {"status": "success", "message": "Parameters saved and activated"}
 
 
 @app.post("/api/strategy/backtest")
