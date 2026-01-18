@@ -1054,7 +1054,7 @@ def load_settings() -> dict:
         "tp_min": float(os.getenv("TP_MIN", "0.010")),
         "tp_max": float(os.getenv("TP_MAX", "0.015")),
         "stop_floor": float(os.getenv("STOP_FLOOR", "0.005")),
-        "dry_run": os.getenv("DRY_RUN", "false").lower() == "true"
+        "dry_run": os.getenv("DRY_RUN", "true").lower() == "true"
     }
 
 def save_settings(settings: dict):
