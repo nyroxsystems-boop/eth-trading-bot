@@ -157,18 +157,22 @@ const TradingJournalView = () => {
                         value={dateRange}
                         onChange={e => setDateRange(e.target.value)}
                         style={{
-                            padding: '10px 16px',
-                            background: 'var(--glass-bg)',
-                            border: '1px solid var(--glass-border)',
-                            borderRadius: '8px',
+                            padding: '12px 20px',
+                            background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.15), rgba(6, 182, 212, 0.15))',
+                            border: '1px solid rgba(139, 92, 246, 0.3)',
+                            borderRadius: '10px',
                             color: 'var(--text-primary)',
-                            cursor: 'pointer'
+                            fontSize: '14px',
+                            fontWeight: 500,
+                            cursor: 'pointer',
+                            outline: 'none',
+                            minWidth: '140px'
                         }}
                     >
-                        <option value="1d">Today</option>
-                        <option value="7d">Last 7 Days</option>
-                        <option value="30d">Last 30 Days</option>
-                        <option value="90d">Last 90 Days</option>
+                        <option value="1d" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>Today</option>
+                        <option value="7d" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>Last 7 Days</option>
+                        <option value="30d" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>Last 30 Days</option>
+                        <option value="90d" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>Last 90 Days</option>
                     </select>
                     <button style={{
                         display: 'flex',
