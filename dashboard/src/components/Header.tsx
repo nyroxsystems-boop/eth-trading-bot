@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Bell, User, Settings, LogOut, TrendingUp } from 'lucide-react'
 import ThemeToggle from './ThemeToggle'
+import { LanguageSwitcher } from '../contexts/LanguageContext'
 import '../styles/premium.css'
 import '../styles/components.css'
 
@@ -79,6 +80,9 @@ const Header = ({ onSettingsClick }: HeaderProps) => {
 
                 {/* Right Side */}
                 <div className="header-actions">
+                    {/* Language Switcher */}
+                    <LanguageSwitcher />
+
                     {/* Theme Toggle */}
                     <ThemeToggle />
 

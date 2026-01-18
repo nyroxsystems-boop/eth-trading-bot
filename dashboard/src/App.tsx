@@ -6,6 +6,7 @@ import './styles/premium.css'
 
 // Auth
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { LanguageProvider } from './contexts/LanguageContext'
 import ProtectedRoute from './components/ProtectedRoute'
 
 // Core components (not lazy - needed immediately)
@@ -269,21 +270,24 @@ function Dashboard() {
 function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <Suspense fallback={<LoadingFallback />}>
-          <Routes>
-            <Route path="/login" element={<LoginView />} />
-            <Route path="/register" element={<RegisterView />} />
-            <Route path="/forgot-password" element={<ForgotPasswordView />} />
-            <Route path="/reset-password" element={<ForgotPasswordView />} />
-            <Route path="/*" element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            } />
-          </Routes>
-        </Suspense>
-      </AuthProvider>
+      <LanguageProvider>
+        <AuthProvider>
+          <Suspense fallback={<LoadingFallback />}>
+            <Routes>
+              <Route path="/pricing" element={<PricingView />} />
+              <Route path="/login" element={<LoginView />} />
+              <Route path="/register" element={<RegisterView />} />
+              <Route path="/forgot-password" element={<ForgotPasswordView />} />
+              <Route path="/reset-password" element={<ForgotPasswordView />} />
+              <Route path="/*" element={
+                <ProtectedRoute>
+                  <Dashboard />
+                </ProtectedRoute>
+              } />
+            </Routes>
+          </Suspense>
+        </AuthProvider>
+      </LanguageProvider>
     </BrowserRouter>
   )
 }
