@@ -1,4 +1,4 @@
-import { Home, TrendingUp, Bot, Settings, Brain, Users, Shield, BarChart3, BookOpen, Users2 } from 'lucide-react'
+import { Home, TrendingUp, Bot, Brain, Users, Shield, BarChart3, BookOpen, Users2 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 interface MenuItem {
