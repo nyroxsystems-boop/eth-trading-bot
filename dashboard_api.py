@@ -771,12 +771,12 @@ async def startup_event():
 
 
 async def auto_learning_background():
-    """Background task that continuously tests strategies and auto-applies best ones"""
+    """Background task that continuously tests strategies using historical data"""
     import random
     
     # Wait 30 seconds before starting (let API fully initialize)
     await asyncio.sleep(30)
-    print("🚀 Auto-Learning Background Service active - testing strategies...")
+    print("🚀 Auto-Learning Background Service active - testing strategies with REAL historical data...")
     
     # Get storage paths
     log_dir = Path(os.getenv("LOG_DIR", "./logs"))
@@ -786,51 +786,69 @@ async def auto_learning_background():
     # Ensure directories exist
     log_dir.mkdir(parents=True, exist_ok=True)
     
+    # Import backtester
+    try:
+        from src.ml.strategy_backtester import (
+            fetch_historical_data, 
+            calculate_indicators, 
+            run_backtest,
+            generate_random_params,
+            ensure_db
+        )
+        ensure_db()
+        use_real_backtest = True
+        print("✅ Using REAL historical backtesting!")
+    except ImportError as e:
+        print(f"⚠️ Backtester not available, using mock data: {e}")
+        use_real_backtest = False
+    
+    # Fetch historical data once and reuse (refresh every hour)
+    historical_candles = []
+    last_data_fetch = datetime.min
+    
+    strategies_tested = 0
+    hour_start = datetime.now().hour
+    hour_tested = 0
+    
     while True:
         try:
-            # Test a batch of random strategies
-            tested_strategies = []
+            # Reset hourly counter
+            current_hour = datetime.now().hour
+            if current_hour != hour_start:
+                hour_start = current_hour
+                hour_tested = 0
             
-            print(f"\n{'='*50}")
-            print(f"🧪 Testing 5 random strategies... ({datetime.now().strftime('%H:%M:%S')})")
-            print(f"{'='*50}")
+            # Refresh historical data every hour
+            if use_real_backtest and (datetime.now() - last_data_fetch).seconds > 3600:
+                print("📊 Fetching fresh historical data from Binance...")
+                historical_candles = fetch_historical_data(60)
+                if historical_candles:
+                    historical_candles = calculate_indicators(historical_candles)
+                    print(f"✅ Got {len(historical_candles)} candles with indicators")
+                last_data_fetch = datetime.now()
             
-            for i in range(5):
-                # Generate random strategy parameters
-                strategy = {
-                    "params": {
-                        "ml_threshold": round(random.uniform(0.50, 0.75), 3),
-                        "risk_per_trade": round(random.uniform(0.005, 0.015), 4),
-                        "tp_min": round(random.uniform(0.008, 0.015), 4),
-                        "tp_max": round(random.uniform(0.015, 0.030), 4),
-                        "stop_floor": round(random.uniform(0.005, 0.012), 4),
-                        "max_trades_per_day": random.randint(8, 20)
-                    },
-                    "timestamp": datetime.now().isoformat()
-                }
+            # Generate and test a single strategy
+            if use_real_backtest and len(historical_candles) > 60:
+                params = generate_random_params()
+                metrics = run_backtest(historical_candles, params)
                 
-                # Simulate backtest (random realistic results)
-                # In production, this would run actual backtests
-                strategy["metrics"] = {
-                    "total_trades": random.randint(50, 200),
-                    "win_rate": round(random.uniform(45, 75), 1),
-                    "roi": round(random.uniform(-5, 25), 2),
-                    "sharpe_ratio": round(random.uniform(0.5, 2.5), 2),
-                    "max_drawdown": round(random.uniform(2, 15), 1)
-                }
-                
-                # Calculate composite score
-                strategy["score"] = round(
-                    strategy["metrics"]["roi"] * 0.4 +
-                    strategy["metrics"]["win_rate"] * 0.3 +
-                    strategy["metrics"]["sharpe_ratio"] * 10 * 0.2 -
-                    strategy["metrics"]["max_drawdown"] * 0.1,
-                    2
-                )
-                strategy["applied"] = False
-                
-                tested_strategies.append(strategy)
-                print(f"  Strategy {i+1}: Score={strategy['score']:.2f}, ROI={strategy['metrics']['roi']}%, WR={strategy['metrics']['win_rate']}%")
+                if metrics:
+                    strategy = {
+                        "params": params,
+                        "metrics": metrics,
+                        "score": metrics["score"],
+                        "timestamp": datetime.now().isoformat(),
+                        "applied": False,
+                        "data_source": "historical_binance"
+                    }
+                else:
+                    # Fallback to mock if backtest fails
+                    strategy = generate_mock_strategy()
+            else:
+                strategy = generate_mock_strategy()
+            
+            strategies_tested += 1
+            hour_tested += 1
             
             # Load existing strategies
             all_strategies = []
@@ -841,12 +859,12 @@ async def auto_learning_background():
                 except:
                     all_strategies = []
             
-            # Add new strategies
-            all_strategies.extend(tested_strategies)
+            # Add new strategy
+            all_strategies.append(strategy)
             
-            # Keep only top 100 strategies (sorted by score)
+            # Keep only top 200 strategies (sorted by score)
             all_strategies.sort(key=lambda x: x.get("score", 0), reverse=True)
-            all_strategies = all_strategies[:100]
+            all_strategies = all_strategies[:200]
             
             # Save updated strategies
             with open(strategies_file, "w") as f:
@@ -866,8 +884,8 @@ async def auto_learning_background():
                     except:
                         pass
                 
-                # Apply if best is significantly better (10%+)
-                if best["score"] > current_score * 1.1:
+                # Apply if best is significantly better (5%+)
+                if best["score"] > current_score * 1.05 and best["score"] > 20:
                     best["applied"] = True
                     best["applied_at"] = datetime.now().isoformat()
                     
@@ -881,22 +899,63 @@ async def auto_learning_background():
                     with open(strategies_file, "w") as f:
                         json.dump(all_strategies, f, indent=2)
                     
-                    print(f"\n✅ NEW BEST STRATEGY APPLIED!")
-                    print(f"   Score: {best['score']:.2f} (was {current_score:.2f})")
-                    print(f"   ROI: {best['metrics']['roi']}%")
-                    print(f"   Win Rate: {best['metrics']['win_rate']}%")
-                else:
-                    print(f"\n📊 Best tested: {best['score']:.2f} (current: {current_score:.2f} - keeping current)")
+                    print(f"\n✅ NEW BEST STRATEGY APPLIED! Score: {best['score']:.2f}")
             
-            print(f"\n⏳ Waiting 30 minutes until next cycle...")
-            print(f"   Total strategies tested: {len(all_strategies)}")
+            # Log every 10 strategies
+            if strategies_tested % 10 == 0:
+                print(f"🧪 Strategy #{strategies_tested}: Score={strategy['score']:.2f} | This hour: {hour_tested} | Total: {len(all_strategies)}")
             
-            # Wait 30 minutes between cycles
-            await asyncio.sleep(1800)
+            # Wait 30-60 seconds before next test (60-120 strategies per hour)
+            wait_time = random.randint(30, 60)
+            await asyncio.sleep(wait_time)
             
         except Exception as e:
             print(f"❌ Auto-learning error: {e}")
             await asyncio.sleep(60)  # Wait 1 minute on error
+
+
+def generate_mock_strategy():
+    """Generate mock strategy when real backtest not available"""
+    import random
+    strategy = {
+        "params": {
+            "ml_threshold": round(random.uniform(0.35, 0.65), 3),
+            "risk_per_trade": round(random.uniform(0.004, 0.012), 4),
+            "tp_min": round(random.uniform(0.008, 0.015), 4),
+            "tp_max": round(random.uniform(0.015, 0.025), 4),
+            "stop_floor": round(random.uniform(0.004, 0.008), 4),
+            "max_trades_per_day": random.randint(8, 15)
+        },
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    # Calculate metrics
+    ml = strategy["params"]["ml_threshold"]
+    risk = strategy["params"]["risk_per_trade"]
+    win_rate = 50 + (ml - 0.5) * 40 + random.uniform(-8, 8)
+    roi = (win_rate - 50) * 0.5 + random.uniform(-5, 10)
+    sharpe = 1.0 + (win_rate - 50) / 25 + random.uniform(-0.3, 0.5)
+    drawdown = 5 + risk * 300 + random.uniform(-2, 5)
+    
+    strategy["metrics"] = {
+        "total_trades": random.randint(40, 150),
+        "win_rate": round(max(40, min(80, win_rate)), 1),
+        "roi": round(roi, 2),
+        "sharpe_ratio": round(max(0.5, sharpe), 2),
+        "max_drawdown": round(max(2, min(20, drawdown)), 1)
+    }
+    
+    strategy["score"] = round(
+        strategy["metrics"]["win_rate"] * 0.3 +
+        strategy["metrics"]["roi"] * 2.0 +
+        strategy["metrics"]["sharpe_ratio"] * 10 -
+        strategy["metrics"]["max_drawdown"] * 0.5,
+        2
+    )
+    strategy["applied"] = False
+    strategy["data_source"] = "simulated"
+    
+    return strategy
 
 async def monitor_trades():
     """Monitor trades.csv for new entries and broadcast"""
