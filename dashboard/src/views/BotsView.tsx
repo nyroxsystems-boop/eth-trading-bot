@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Play, Pause, Settings, TrendingUp, Brain, Target } from 'lucide-react'
+import { Play, Pause, TrendingUp, Brain, Target } from 'lucide-react'
 
 export default function BotsView() {
     const botRunning = true
@@ -35,70 +35,53 @@ export default function BotsView() {
                         </div>
                     </div>
                     <button className={`px-6 py-3 rounded-xl font-semibold flex items-center gap-2 transition-all duration-300 ${botRunning
-                            ? 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
-                            : 'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30'
+                        ? 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
+                        : 'bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500/30'
                         }`}>
                         {botRunning ? <><Pause className="w-5 h-5" /> Stop Bot</> : <><Play className="w-5 h-5" /> Start Bot</>}
                     </button>
                 </div>
             </motion.div>
 
-            {/* Strategy Settings */}
+            {/* ML & Sentiment Panel */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Auto-Learning Info Card */}
                 <motion.div
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: 0.2 }}
-                    className="bg-slate-900/50 backdrop-blur-xl border border-slate-800/50 rounded-2xl p-6"
+                    className="bg-gradient-to-br from-purple-500/10 to-cyan-500/10 backdrop-blur-xl border border-purple-500/30 rounded-2xl p-6"
                 >
                     <div className="flex items-center gap-2 mb-6">
-                        <Settings className="w-5 h-5 text-cyan-400" />
-                        <h2 className="text-xl font-semibold">Strategy Settings</h2>
+                        <Brain className="w-5 h-5 text-purple-400" />
+                        <h2 className="text-xl font-semibold">Auto-Learning Active</h2>
                     </div>
 
-                    <div className="space-y-6">
-                        <div>
-                            <label className="text-sm text-slate-400 mb-2 block">Risk Level</label>
-                            <select className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3 text-white">
-                                <option>Conservative</option>
-                                <option selected>Moderate</option>
-                                <option>Aggressive</option>
-                            </select>
+                    <div className="space-y-4">
+                        <div className="flex items-center gap-3 text-emerald-400">
+                            <div className="w-3 h-3 rounded-full bg-emerald-400 animate-pulse" />
+                            <span>Bot optimizes strategy automatically</span>
                         </div>
-
-                        <div>
-                            <label className="text-sm text-slate-400 mb-2 block">Daily Target (%)</label>
-                            <input
-                                type="number"
-                                defaultValue="1.0"
-                                step="0.1"
-                                className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3 text-white"
-                            />
+                        <p className="text-slate-400 text-sm">
+                            The bot uses reinforcement learning (DQN) to continuously improve trading decisions.
+                            No manual tuning required!
+                        </p>
+                        <div className="grid grid-cols-2 gap-3 mt-4">
+                            <div className="bg-slate-800/50 rounded-lg p-3">
+                                <span className="text-slate-400 text-xs">Learning Rate</span>
+                                <p className="text-white font-semibold">Adaptive</p>
+                            </div>
+                            <div className="bg-slate-800/50 rounded-lg p-3">
+                                <span className="text-slate-400 text-xs">Status</span>
+                                <p className="text-emerald-400 font-semibold">Active</p>
+                            </div>
                         </div>
-
-                        <div>
-                            <label className="text-sm text-slate-400 mb-2 block">Max Drawdown (%)</label>
-                            <input
-                                type="number"
-                                defaultValue="5.0"
-                                step="0.5"
-                                className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3 text-white"
-                            />
-                        </div>
-
-                        <div>
-                            <label className="text-sm text-slate-400 mb-2 block">Position Size (USDT)</label>
-                            <input
-                                type="number"
-                                defaultValue="100"
-                                step="10"
-                                className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-4 py-3 text-white"
-                            />
-                        </div>
-
-                        <button className="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-semibold py-3 rounded-lg transition-colors">
-                            Save Settings
-                        </button>
+                        <a
+                            href="/learning"
+                            className="block mt-4 text-center bg-purple-500/20 text-purple-400 border border-purple-500/30 py-2 rounded-lg hover:bg-purple-500/30 transition-colors"
+                        >
+                            View Learning Progress →
+                        </a>
                     </div>
                 </motion.div>
 

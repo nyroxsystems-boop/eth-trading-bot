@@ -68,42 +68,53 @@ export default function MLMonitorView() {
 
     const fetchData = async () => {
         try {
-            // Fetch ML status
-            const statusRes = await fetch(`${API_URL}/api/ml/status`)
-            const statusData = await statusRes.json()
-            setModels(statusData.models || {})
+            // Fetch all data in parallel for better performance
+            const [statusRes, progressRes, liveRes, dqnRes, predRes, featRes] = await Promise.allSettled([
+                fetch(`${API_URL}/api/ml/status`),
+                fetch(`${API_URL}/api/ml/training-progress`),
+                fetch(`${API_URL}/api/ml/dqn/live`),
+                fetch(`${API_URL}/api/ml/dqn/info`),
+                fetch(`${API_URL}/api/ml/dqn/predict`),
+                fetch(`${API_URL}/api/ml/feature-importance`)
+            ])
 
-            // Fetch training progress
-            const progressRes = await fetch(`${API_URL}/api/ml/training-progress`)
-            const progressData = await progressRes.json()
-            setTrainingActive(progressData.training_active)
-            setTrainingProcesses(progressData.processes || [])
+            // Process results gracefully - don't fail if one endpoint fails
+            if (statusRes.status === 'fulfilled' && statusRes.value.ok) {
+                const data = await statusRes.value.json()
+                setModels(data.models || {})
+            }
 
-            // Fetch live DQN training data
-            const liveRes = await fetch(`${API_URL}/api/ml/dqn/live`)
-            const liveData = await liveRes.json()
-            setLiveTraining(liveData)
+            if (progressRes.status === 'fulfilled' && progressRes.value.ok) {
+                const data = await progressRes.value.json()
+                setTrainingActive(data.training_active)
+                setTrainingProcesses(data.processes || [])
+            }
 
-            // Fetch DQN info
-            const dqnRes = await fetch(`${API_URL}/api/ml/dqn/info`)
-            const dqnData = await dqnRes.json()
-            setDqnInfo(dqnData)
+            if (liveRes.status === 'fulfilled' && liveRes.value.ok) {
+                const data = await liveRes.value.json()
+                setLiveTraining(data)
+            }
 
-            // Fetch DQN prediction
-            const predRes = await fetch(`${API_URL}/api/ml/dqn/predict`)
-            const predData = await predRes.json()
-            setDqnPrediction(predData)
+            if (dqnRes.status === 'fulfilled' && dqnRes.value.ok) {
+                const data = await dqnRes.value.json()
+                setDqnInfo(data)
+            }
 
-            // Fetch feature importance
-            const featRes = await fetch(`${API_URL}/api/ml/feature-importance`)
-            const featData = await featRes.json()
-            if (featData.status === 'success') {
-                setFeatures(featData.features || [])
+            if (predRes.status === 'fulfilled' && predRes.value.ok) {
+                const data = await predRes.value.json()
+                setDqnPrediction(data)
+            }
+
+            if (featRes.status === 'fulfilled' && featRes.value.ok) {
+                const data = await featRes.value.json()
+                if (data.status === 'success') {
+                    setFeatures(data.features || [])
+                }
             }
 
             setLastRefresh(new Date())
         } catch (err) {
-            console.error('Failed to fetch ML data:', err)
+            // Silent failure - don't spam console
         } finally {
             setLoading(false)
         }
@@ -111,7 +122,7 @@ export default function MLMonitorView() {
 
     useEffect(() => {
         fetchData()
-        const interval = setInterval(fetchData, 5000) // Faster refresh for live data
+        const interval = setInterval(fetchData, 30000) // Refresh every 30 seconds to reduce load
         return () => clearInterval(interval)
     }, [])
 
