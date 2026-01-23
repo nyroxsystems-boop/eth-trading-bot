@@ -2932,6 +2932,36 @@ async def get_dqn_live_training():
         return {"status": "error", "message": str(e)}
 
 
+# In-memory cache for synced training data (from local machines)
+_synced_training_data = {}
+
+@app.post("/api/ml/training-sync")
+async def sync_training_data(data: dict):
+    """Receive training progress from local machines and cache it"""
+    global _synced_training_data
+    try:
+        source = data.get("source", "unknown")
+        _synced_training_data[source] = {
+            "timestamp": data.get("timestamp", datetime.now().isoformat()),
+            "training_active": data.get("training_active", False),
+            "dqn_status": data.get("dqn_status"),
+            "model_info": data.get("model_info"),
+            "received_at": datetime.now().isoformat()
+        }
+        return {"status": "success", "message": f"Training data synced from {source}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/ml/training-sync")
+async def get_synced_training():
+    """Get all synced training data from external sources"""
+    return {
+        "status": "success",
+        "sources": _synced_training_data
+    }
+
+
 @app.get("/api/ml/ensemble/signal")
 async def get_ensemble_signal():
     """Get ensemble prediction combining DQN + GB + LSTM"""
