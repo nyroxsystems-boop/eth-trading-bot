@@ -43,7 +43,7 @@ class TestTradingWorkflow:
         
         signal = strategy.calculate_entry_signal(current_row, previous_row, regime)
         
-        assert 0 <= signal.score <= 2.0  # Score can exceed 1.0 with boosts
+        assert -1.0 <= signal.score <= 2.0  # Score can be negative with bearish boosts
         assert 0 <= signal.ml_prob <= 1.0
         
         # Check entry decision
