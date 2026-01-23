@@ -39,13 +39,7 @@ interface Strategy {
     applied: boolean
 }
 
-interface TrainingEpoch {
-    epoch: number
-    loss: number
-    accuracy: number
-    valLoss: number
-    valAccuracy: number
-}
+// TrainingEpoch interface removed - using live API data now
 
 interface ModelInfo {
     name: string
@@ -64,41 +58,44 @@ const LearningView = () => {
     const [strategies, setStrategies] = useState<Strategy[]>([])
     const [, setLoading] = useState(true)
     const [activeTab, setActiveTab] = useState<'overview' | 'training' | 'models' | 'logs'>('overview')
-    const [trainingActive, setTrainingActive] = useState(true)
+    const [trainingActive, setTrainingActive] = useState(false)
 
-    // Mock training history data
-    const [trainingHistory] = useState<TrainingEpoch[]>([
-        { epoch: 1, loss: 0.85, accuracy: 0.52, valLoss: 0.88, valAccuracy: 0.50 },
-        { epoch: 2, loss: 0.72, accuracy: 0.58, valLoss: 0.76, valAccuracy: 0.55 },
-        { epoch: 3, loss: 0.61, accuracy: 0.64, valLoss: 0.68, valAccuracy: 0.60 },
-        { epoch: 4, loss: 0.52, accuracy: 0.69, valLoss: 0.58, valAccuracy: 0.65 },
-        { epoch: 5, loss: 0.45, accuracy: 0.73, valLoss: 0.51, valAccuracy: 0.68 },
-        { epoch: 6, loss: 0.39, accuracy: 0.76, valLoss: 0.46, valAccuracy: 0.71 },
-        { epoch: 7, loss: 0.35, accuracy: 0.78, valLoss: 0.42, valAccuracy: 0.73 },
-        { epoch: 8, loss: 0.32, accuracy: 0.80, valLoss: 0.39, valAccuracy: 0.75 },
+    // Live training data from API
+    const [trainingData, setTrainingData] = useState<{
+        episode: number
+        total_episodes: number
+        progress_pct: number
+        reward: number
+        best_reward: number
+        roi: number
+        best_roi: number
+        win_rate: number
+        trades: number
+        portfolio_value: number
+        model: string
+        architecture: string
+        elapsed_seconds: number
+    } | null>(null)
+
+    // Live logs from training
+    const [logs, setLogs] = useState<{ time: string, level: string, message: string }[]>([
+        { time: new Date().toLocaleTimeString(), level: 'info', message: 'Waiting for training data...' }
     ])
 
-    const [models] = useState<ModelInfo[]>([
-        { name: 'DQN Agent', type: 'Reinforcement Learning', accuracy: 68.5, lastTrained: '2h ago', samples: 15247, version: 'v2.3.1' },
-        { name: 'Gradient Booster', type: 'Ensemble', accuracy: 72.3, lastTrained: '4h ago', samples: 28391, version: 'v1.8.0' },
-        { name: 'LSTM Predictor', type: 'Deep Learning', accuracy: 65.8, lastTrained: '1d ago', samples: 45000, version: 'v1.2.4' },
-        { name: 'Sentiment Analyzer', type: 'NLP', accuracy: 78.2, lastTrained: '6h ago', samples: 12500, version: 'v3.0.2' },
-    ])
-
-    const [logs] = useState([
-        { time: '17:14:32', level: 'info', message: 'Strategy optimization cycle completed - tested 4 variants' },
-        { time: '17:14:28', level: 'info', message: 'Evaluating strategy with ML threshold 0.65, Risk 0.8%' },
-        { time: '17:14:15', level: 'success', message: 'Model checkpoint saved: DQN_v2.3.1_checkpoint.pt' },
-        { time: '17:13:52', level: 'info', message: 'Training batch 847/1000 - Loss: 0.3218, Accuracy: 79.4%' },
-        { time: '17:13:41', level: 'warning', message: 'Strategy score -26.82 below threshold, not applied' },
-        { time: '17:13:21', level: 'info', message: 'Fetching latest market data for training...' },
-        { time: '17:12:58', level: 'success', message: 'LSTM model updated with 500 new samples' },
-        { time: '17:12:34', level: 'info', message: 'Running backt on historical data (30 days)' },
+    const [models, setModels] = useState<ModelInfo[]>([
+        { name: 'Enhanced DQN', type: 'Dueling DQN + Attention + LSTM', accuracy: 0, lastTrained: 'Loading...', samples: 0, version: 'v3.0.0' },
+        { name: 'Gradient Booster', type: 'XGBoost Ensemble', accuracy: 0, lastTrained: 'Loading...', samples: 0, version: 'v2.0.0' },
+        { name: 'LSTM Predictor', type: 'Deep Learning', accuracy: 0, lastTrained: 'Loading...', samples: 0, version: 'v1.2.4' },
+        { name: 'Sentiment Analyzer', type: 'NLP', accuracy: 0, lastTrained: 'Loading...', samples: 0, version: 'v3.0.2' },
     ])
 
     useEffect(() => {
         fetchLearningData()
-        const interval = setInterval(fetchLearningData, 30000)
+        fetchTrainingProgress()
+        const interval = setInterval(() => {
+            fetchLearningData()
+            fetchTrainingProgress()
+        }, 5000) // Update every 5 seconds
         return () => clearInterval(interval)
     }, [])
 
@@ -113,27 +110,66 @@ const LearningView = () => {
                 setStats(data.stats || stats)
                 setStrategies(data.strategies || [])
             } else {
-                // Generate mock data
-                setStats({
-                    total_tested: 156 + Math.floor(Math.random() * 10),
-                    best_score: -2.23,
-                    total_applied: 3,
-                    today_tested: 42,
-                    this_hour_tested: 4
-                })
                 setStrategies(generateMockStrategies())
             }
         } catch {
-            setStats({
-                total_tested: 156,
-                best_score: -2.23,
-                total_applied: 3,
-                today_tested: 42,
-                this_hour_tested: 4
-            })
             setStrategies(generateMockStrategies())
         } finally {
             setLoading(false)
+        }
+    }
+
+    const fetchTrainingProgress = async () => {
+        try {
+            // Try training-progress endpoint first
+            const res = await fetch(`${API_URL}/api/ml/training-progress`)
+            if (res.ok) {
+                const data = await res.json()
+                if (data.training_active && data.episode) {
+                    setTrainingActive(true)
+                    setTrainingData({
+                        episode: data.episode || 0,
+                        total_episodes: data.total_episodes || 500,
+                        progress_pct: data.progress_pct || 0,
+                        reward: data.current_reward || 0,
+                        best_reward: data.best_reward || 0,
+                        roi: data.roi || 0,
+                        best_roi: data.best_roi || 0,
+                        win_rate: data.win_rate || 0,
+                        trades: data.trades || 0,
+                        portfolio_value: data.portfolio_value || 0,
+                        model: data.model || 'Enhanced DQN',
+                        architecture: data.architecture || 'Unknown',
+                        elapsed_seconds: data.elapsed_seconds || 0
+                    })
+
+                    // Add to logs
+                    const newLog = {
+                        time: new Date().toLocaleTimeString(),
+                        level: 'success',
+                        message: `Episode ${data.episode}/${data.total_episodes} - ROI: ${data.roi?.toFixed(1)}% - WinRate: ${data.win_rate?.toFixed(0)}%`
+                    }
+                    setLogs(prev => [newLog, ...prev.slice(0, 19)])
+
+                    // Update models with live data
+                    if (data.episode > 0) {
+                        setModels(prev => prev.map((m, i) =>
+                            i === 0 ? {
+                                ...m,
+                                name: data.model || 'Enhanced DQN',
+                                type: data.architecture || 'Dueling DQN + Attention + LSTM',
+                                accuracy: data.win_rate || 0,
+                                samples: data.trades || 0,
+                                lastTrained: 'Training now...'
+                            } : m
+                        ))
+                    }
+                } else {
+                    setTrainingActive(false)
+                }
+            }
+        } catch (e) {
+            console.log('Training progress fetch error:', e)
         }
     }
 
@@ -337,46 +373,49 @@ const LearningView = () => {
                                 </div>
                             </div>
 
-                            {/* Learning Progress Chart */}
+                            {/* Live Training Progress */}
                             <div className="glass-card" style={{ padding: '24px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
                                     <Activity size={20} color="var(--primary-cyan)" />
-                                    <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>Training Progress</h3>
+                                    <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>Live Training Progress</h3>
                                 </div>
-                                <div style={{ height: '300px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    {trainingHistory.map((epoch, i) => (
-                                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                            <span style={{ width: '60px', fontSize: '12px', color: 'var(--text-muted)' }}>Epoch {epoch.epoch}</span>
-                                            <div style={{ flex: 1, height: '24px', background: 'var(--bg-tertiary)', borderRadius: '6px', overflow: 'hidden', position: 'relative' }}>
-                                                <div style={{
-                                                    position: 'absolute',
-                                                    left: 0,
-                                                    top: 0,
-                                                    height: '100%',
-                                                    width: `${epoch.accuracy * 100}%`,
-                                                    background: 'linear-gradient(90deg, var(--primary-purple), var(--primary-cyan))',
-                                                    borderRadius: '6px',
-                                                    transition: 'width 0.3s'
-                                                }} />
-                                                <span style={{
-                                                    position: 'absolute',
-                                                    right: '8px',
-                                                    top: '50%',
-                                                    transform: 'translateY(-50%)',
-                                                    fontSize: '11px',
-                                                    fontWeight: 600,
-                                                    color: 'white',
-                                                    textShadow: '0 1px 2px rgba(0,0,0,0.5)'
-                                                }}>
-                                                    {(epoch.accuracy * 100).toFixed(1)}%
-                                                </span>
+                                {trainingData ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+                                            <div style={{ padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
+                                                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Episode</div>
+                                                <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--primary-cyan)' }}>{trainingData.episode} / {trainingData.total_episodes}</div>
                                             </div>
-                                            <span style={{ width: '70px', fontSize: '11px', color: epoch.loss < 0.4 ? 'var(--success)' : 'var(--text-muted)' }}>
-                                                Loss: {epoch.loss.toFixed(3)}
-                                            </span>
+                                            <div style={{ padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
+                                                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>ROI</div>
+                                                <div style={{ fontSize: '18px', fontWeight: 700, color: trainingData.roi > 0 ? 'var(--success)' : 'var(--error)' }}>{trainingData.roi > 0 ? '+' : ''}{trainingData.roi.toFixed(1)}%</div>
+                                            </div>
+                                            <div style={{ padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
+                                                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Best ROI</div>
+                                                <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--success)' }}>+{trainingData.best_roi.toFixed(1)}%</div>
+                                            </div>
+                                            <div style={{ padding: '12px', background: 'var(--bg-tertiary)', borderRadius: '8px' }}>
+                                                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Win Rate</div>
+                                                <div style={{ fontSize: '18px', fontWeight: 700, color: trainingData.win_rate > 50 ? 'var(--success)' : 'var(--warning)' }}>{trainingData.win_rate.toFixed(0)}%</div>
+                                            </div>
                                         </div>
-                                    ))}
-                                </div>
+                                        <div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                                                <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Progress</span>
+                                                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>{trainingData.progress_pct.toFixed(1)}%</span>
+                                            </div>
+                                            <div style={{ height: '10px', background: 'var(--bg-tertiary)', borderRadius: '5px', overflow: 'hidden' }}>
+                                                <div style={{ width: `${trainingData.progress_pct}%`, height: '100%', background: 'linear-gradient(90deg, var(--primary-purple), var(--primary-cyan))', borderRadius: '5px', transition: 'width 0.5s' }} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                                        <Activity size={40} style={{ marginBottom: '12px', opacity: 0.3 }} />
+                                        <p>No active training session</p>
+                                        <p style={{ fontSize: '12px' }}>Start training to see live progress</p>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
@@ -387,26 +426,34 @@ const LearningView = () => {
                             {/* Current Training Session */}
                             <div className="glass-card" style={{ padding: '24px' }}>
                                 <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: 'var(--success)', animation: 'pulse 2s infinite' }} />
+                                    <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: trainingData ? 'var(--success)' : 'var(--text-muted)', animation: trainingData ? 'pulse 2s infinite' : 'none' }} />
                                     Current Training Session
                                 </h3>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                                    <InfoBox label="Model" value="DQN Agent v2.3.1" />
-                                    <InfoBox label="Batch Size" value="64" />
-                                    <InfoBox label="Learning Rate" value="0.0001" />
-                                    <InfoBox label="Epochs" value="847 / 1000" />
-                                    <InfoBox label="Current Loss" value="0.3218" positive />
-                                    <InfoBox label="Current Accuracy" value="79.4%" positive />
-                                </div>
-                                <div style={{ marginTop: '20px' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                                        <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Training Progress</span>
-                                        <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600 }}>84.7%</span>
+                                {trainingData ? (
+                                    <>
+                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                            <InfoBox label="Model" value={trainingData.model} />
+                                            <InfoBox label="Architecture" value={trainingData.architecture.split(' ')[0]} />
+                                            <InfoBox label="Episode" value={`${trainingData.episode} / ${trainingData.total_episodes}`} />
+                                            <InfoBox label="Trades" value={trainingData.trades.toLocaleString()} />
+                                            <InfoBox label="Current ROI" value={`${trainingData.roi > 0 ? '+' : ''}${trainingData.roi.toFixed(1)}%`} positive={trainingData.roi > 0} />
+                                            <InfoBox label="Win Rate" value={`${trainingData.win_rate.toFixed(1)}%`} positive={trainingData.win_rate > 50} />
+                                        </div>
+                                        <div style={{ marginTop: '20px' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                                                <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Training Progress</span>
+                                                <span style={{ fontSize: '13px', color: 'var(--text-primary)', fontWeight: 600 }}>{trainingData.progress_pct.toFixed(1)}%</span>
+                                            </div>
+                                            <div style={{ height: '8px', background: 'var(--bg-tertiary)', borderRadius: '4px', overflow: 'hidden' }}>
+                                                <div style={{ width: `${trainingData.progress_pct}%`, height: '100%', background: 'linear-gradient(90deg, var(--primary-purple), var(--success))', borderRadius: '4px', transition: 'width 0.5s' }} />
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)' }}>
+                                        <p>No active training session</p>
                                     </div>
-                                    <div style={{ height: '8px', background: 'var(--bg-tertiary)', borderRadius: '4px', overflow: 'hidden' }}>
-                                        <div style={{ width: '84.7%', height: '100%', background: 'linear-gradient(90deg, var(--primary-purple), var(--success))', borderRadius: '4px' }} />
-                                    </div>
-                                </div>
+                                )}
                             </div>
 
                             {/* Hyperparameters */}
