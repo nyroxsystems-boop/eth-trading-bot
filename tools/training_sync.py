@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Training Data Sync - Push local training metrics to Railway Dashboard
-Runs as a background service to keep dashboard updated with local training progress
+Enhanced Training Sync Service
+Syncs local DQN training progress to Railway dashboard in real-time.
 """
 
 import os
+import sys
 import json
 import time
 import requests
@@ -12,98 +13,115 @@ from pathlib import Path
 from datetime import datetime
 
 # Configuration
-RAILWAY_API_URL = os.getenv("RAILWAY_API_URL", "https://web-production-d57ac.up.railway.app")
-SYNC_INTERVAL_SECONDS = 30
-LOG_DIR = Path(os.getenv("LOG_DIR", "./logs"))
+RAILWAY_URL = os.getenv("RAILWAY_DASHBOARD_URL", "https://eth-trading-bot-production.up.railway.app")
+SYNC_ENDPOINT = f"{RAILWAY_URL}/api/ml/training-sync"
+PROGRESS_FILE = Path(__file__).parent.parent / "logs" / "dqn_training_live.json"
+SYNC_INTERVAL = 10  # seconds (faster updates)
 
-def load_training_status():
-    """Load current training status from local files"""
-    status = {
-        "training_active": False,
-        "dqn_status": None,
-        "model_info": None,
-        "last_sync": datetime.now().isoformat()
-    }
+def load_training_progress() -> dict:
+    """Load latest training progress from local file"""
+    if not PROGRESS_FILE.exists():
+        return None
     
-    # Check DQN training live status
-    dqn_live_file = LOG_DIR / "dqn_training_live.json"
-    if dqn_live_file.exists():
-        try:
-            with open(dqn_live_file, "r") as f:
-                dqn_data = json.load(f)
-                status["dqn_status"] = dqn_data
-                
-                # Check if training is recent (within last 5 minutes)
-                timestamp = datetime.fromisoformat(dqn_data.get("timestamp", "2020-01-01"))
-                age_seconds = (datetime.now() - timestamp).total_seconds()
-                status["training_active"] = age_seconds < 300
-        except Exception as e:
-            print(f"Error loading DQN status: {e}")
-    
-    # Check for trained model
-    model_file = LOG_DIR / "dqn_agent.pt"
-    if model_file.exists():
-        stat = model_file.stat()
-        status["model_info"] = {
-            "file": str(model_file),
-            "size_kb": round(stat.st_size / 1024, 1),
-            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
-        }
-    
-    return status
-
-def sync_to_dashboard(status: dict):
-    """Push training status to Railway dashboard API"""
     try:
-        # Create a summary for the API
-        payload = {
-            "source": "local_mac",
-            "timestamp": datetime.now().isoformat(),
-            "training_active": status.get("training_active", False),
-            "dqn_status": status.get("dqn_status"),
-            "model_info": status.get("model_info")
-        }
+        with open(PROGRESS_FILE, 'r') as f:
+            data = json.load(f)
         
-        # The dashboard API endpoint for training updates
+        # Add computed fields for dashboard
+        data["status"] = "training" if data.get("progress_pct", 0) < 100 else "completed"
+        data["model_type"] = "enhanced_dqn"
+        data["architecture"] = "Dueling DQN + Attention + LSTM"
+        
+        return data
+    except Exception as e:
+        print(f"Error loading progress: {e}")
+        return None
+
+def sync_to_dashboard(data: dict) -> bool:
+    """Send training data to Railway dashboard"""
+    try:
         response = requests.post(
-            f"{RAILWAY_API_URL}/api/ml/training-sync",
-            json=payload,
+            SYNC_ENDPOINT,
+            json=data,
+            headers={"Content-Type": "application/json"},
             timeout=10
         )
-        
-        if response.status_code == 200:
-            print(f"✅ Synced to dashboard: {payload.get('dqn_status', {}).get('progress_pct', 0):.0f}% complete")
-            return True
-        else:
-            # Fallback: just log locally if endpoint doesn't exist
-            print(f"ℹ️ Dashboard sync endpoint not available (status {response.status_code})")
-            return False
-            
-    except requests.exceptions.RequestException as e:
-        print(f"⚠️ Sync failed (will retry): {e}")
+        return response.status_code == 200
+    except Exception as e:
+        print(f"Sync error: {e}")
         return False
 
-def run_sync_loop():
-    """Main sync loop"""
-    print(f"🔄 Training Sync started - pushing to {RAILWAY_API_URL}")
-    print(f"   Sync interval: {SYNC_INTERVAL_SECONDS}s")
+def format_time(seconds: int) -> str:
+    """Format seconds to human readable"""
+    if seconds < 60:
+        return f"{seconds}s"
+    elif seconds < 3600:
+        return f"{seconds // 60}m {seconds % 60}s"
+    else:
+        return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
+
+def main():
+    """Main sync loop with rich output"""
+    print("=" * 60)
+    print("🧠 Enhanced DQN Training Sync Service")
+    print("=" * 60)
+    print(f"   Dashboard: {RAILWAY_URL}")
+    print(f"   Interval:  {SYNC_INTERVAL}s")
+    print(f"   Source:    {PROGRESS_FILE}")
+    print("=" * 60)
+    
+    last_episode = 0
+    sync_count = 0
     
     while True:
         try:
-            status = load_training_status()
+            progress = load_training_progress()
             
-            if status.get("training_active"):
-                dqn = status.get("dqn_status", {})
-                print(f"📊 Training: Episode {dqn.get('episode', '?')}/{dqn.get('total_episodes', '?')} | "
-                      f"ROI: {dqn.get('roi', 0):.1f}% | Portfolio: ${dqn.get('portfolio_value', 0):,.2f}")
-                sync_to_dashboard(status)
-            else:
-                print(f"💤 No active training detected...")
+            if progress:
+                current_episode = progress.get("episode", 0)
+                total_episodes = progress.get("total_episodes", 500)
                 
+                # Sync every update
+                if current_episode != last_episode or sync_count == 0:
+                    success = sync_to_dashboard(progress)
+                    sync_count += 1
+                    
+                    # Rich progress bar
+                    percent = progress.get("progress_pct", 0)
+                    bar_len = 20
+                    filled = int(bar_len * percent / 100)
+                    bar = "█" * filled + "░" * (bar_len - filled)
+                    
+                    elapsed = format_time(progress.get("elapsed_seconds", 0))
+                    
+                    status_icon = "✅" if success else "❌"
+                    
+                    print(f"\r{status_icon} [{bar}] {percent:.1f}% | "
+                          f"Ep {current_episode}/{total_episodes} | "
+                          f"ROI: {progress.get('roi', 0):+.1f}% | "
+                          f"Best: {progress.get('best_roi', 0):+.1f}% | "
+                          f"WR: {progress.get('win_rate', 0):.0f}% | "
+                          f"Time: {elapsed}", end="", flush=True)
+                    
+                    if current_episode == total_episodes:
+                        print("\n\n🎉 Training Complete!")
+                        print(f"   Best ROI: {progress.get('best_roi', 0):.1f}%")
+                        print(f"   Best Reward: {progress.get('best_reward', 0):.1f}")
+                        print(f"   Total Time: {elapsed}")
+                        break
+                    
+                    last_episode = current_episode
+            else:
+                print(f"\r⏳ Waiting for training to start...", end="", flush=True)
+            
+            time.sleep(SYNC_INTERVAL)
+            
+        except KeyboardInterrupt:
+            print("\n\n👋 Sync service stopped")
+            break
         except Exception as e:
-            print(f"❌ Sync loop error: {e}")
-        
-        time.sleep(SYNC_INTERVAL_SECONDS)
+            print(f"\n⚠️ Error: {e}")
+            time.sleep(SYNC_INTERVAL)
 
 if __name__ == "__main__":
-    run_sync_loop()
+    main()
