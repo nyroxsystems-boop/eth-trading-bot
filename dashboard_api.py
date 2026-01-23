@@ -2857,7 +2857,32 @@ async def get_feature_importance():
 
 @app.get("/api/ml/training-progress")
 async def get_training_progress():
-    """Check if any ML training is in progress"""
+    """Check ML training status - includes synced data from local machines"""
+    global _synced_training_data
+    
+    # First check if we have synced training data from local machine
+    if _synced_training_data and _synced_training_data.get("episode", 0) > 0:
+        return {
+            "training_active": True,
+            "source": "synced_local",
+            "model": _synced_training_data.get("model_type", "enhanced_dqn"),
+            "architecture": _synced_training_data.get("architecture", "Unknown"),
+            "episode": _synced_training_data.get("episode", 0),
+            "total_episodes": _synced_training_data.get("total_episodes", 500),
+            "progress_pct": _synced_training_data.get("progress_pct", 0),
+            "current_reward": _synced_training_data.get("reward", 0),
+            "best_reward": _synced_training_data.get("best_reward", 0),
+            "roi": _synced_training_data.get("roi", 0),
+            "best_roi": _synced_training_data.get("best_roi", 0),
+            "win_rate": _synced_training_data.get("win_rate", 0),
+            "trades": _synced_training_data.get("trades", 0),
+            "portfolio_value": _synced_training_data.get("portfolio_value", 0),
+            "elapsed_seconds": _synced_training_data.get("elapsed_seconds", 0),
+            "last_update": _synced_training_data.get("received_at", ""),
+            "processes": []
+        }
+    
+    # Fallback: check for local processes
     try:
         import subprocess
         
@@ -2865,7 +2890,7 @@ async def get_training_progress():
             ['ps', 'aux'],
             capture_output=True,
             text=True,
-            timeout=5  # Add timeout
+            timeout=5
         )
         
         training_processes = []
@@ -2880,11 +2905,11 @@ async def get_training_progress():
                         "memory": parts[3],
                         "time": parts[9]
                     })
-            elif 'continuous_backtester' in line:
+            elif 'train_enhanced_dqn' in line:
                 parts = line.split()
                 if len(parts) >= 11:
                     training_processes.append({
-                        "type": "Backtester",
+                        "type": "Enhanced DQN",
                         "pid": parts[1],
                         "cpu": parts[2],
                         "memory": parts[3],
@@ -2893,14 +2918,16 @@ async def get_training_progress():
         
         return {
             "training_active": len(training_processes) > 0,
+            "source": "local_process",
             "processes": training_processes
         }
     except Exception:
-        # Return safe defaults if subprocess fails (e.g., on Railway)
         return {
             "training_active": False,
+            "source": "none",
             "processes": []
         }
+
 
 
 @app.get("/api/ml/dqn/live")
@@ -2940,25 +2967,49 @@ async def sync_training_data(data: dict):
     """Receive training progress from local machines and cache it"""
     global _synced_training_data
     try:
-        source = data.get("source", "unknown")
-        _synced_training_data[source] = {
+        # Store all the training data directly
+        _synced_training_data = {
             "timestamp": data.get("timestamp", datetime.now().isoformat()),
-            "training_active": data.get("training_active", False),
-            "dqn_status": data.get("dqn_status"),
-            "model_info": data.get("model_info"),
+            "episode": data.get("episode", 0),
+            "total_episodes": data.get("total_episodes", 500),
+            "progress_pct": data.get("progress_pct", 0),
+            "reward": data.get("reward", 0),
+            "avg_reward_10": data.get("avg_reward_10", 0),
+            "best_reward": data.get("best_reward", 0),
+            "roi": data.get("roi", 0),
+            "best_roi": data.get("best_roi", 0),
+            "portfolio_value": data.get("portfolio_value", 0),
+            "trades": data.get("trades", 0),
+            "wins": data.get("wins", 0),
+            "losses": data.get("losses", 0),
+            "win_rate": data.get("win_rate", 0),
+            "training_steps": data.get("training_steps", 0),
+            "memory_size": data.get("memory_size", 0),
+            "elapsed_seconds": data.get("elapsed_seconds", 0),
+            "status": data.get("status", "training"),
+            "model_type": data.get("model_type", "enhanced_dqn"),
+            "architecture": data.get("architecture", "Dueling DQN + Attention + LSTM"),
             "received_at": datetime.now().isoformat()
         }
-        return {"status": "success", "message": f"Training data synced from {source}"}
+        return {"status": "success", "message": f"Training data synced: Episode {data.get('episode', 0)}"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 
 @app.get("/api/ml/training-sync")
 async def get_synced_training():
-    """Get all synced training data from external sources"""
+    """Get synced training data from local machine"""
+    if not _synced_training_data:
+        return {
+            "status": "success",
+            "training_active": False,
+            "message": "No training data synced yet"
+        }
+    
     return {
         "status": "success",
-        "sources": _synced_training_data
+        "training_active": True,
+        **_synced_training_data
     }
 
 
