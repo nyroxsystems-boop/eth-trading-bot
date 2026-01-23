@@ -59,6 +59,8 @@ const LearningView = () => {
     const [, setLoading] = useState(true)
     const [activeTab, setActiveTab] = useState<'overview' | 'training' | 'models' | 'logs'>('overview')
     const [trainingActive, setTrainingActive] = useState(false)
+    const [isRefreshing, setIsRefreshing] = useState(false)
+    const [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null)
 
     // Live training data from API
     const [trainingData, setTrainingData] = useState<{
@@ -88,6 +90,13 @@ const LearningView = () => {
         { name: 'LSTM Predictor', type: 'Deep Learning', accuracy: 0, lastTrained: 'Loading...', samples: 0, version: 'v1.2.4' },
         { name: 'Sentiment Analyzer', type: 'NLP', accuracy: 0, lastTrained: 'Loading...', samples: 0, version: 'v3.0.2' },
     ])
+
+    // Manual refresh function that fetches all data
+    const handleRefresh = async () => {
+        setIsRefreshing(true)
+        await Promise.all([fetchLearningData(), fetchTrainingProgress()])
+        setIsRefreshing(false)
+    }
 
     useEffect(() => {
         fetchLearningData()
@@ -221,8 +230,7 @@ const LearningView = () => {
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <button
-                        onClick={() => setTrainingActive(!trainingActive)}
+                    <div
                         style={{
                             display: 'flex',
                             alignItems: 'center',
@@ -236,23 +244,24 @@ const LearningView = () => {
                             color: trainingActive ? 'var(--success)' : 'var(--error)',
                             fontSize: '14px',
                             fontWeight: 600,
-                            cursor: 'pointer'
                         }}
                     >
-                        {trainingActive ? <><Play size={18} /> Training Active</> : <><Pause size={18} /> Training Paused</>}
-                    </button>
+                        {trainingActive ? <><Play size={18} /> Training Active</> : <><Pause size={18} /> No Training</>}
+                    </div>
                     <button
-                        onClick={fetchLearningData}
+                        onClick={handleRefresh}
+                        disabled={isRefreshing}
                         style={{
                             padding: '12px',
                             background: 'var(--glass-bg)',
                             border: '1px solid var(--glass-border)',
                             borderRadius: '12px',
                             color: 'var(--text-secondary)',
-                            cursor: 'pointer'
+                            cursor: isRefreshing ? 'not-allowed' : 'pointer',
+                            opacity: isRefreshing ? 0.6 : 1
                         }}
                     >
-                        <RefreshCw size={18} />
+                        <RefreshCw size={18} style={{ animation: isRefreshing ? 'spin 1s linear infinite' : 'none' }} />
                     </button>
                 </div>
             </div>
@@ -534,21 +543,23 @@ const LearningView = () => {
                                             <div style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)' }}>{model.lastTrained}</div>
                                         </div>
                                     </div>
-                                    <button style={{
-                                        marginTop: '16px',
-                                        width: '100%',
-                                        padding: '10px',
-                                        background: 'var(--bg-tertiary)',
-                                        border: '1px solid var(--glass-border)',
-                                        borderRadius: '8px',
-                                        color: 'var(--text-secondary)',
-                                        fontSize: '13px',
-                                        cursor: 'pointer',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        gap: '8px'
-                                    }}>
+                                    <button
+                                        onClick={() => setSelectedModel(model)}
+                                        style={{
+                                            marginTop: '16px',
+                                            width: '100%',
+                                            padding: '10px',
+                                            background: 'var(--bg-tertiary)',
+                                            border: '1px solid var(--glass-border)',
+                                            borderRadius: '8px',
+                                            color: 'var(--text-secondary)',
+                                            fontSize: '13px',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '8px'
+                                        }}>
                                         View Details <ChevronRight size={14} />
                                     </button>
                                 </div>
@@ -607,6 +618,89 @@ const LearningView = () => {
                     )}
                 </motion.div>
             </AnimatePresence>
+
+            {/* Model Details Modal */}
+            {selectedModel && (
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        background: 'rgba(0, 0, 0, 0.7)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 1000
+                    }}
+                    onClick={() => setSelectedModel(null)}
+                >
+                    <motion.div
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="glass-card"
+                        style={{
+                            padding: '32px',
+                            maxWidth: '500px',
+                            width: '90%',
+                            maxHeight: '80vh',
+                            overflowY: 'auto'
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+                            <div>
+                                <h2 style={{ fontSize: '24px', fontWeight: 700, marginBottom: '4px' }}>{selectedModel.name}</h2>
+                                <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>{selectedModel.type}</span>
+                            </div>
+                            <button
+                                onClick={() => setSelectedModel(null)}
+                                style={{
+                                    background: 'var(--bg-tertiary)',
+                                    border: '1px solid var(--glass-border)',
+                                    borderRadius: '8px',
+                                    padding: '8px 12px',
+                                    color: 'var(--text-secondary)',
+                                    cursor: 'pointer',
+                                    fontSize: '14px'
+                                }}
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                            <div style={{ padding: '16px', background: 'var(--bg-tertiary)', borderRadius: '12px' }}>
+                                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>Accuracy</div>
+                                <div style={{ fontSize: '28px', fontWeight: 700, color: selectedModel.accuracy > 70 ? 'var(--success)' : 'var(--warning)' }}>{selectedModel.accuracy}%</div>
+                            </div>
+                            <div style={{ padding: '16px', background: 'var(--bg-tertiary)', borderRadius: '12px' }}>
+                                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>Training Samples</div>
+                                <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--primary-cyan)' }}>{selectedModel.samples.toLocaleString()}</div>
+                            </div>
+                        </div>
+
+                        <div style={{ borderTop: '1px solid var(--glass-border)', paddingTop: '20px' }}>
+                            <h4 style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '12px' }}>Model Information</h4>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span style={{ color: 'var(--text-muted)' }}>Version</span>
+                                    <span style={{ fontWeight: 600, color: 'var(--primary-cyan)' }}>{selectedModel.version}</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span style={{ color: 'var(--text-muted)' }}>Last Trained</span>
+                                    <span style={{ fontWeight: 600 }}>{selectedModel.lastTrained}</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span style={{ color: 'var(--text-muted)' }}>Model Type</span>
+                                    <span style={{ fontWeight: 600 }}>{selectedModel.type}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </motion.div>
+                </div>
+            )}
         </motion.div>
     )
 }
