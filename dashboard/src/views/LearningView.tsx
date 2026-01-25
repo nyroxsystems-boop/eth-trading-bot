@@ -126,6 +126,19 @@ const LearningView = () => {
         } finally {
             setLoading(false)
         }
+
+        // Also fetch models status
+        try {
+            const modelsRes = await fetch(`${API_URL}/api/ml/models/status`)
+            if (modelsRes.ok) {
+                const modelsData = await modelsRes.json()
+                if (modelsData.models && modelsData.models.length > 0) {
+                    setModels(modelsData.models)
+                }
+            }
+        } catch (e) {
+            console.log('Models status fetch error:', e)
+        }
     }
 
     const fetchTrainingProgress = async () => {
