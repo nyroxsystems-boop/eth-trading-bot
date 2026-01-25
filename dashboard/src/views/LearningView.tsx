@@ -27,12 +27,21 @@ interface Strategy {
         stop_floor: number
         max_trades_per_day: number
     }
-    results: {
+    // Support both 'results' (old format) and 'metrics' (new format)
+    results?: {
         total_trades: number
         win_rate: number
         roi: number
         sharpe_ratio: number
         max_drawdown: number
+    }
+    metrics?: {
+        total_trades: number
+        win_rate: number
+        roi: number
+        sharpe_ratio: number
+        max_drawdown: number
+        score?: number
     }
     score: number
     timestamp: string
@@ -376,10 +385,10 @@ const LearningView = () => {
                                                         {strat.score.toFixed(2)}
                                                     </td>
                                                     <td style={{ padding: '12px', textAlign: 'right', color: 'var(--text-primary)' }}>
-                                                        {strat.results.win_rate.toFixed(1)}%
+                                                        {((strat.metrics || strat.results)?.win_rate ?? 0).toFixed(1)}%
                                                     </td>
-                                                    <td style={{ padding: '12px', textAlign: 'right', color: strat.results.roi > 0 ? 'var(--success)' : 'var(--error)' }}>
-                                                        {strat.results.roi > 0 ? '+' : ''}{strat.results.roi.toFixed(2)}%
+                                                    <td style={{ padding: '12px', textAlign: 'right', color: ((strat.metrics || strat.results)?.roi ?? 0) > 0 ? 'var(--success)' : 'var(--error)' }}>
+                                                        {((strat.metrics || strat.results)?.roi ?? 0) > 0 ? '+' : ''}{((strat.metrics || strat.results)?.roi ?? 0).toFixed(2)}%
                                                     </td>
                                                     <td style={{ padding: '12px', textAlign: 'center' }}>
                                                         {strat.applied ? (
