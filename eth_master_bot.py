@@ -369,10 +369,12 @@ def now_date():
 # ------------------ DATA ------------------
 # Proxy support for Binance API (rate limit bypass)
 try:
-    from src.utils.proxy_session import get_binance_proxies
+    from src.utils.proxy_session import get_binance_proxies, get_ssl_verify
     _binance_proxies = get_binance_proxies()
+    _ssl_verify = get_ssl_verify()
 except ImportError:
     _binance_proxies = None
+    _ssl_verify = True
 
 def fetch_klines(interval=INTERVAL, lookback=LOOKBACK, start_ts=None, end_ts=None) -> pd.DataFrame:
     base = "https://api.binance.com/api/v3/klines"
@@ -387,7 +389,7 @@ def fetch_klines(interval=INTERVAL, lookback=LOOKBACK, start_ts=None, end_ts=Non
         bar_len_min = 1
         elapsed_min = 0.0
         # -----------------------------------
-        r = requests.get(base, params=params, timeout=10, proxies=_binance_proxies)
+        r = requests.get(base, params=params, timeout=10, proxies=_binance_proxies, verify=_ssl_verify)
         r.raise_for_status()
         data = r.json()
         if not data: break
