@@ -2081,7 +2081,31 @@ async def get_trading_mode():
 # ==================== ACCOUNT MANAGEMENT ====================
 from account_manager import AccountManager
 
+# Load .env.bot before account seeding to get BINANCE_API_KEY/SECRET
+try:
+    from dotenv import load_dotenv
+    _env_file = Path(__file__).parent / ".env.bot"
+    if _env_file.exists():
+        load_dotenv(_env_file)
+        print(f"📁 Loaded environment from .env.bot")
+except ImportError:
+    print("⚠️ python-dotenv not installed, skipping .env.bot loading")
+
 account_mgr = AccountManager()
+
+# Auto-seed account from BINANCE_API_KEY/SECRET env vars on startup
+print("🔑 Checking for Binance API credentials from environment...")
+# Check both possible env var names for the secret
+_api_key = os.getenv("BINANCE_API_KEY", "")
+_api_secret = os.getenv("BINANCE_API_SECRET", "") or os.getenv("BINANCE_SECRET_KEY", "")
+if _api_key and _api_secret:
+    # Temporarily set the expected env var name for migrate_legacy_account
+    os.environ["BINANCE_API_SECRET"] = _api_secret
+_seeded_account = account_mgr.migrate_legacy_account()
+if _seeded_account:
+    print(f"✅ Auto-seeded account from env vars (ID: {_seeded_account})")
+else:
+    print("ℹ️ No BINANCE_API_KEY/SECRET found in env, or account already exists")
 
 class AccountCreate(BaseModel):
     name: str
@@ -3280,9 +3304,12 @@ async def start_training(model: str = "all", episodes: int = 500):
                     orchestrator.train_dqn(episodes=episodes)
                 
                 _synced_training_data["status"] = "completed"
+                _synced_training_data["progress_pct"] = 100
                 
             except Exception as e:
                 print(f"Training error: {e}")
+                import traceback
+                traceback.print_exc()
                 _synced_training_data = {
                     "status": "error",
                     "message": str(e),
@@ -3291,8 +3318,33 @@ async def start_training(model: str = "all", episodes: int = 500):
             finally:
                 _training_active = False
         
+        # Progress poller thread - reads from file written by TrainingOrchestrator
+        def poll_progress():
+            global _synced_training_data
+            import json
+            progress_file = Path(os.getenv("LOG_DIR", "./logs")) / "training_orchestrator.json"
+            
+            while _training_active:
+                try:
+                    if progress_file.exists():
+                        with open(progress_file, "r") as f:
+                            data = json.load(f)
+                        # Update synced data with real progress
+                        _synced_training_data = {
+                            **_synced_training_data,
+                            **data,
+                            "status": "training",
+                            "received_at": datetime.now().isoformat()
+                        }
+                except Exception:
+                    pass
+                import time
+                time.sleep(2)  # Poll every 2 seconds
+        
         training_thread = threading.Thread(target=run_training, daemon=True)
+        progress_thread = threading.Thread(target=poll_progress, daemon=True)
         training_thread.start()
+        progress_thread.start()
         
         return {
             "status": "started",
@@ -3505,7 +3557,19 @@ async def get_correlation_analysis():
         adjustments = analyzer.get_trading_adjustment(regime)
         divergences = await analyzer.get_divergence_signals()
         
-        return {
+        import math
+        
+        def sanitize_floats(obj):
+            """Replace NaN/Inf with 0 to prevent JSON serialization errors"""
+            if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+                return 0.0
+            elif isinstance(obj, dict):
+                return {k: sanitize_floats(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [sanitize_floats(v) for v in obj]
+            return obj
+        
+        return sanitize_floats({
             "status": "success",
             "regime": {
                 "type": regime.regime_type,
@@ -3516,7 +3580,7 @@ async def get_correlation_analysis():
             "trading_adjustments": adjustments,
             "divergence_signals": divergences,
             "timestamp": regime.timestamp
-        }
+        })
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

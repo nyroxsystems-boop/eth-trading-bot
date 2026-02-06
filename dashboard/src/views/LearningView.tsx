@@ -236,16 +236,25 @@ const LearningView = () => {
                     }
                     setLogs(prev => [newLog, ...prev.slice(0, 19)])
 
-                    // Update models with live data
-                    if (data.episode > 0) {
+                    // Update models with live data ONLY if we have meaningful training data
+                    // Don't overwrite existing API accuracy values with zeros
+                    if (data.episode > 0 && data.win_rate > 0) {
                         setModels(prev => prev.map((m, i) =>
                             i === 0 ? {
                                 ...m,
                                 name: data.model || 'Enhanced DQN',
                                 type: data.architecture || 'Dueling DQN + Attention + LSTM',
-                                accuracy: data.win_rate || 0,
-                                samples: data.trades || 0,
+                                accuracy: data.win_rate,  // Only set when >0
+                                samples: data.trades || m.samples,  // Preserve existing if 0
                                 lastTrained: 'Training now...'
+                            } : m
+                        ))
+                    } else if (data.episode > 0) {
+                        // Training active but no win_rate yet - just update lastTrained
+                        setModels(prev => prev.map((m, i) =>
+                            i === 0 ? {
+                                ...m,
+                                lastTrained: 'Training läuft...'
                             } : m
                         ))
                     }
