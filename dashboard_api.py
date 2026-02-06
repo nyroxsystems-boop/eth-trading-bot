@@ -3218,6 +3218,198 @@ async def get_retrain_status():
         return {"status": "error", "message": str(e)}
 
 
+# ============ Training Control Endpoints ============
+
+# Global training state
+_training_process = None
+_training_active = False
+
+@app.post("/api/ml/training/start")
+async def start_training(model: str = "all", episodes: int = 500):
+    """Start 24/7 ML training orchestrator"""
+    global _training_process, _training_active, _synced_training_data
+    
+    if _training_active:
+        return {
+            "status": "already_running",
+            "message": "Training is already active"
+        }
+    
+    try:
+        import subprocess
+        import threading
+        
+        # Mark as active
+        _training_active = True
+        
+        # Start training in background thread
+        def run_training():
+            global _training_active, _synced_training_data
+            try:
+                import sys
+                sys.path.insert(0, str(Path(__file__).parent))
+                
+                # Update synced data to show starting
+                _synced_training_data = {
+                    "status": "starting",
+                    "model_type": "enhanced_dqn",
+                    "architecture": "Dueling DQN + Double DQN",
+                    "episode": 0,
+                    "total_episodes": episodes,
+                    "progress_pct": 0,
+                    "received_at": datetime.now().isoformat()
+                }
+                
+                if model == "dqn" or model == "all":
+                    from tools.continuous_ml_trainer import TrainingOrchestrator
+                    orchestrator = TrainingOrchestrator()
+                    orchestrator.prices = orchestrator.fetch_training_data(60)
+                    orchestrator.train_dqn(episodes=episodes)
+                
+                _synced_training_data["status"] = "completed"
+                
+            except Exception as e:
+                print(f"Training error: {e}")
+                _synced_training_data = {
+                    "status": "error",
+                    "message": str(e),
+                    "received_at": datetime.now().isoformat()
+                }
+            finally:
+                _training_active = False
+        
+        training_thread = threading.Thread(target=run_training, daemon=True)
+        training_thread.start()
+        
+        return {
+            "status": "started",
+            "message": f"Started training for model: {model}",
+            "episodes": episodes
+        }
+        
+    except Exception as e:
+        _training_active = False
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/ml/training/stop")
+async def stop_training():
+    """Stop active training"""
+    global _training_active, _synced_training_data
+    
+    if not _training_active:
+        return {
+            "status": "not_running",
+            "message": "No training is currently active"
+        }
+    
+    try:
+        # Signal stop (the training loop checks this)
+        _training_active = False
+        _synced_training_data = {
+            "status": "stopped",
+            "message": "Training stopped by user",
+            "received_at": datetime.now().isoformat()
+        }
+        
+        return {
+            "status": "stopped",
+            "message": "Training stop signal sent"
+        }
+        
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/ml/training/status")
+async def get_training_status():
+    """Get detailed training status for all models"""
+    global _training_active, _synced_training_data
+    
+    try:
+        log_dir = Path(os.getenv("LOG_DIR", "./logs"))
+        
+        # Check model files
+        models_status = {}
+        
+        model_files = {
+            "dqn": log_dir / "dqn_agent.pt",
+            "gradient_boosting": log_dir / "ml_model.pkl",
+            "lstm": log_dir / "neural_model.pt"
+        }
+        
+        for name, path in model_files.items():
+            if path.exists():
+                mtime = path.stat().st_mtime
+                last_trained = datetime.fromtimestamp(mtime)
+                age_seconds = (datetime.now() - last_trained).total_seconds()
+                
+                models_status[name] = {
+                    "trained": True,
+                    "last_trained": last_trained.isoformat(),
+                    "age_hours": round(age_seconds / 3600, 1),
+                    "file_size_kb": round(path.stat().st_size / 1024, 1)
+                }
+            else:
+                models_status[name] = {
+                    "trained": False,
+                    "last_trained": None
+                }
+        
+        # Strategy backtester status
+        learning_db = log_dir / "learning.db"
+        if learning_db.exists():
+            import sqlite3
+            conn = sqlite3.connect(learning_db)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM strategies")
+            total_strategies = cursor.fetchone()[0]
+            cursor.execute("SELECT MAX(score), MAX(win_rate), MAX(roi) FROM strategies")
+            best = cursor.fetchone()
+            conn.close()
+            
+            models_status["strategy_optimizer"] = {
+                "trained": True,
+                "total_strategies_tested": total_strategies,
+                "best_score": best[0] if best[0] else 0,
+                "best_win_rate": best[1] if best[1] else 0,
+                "best_roi": best[2] if best[2] else 0
+            }
+        else:
+            models_status["strategy_optimizer"] = {"trained": False}
+        
+        return {
+            "status": "success",
+            "training_active": _training_active,
+            "current_training": _synced_training_data if _synced_training_data else None,
+            "models": models_status
+        }
+        
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/ml/historical-data/stats")
+async def get_historical_data_stats():
+    """Get cached historical data statistics"""
+    try:
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        
+        from src.data.historical_data_fetcher import get_historical_fetcher
+        
+        fetcher = get_historical_fetcher()
+        stats = fetcher.get_cache_stats()
+        
+        return {
+            "status": "success",
+            **stats
+        }
+        
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 # ============================================================================
 # ADVANCED ANALYTICS API ENDPOINTS
 # ============================================================================

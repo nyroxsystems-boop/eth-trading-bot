@@ -70,6 +70,60 @@ const LearningView = () => {
     const [trainingActive, setTrainingActive] = useState(false)
     const [isRefreshing, setIsRefreshing] = useState(false)
     const [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null)
+    const [isStartingTraining, setIsStartingTraining] = useState(false)
+
+    // Start training function
+    const startTraining = async () => {
+        setIsStartingTraining(true)
+        try {
+            const token = localStorage.getItem('token')
+            const res = await fetch(`${API_URL}/api/ml/training/start`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ model: 'all', episodes: 500 })
+            })
+            const data = await res.json()
+            if (data.status === 'started') {
+                setTrainingActive(true)
+                setLogs(prev => [{
+                    time: new Date().toLocaleTimeString(),
+                    level: 'success',
+                    message: '🚀 Training started!'
+                }, ...prev.slice(0, 19)])
+            }
+        } catch (e) {
+            console.error('Failed to start training:', e)
+            setLogs(prev => [{
+                time: new Date().toLocaleTimeString(),
+                level: 'warning',
+                message: 'Failed to start training'
+            }, ...prev.slice(0, 19)])
+        } finally {
+            setIsStartingTraining(false)
+        }
+    }
+
+    // Stop training function
+    const stopTraining = async () => {
+        try {
+            const token = localStorage.getItem('token')
+            await fetch(`${API_URL}/api/ml/training/stop`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` }
+            })
+            setTrainingActive(false)
+            setLogs(prev => [{
+                time: new Date().toLocaleTimeString(),
+                level: 'info',
+                message: '⏹️ Training stopped by user'
+            }, ...prev.slice(0, 19)])
+        } catch (e) {
+            console.error('Failed to stop training:', e)
+        }
+    }
 
     // Live training data from API
     const [trainingData, setTrainingData] = useState<{
@@ -252,7 +306,9 @@ const LearningView = () => {
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    <div
+                    <button
+                        onClick={trainingActive ? stopTraining : startTraining}
+                        disabled={isStartingTraining}
                         style={{
                             display: 'flex',
                             alignItems: 'center',
@@ -260,16 +316,25 @@ const LearningView = () => {
                             padding: '12px 20px',
                             background: trainingActive
                                 ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(6, 182, 212, 0.2))'
-                                : 'rgba(239, 68, 68, 0.2)',
-                            border: `1px solid ${trainingActive ? 'var(--success)' : 'var(--error)'}`,
+                                : 'linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(6, 182, 212, 0.3))',
+                            border: `1px solid ${trainingActive ? 'var(--success)' : 'var(--primary-purple)'}`,
                             borderRadius: '12px',
-                            color: trainingActive ? 'var(--success)' : 'var(--error)',
+                            color: trainingActive ? 'var(--success)' : 'var(--text-primary)',
                             fontSize: '14px',
                             fontWeight: 600,
+                            cursor: isStartingTraining ? 'not-allowed' : 'pointer',
+                            opacity: isStartingTraining ? 0.7 : 1,
+                            transition: 'all 0.3s ease'
                         }}
                     >
-                        {trainingActive ? <><Play size={18} /> Training Active</> : <><Pause size={18} /> No Training</>}
-                    </div>
+                        {isStartingTraining ? (
+                            <>Starting...</>
+                        ) : trainingActive ? (
+                            <><Pause size={18} /> Stop Training</>
+                        ) : (
+                            <><Play size={18} /> Start Training</>
+                        )}
+                    </button>
                     <button
                         onClick={handleRefresh}
                         disabled={isRefreshing}
@@ -642,88 +707,90 @@ const LearningView = () => {
             </AnimatePresence>
 
             {/* Model Details Modal */}
-            {selectedModel && (
-                <div
-                    style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        background: 'rgba(0, 0, 0, 0.7)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        zIndex: 1000
-                    }}
-                    onClick={() => setSelectedModel(null)}
-                >
-                    <motion.div
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        className="glass-card"
+            {
+                selectedModel && (
+                    <div
                         style={{
-                            padding: '32px',
-                            maxWidth: '500px',
-                            width: '90%',
-                            maxHeight: '80vh',
-                            overflowY: 'auto'
+                            position: 'fixed',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            background: 'rgba(0, 0, 0, 0.7)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            zIndex: 1000
                         }}
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={() => setSelectedModel(null)}
                     >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
-                            <div>
-                                <h2 style={{ fontSize: '24px', fontWeight: 700, marginBottom: '4px' }}>{selectedModel.name}</h2>
-                                <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>{selectedModel.type}</span>
+                        <motion.div
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            className="glass-card"
+                            style={{
+                                padding: '32px',
+                                maxWidth: '500px',
+                                width: '90%',
+                                maxHeight: '80vh',
+                                overflowY: 'auto'
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+                                <div>
+                                    <h2 style={{ fontSize: '24px', fontWeight: 700, marginBottom: '4px' }}>{selectedModel.name}</h2>
+                                    <span style={{ fontSize: '14px', color: 'var(--text-muted)' }}>{selectedModel.type}</span>
+                                </div>
+                                <button
+                                    onClick={() => setSelectedModel(null)}
+                                    style={{
+                                        background: 'var(--bg-tertiary)',
+                                        border: '1px solid var(--glass-border)',
+                                        borderRadius: '8px',
+                                        padding: '8px 12px',
+                                        color: 'var(--text-secondary)',
+                                        cursor: 'pointer',
+                                        fontSize: '14px'
+                                    }}
+                                >
+                                    ✕
+                                </button>
                             </div>
-                            <button
-                                onClick={() => setSelectedModel(null)}
-                                style={{
-                                    background: 'var(--bg-tertiary)',
-                                    border: '1px solid var(--glass-border)',
-                                    borderRadius: '8px',
-                                    padding: '8px 12px',
-                                    color: 'var(--text-secondary)',
-                                    cursor: 'pointer',
-                                    fontSize: '14px'
-                                }}
-                            >
-                                ✕
-                            </button>
-                        </div>
 
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '24px' }}>
-                            <div style={{ padding: '16px', background: 'var(--bg-tertiary)', borderRadius: '12px' }}>
-                                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>Accuracy</div>
-                                <div style={{ fontSize: '28px', fontWeight: 700, color: selectedModel.accuracy > 70 ? 'var(--success)' : 'var(--warning)' }}>{selectedModel.accuracy}%</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                                <div style={{ padding: '16px', background: 'var(--bg-tertiary)', borderRadius: '12px' }}>
+                                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>Accuracy</div>
+                                    <div style={{ fontSize: '28px', fontWeight: 700, color: selectedModel.accuracy > 70 ? 'var(--success)' : 'var(--warning)' }}>{selectedModel.accuracy}%</div>
+                                </div>
+                                <div style={{ padding: '16px', background: 'var(--bg-tertiary)', borderRadius: '12px' }}>
+                                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>Training Samples</div>
+                                    <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--primary-cyan)' }}>{selectedModel.samples.toLocaleString()}</div>
+                                </div>
                             </div>
-                            <div style={{ padding: '16px', background: 'var(--bg-tertiary)', borderRadius: '12px' }}>
-                                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>Training Samples</div>
-                                <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--primary-cyan)' }}>{selectedModel.samples.toLocaleString()}</div>
-                            </div>
-                        </div>
 
-                        <div style={{ borderTop: '1px solid var(--glass-border)', paddingTop: '20px' }}>
-                            <h4 style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '12px' }}>Model Information</h4>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                    <span style={{ color: 'var(--text-muted)' }}>Version</span>
-                                    <span style={{ fontWeight: 600, color: 'var(--primary-cyan)' }}>{selectedModel.version}</span>
-                                </div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                    <span style={{ color: 'var(--text-muted)' }}>Last Trained</span>
-                                    <span style={{ fontWeight: 600 }}>{selectedModel.lastTrained}</span>
-                                </div>
-                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                    <span style={{ color: 'var(--text-muted)' }}>Model Type</span>
-                                    <span style={{ fontWeight: 600 }}>{selectedModel.type}</span>
+                            <div style={{ borderTop: '1px solid var(--glass-border)', paddingTop: '20px' }}>
+                                <h4 style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '12px' }}>Model Information</h4>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ color: 'var(--text-muted)' }}>Version</span>
+                                        <span style={{ fontWeight: 600, color: 'var(--primary-cyan)' }}>{selectedModel.version}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ color: 'var(--text-muted)' }}>Last Trained</span>
+                                        <span style={{ fontWeight: 600 }}>{selectedModel.lastTrained}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ color: 'var(--text-muted)' }}>Model Type</span>
+                                        <span style={{ fontWeight: 600 }}>{selectedModel.type}</span>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    </motion.div>
-                </div>
-            )}
-        </motion.div>
+                        </motion.div>
+                    </div>
+                )
+            }
+        </motion.div >
     )
 }
 

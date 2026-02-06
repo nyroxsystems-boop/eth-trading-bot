@@ -14,6 +14,7 @@ import aiohttp
 # Configuration
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY", "")
 
 
@@ -167,7 +168,9 @@ Please respond in JSON format with these fields:
 Focus on factors that would affect ETH price in the next 1-24 hours."""
 
         try:
-            if self.provider == "anthropic" and ANTHROPIC_API_KEY:
+            if self.provider == "gemini" and GEMINI_API_KEY:
+                result = await self._call_gemini(prompt)
+            elif self.provider == "anthropic" and ANTHROPIC_API_KEY:
                 result = await self._call_anthropic(prompt)
             elif self.provider == "openai" and OPENAI_API_KEY:
                 result = await self._call_openai(prompt)
@@ -182,6 +185,48 @@ Focus on factors that would affect ETH price in the next 1-24 hours."""
         except Exception as e:
             print(f"❌ LLM Analysis error: {e}")
             return self._rule_based_analysis(headlines)
+    
+    async def _call_gemini(self, prompt: str) -> SentimentResult:
+        """Call Gemini API for sentiment analysis"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+                
+                payload = {
+                    "contents": [
+                        {"parts": [{"text": prompt}]}
+                    ],
+                    "generationConfig": {
+                        "temperature": 0.3,
+                        "maxOutputTokens": 500
+                    }
+                }
+                
+                async with session.post(url, json=payload) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        content = data["candidates"][0]["content"]["parts"][0]["text"]
+                        
+                        # Parse JSON from response
+                        json_start = content.find("{")
+                        json_end = content.rfind("}") + 1
+                        if json_start >= 0 and json_end > json_start:
+                            result_data = json.loads(content[json_start:json_end])
+                            
+                            return SentimentResult(
+                                score=float(result_data.get("score", 0)),
+                                confidence=float(result_data.get("confidence", 0.5)),
+                                summary=result_data.get("summary", ""),
+                                key_topics=result_data.get("key_topics", []),
+                                source="gemini",
+                                timestamp=datetime.now().isoformat()
+                            )
+                    
+                    raise Exception(f"Gemini API error: {response.status}")
+                    
+        except Exception as e:
+            print(f"❌ Gemini API error: {e}")
+            raise
     
     async def _call_anthropic(self, prompt: str) -> SentimentResult:
         """Call Claude API for sentiment analysis"""
@@ -359,8 +404,13 @@ def get_sentiment_analyzer() -> LLMSentimentAnalyzer:
     """Get or create sentiment analyzer instance"""
     global _sentiment_analyzer
     if _sentiment_analyzer is None:
-        # Prefer Anthropic, fallback to OpenAI
-        provider = "anthropic" if ANTHROPIC_API_KEY else "openai"
+        # Prefer Gemini, fallback to Anthropic, then OpenAI
+        if GEMINI_API_KEY:
+            provider = "gemini"
+        elif ANTHROPIC_API_KEY:
+            provider = "anthropic"
+        else:
+            provider = "openai"
         _sentiment_analyzer = LLMSentimentAnalyzer(provider=provider)
     return _sentiment_analyzer
 
