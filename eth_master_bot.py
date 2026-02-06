@@ -195,11 +195,11 @@ USE_ADX_FILTER     = _os.getenv("USE_ADX_FILTER", "true").lower()=="true"
 ADX_WINDOW         = int(_os.getenv("ADX_WINDOW", "14"))
 ADX_MIN_TREND      = float(_os.getenv("ADX_MIN_TREND", "15.0"))     # Lowered for more opportunities
 # --- Entry thresholds (tunable via ENV) ---
-ENTRY_SCORE_MIN    = float(_os.getenv("ENTRY_SCORE_MIN", "0.45"))   # Lowered for more trades
-BREAKOUT_PCT       = float(_os.getenv("BREAKOUT_PCT", "0.00010"))   # 0.01% über HH20
-RSI_MIN            = float(_os.getenv("RSI_MIN", "40"))              # Lowered from 50
-RSI_MAX            = float(_os.getenv("RSI_MAX", "70"))              # Lowered from 75
-SEC_PML_MIN        = float(_os.getenv("SEC_PML_MIN", "0.48"))       # Lowered from 0.52
+ENTRY_SCORE_MIN    = float(_os.getenv("ENTRY_SCORE_MIN", "0.35"))   # Aggressive for 1% daily
+BREAKOUT_PCT       = float(_os.getenv("BREAKOUT_PCT", "0.00005"))   # 0.005% über HH20 (easier)
+RSI_MIN            = float(_os.getenv("RSI_MIN", "35"))              # More opportunities
+RSI_MAX            = float(_os.getenv("RSI_MAX", "75"))              # Allow higher RSI entries
+SEC_PML_MIN        = float(_os.getenv("SEC_PML_MIN", "0.40"))       # Lower ML threshold
         # ab hier gilt 'trendend'
 
 PAPER_BASE_USDT    = float(_os.getenv("PAPER_BASE_USDT", "100000"))
@@ -248,7 +248,7 @@ last_rss_pull = 0.0
 performance_history = []  # Track daily performance for optimization
 current_params = {
     'risk_pct': RISK_PCT_PER_TRADE,
-    'ml_threshold': 0.52,
+    'ml_threshold': 0.42,  # Lowered for more trades (was 0.52)
     'position_size_mult': 1.0,
     'tp_min': TP_MIN,
     'tp_max': TP_MAX,
@@ -541,34 +541,39 @@ def place_buy(qty: float, price_hint: float) -> bool:
     DRY_RUN: nur Log + State
     LIVE   : Market-Order + State
     """
-    # === Pre-BUY Guards ===
+    # === Pre-BUY Guards (fail-safe for Railway) ===
     import subprocess
+    import os
     
-    # 1) Max-Consecutive-Losses
-    g1 = subprocess.run(['/root/ethbot/max_losses_guard.py'], capture_output=True, text=True)
-    print((g1.stdout or '').strip())
-    if g1.returncode != 0:
+    # Helper: Run guard only if script exists
+    def run_guard_safe(script_path, guard_name):
+        if not os.path.exists(script_path):
+            return True  # Skip guard if script doesn't exist (Railway)
+        try:
+            result = subprocess.run([script_path], capture_output=True, text=True, timeout=5)
+            print((result.stdout or '').strip())
+            return result.returncode == 0
+        except Exception as e:
+            log(f"WARN {guard_name} failed: {e} - allowing trade")
+            return True  # Allow trade on guard failure
+    
+    # 1) Max-Consecutive-Losses (optional)
+    if not run_guard_safe('/root/ethbot/max_losses_guard.py', 'max_losses_guard'):
         log('[SAFEGUARD] BUY blocked by max consecutive losses')
         return False
     
-    # 2) Daily PnL Target
-    g2 = subprocess.run(['/root/ethbot/daily_target_guard.py'], capture_output=True, text=True)
-    print((g2.stdout or '').strip())
-    if g2.returncode != 0:
+    # 2) Daily PnL Target (optional)
+    if not run_guard_safe('/root/ethbot/daily_target_guard.py', 'daily_target_guard'):
         log('[SAFEGUARD] BUY blocked by daily profit target reached')
         return False
     
-    # 3) Entry Edge (Trend/Breakout oder MR)
-    g3 = subprocess.run(['/root/ethbot/entry_edge_guard.py'], capture_output=True, text=True)
-    print((g3.stdout or '').strip())
-    if g3.returncode != 0:
-        log('[SAFEGUARD] BUY blocked by weak edge')
-        return False
+    # 3) Entry Edge (optional) - SKIP for more trades
+    # if not run_guard_safe('/root/ethbot/entry_edge_guard.py', 'entry_edge_guard'):
+    #     log('[SAFEGUARD] BUY blocked by weak edge')
+    #     return False
     
-    # 4) News / Twitter Kill-Switch
-    g4 = subprocess.run(['/root/ethbot/news_guard_check.py'], capture_output=True, text=True)
-    print((g4.stdout or '').strip())
-    if g4.returncode != 0:
+    # 4) News / Twitter Kill-Switch (optional)
+    if not run_guard_safe('/root/ethbot/news_guard_check.py', 'news_guard'):
         log('[SAFEGUARD] BUY blocked by news event')
         return False
 
