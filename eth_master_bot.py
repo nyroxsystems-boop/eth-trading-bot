@@ -372,6 +372,11 @@ try:
     from src.utils.proxy_session import get_binance_proxies, get_ssl_verify
     _binance_proxies = get_binance_proxies()
     _ssl_verify = get_ssl_verify()
+    # Suppress InsecureRequestWarning when using ScraperAPI proxy
+    if not _ssl_verify:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        print("Using proxy for Binance:", _binance_proxies.get("https", "")[:60] + "..." if _binance_proxies else "None")
 except ImportError:
     _binance_proxies = None
     _ssl_verify = True
