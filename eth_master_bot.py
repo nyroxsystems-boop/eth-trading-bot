@@ -803,9 +803,10 @@ def decide_and_trade():
     bb_lo = float(row["bb_lo"])
 
     regime = compute_regime(df_feat)
+    # CRITICAL FIX: Don't block trades on soft-warn, just log and continue
     if not (regime["trend_ok"] or regime["vol_ok"]):
-        log(f"INFO regime soft-warn (continuing) | adx={regime['adx']:.1f} trend_ok={regime['trend_ok']} vol_ok={regime['vol_ok']}")
-        return
+        log(f"INFO regime soft-warn (CONTINUING) | adx={regime['adx']:.1f} trend_ok={regime['trend_ok']} vol_ok={regime['vol_ok']}")
+        # Don't return! Continue with entry logic - previously blocked ALL trades
 
     prev         = df.iloc[-2]
     drawdown_ok  = is_drawdown_candle(prev)
