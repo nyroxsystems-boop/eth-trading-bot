@@ -33,7 +33,12 @@ class HistoricalDataFetcher:
     """
     
     def __init__(self):
-        self.session = requests.Session()
+        # Use proxy-enabled session for Binance API
+        try:
+            from src.utils.proxy_session import get_binance_session
+            self.session = get_binance_session()
+        except ImportError:
+            self.session = requests.Session()
         self._ensure_db()
     
     def _ensure_db(self):
