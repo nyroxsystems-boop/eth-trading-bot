@@ -787,6 +787,19 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ User seeding error (may already exist): {e}")
     
+    # AUTO-CREATE ACCOUNT FROM ENVIRONMENT VARIABLES
+    # This ensures the Accounts page shows the configured account
+    try:
+        from account_manager import AccountManager
+        account_mgr_startup = AccountManager()
+        result = account_mgr_startup.migrate_legacy_account()
+        if result:
+            print(f"✅ Auto-created/verified Default Account from env vars (ID: {result})")
+        else:
+            print("ℹ️ No BINANCE_API_KEY/SECRET in env - account must be added manually")
+    except Exception as e:
+        print(f"⚠️ Account auto-creation error: {e}")
+    
     # FORCE PAPER TRADING MODE ON STARTUP
     # This ensures users always start in paper mode for safety
     try:
