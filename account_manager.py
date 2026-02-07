@@ -16,20 +16,34 @@ from db_adapter import get_db_connection, USE_POSTGRES
 # Database path for encryption key
 LOG_DIR = Path(os.getenv("LOG_DIR", "./logs"))
 
-# Encryption key (derived from environment or generated)
+# Encryption key (from env var first, then file, then generate)
 def get_encryption_key():
     """Get or generate encryption key for API secrets"""
+    # Priority 1: Environment variable (for Railway/production)
+    env_key = os.getenv("ENCRYPTION_KEY")
+    if env_key:
+        # Make sure it's valid Fernet key
+        try:
+            key = env_key.encode() if isinstance(env_key, str) else env_key
+            Fernet(key)  # Validate
+            return key
+        except Exception:
+            print("⚠️ ENCRYPTION_KEY env var is invalid, falling back to file")
+    
+    # Priority 2: Key file
     key_file = LOG_DIR / ".encryption_key"
     if key_file.exists():
         with open(key_file, 'rb') as f:
             return f.read()
-    else:
-        # Generate new key
-        key = Fernet.generate_key()
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        with open(key_file, 'wb') as f:
-            f.write(key)
-        return key
+    
+    # Priority 3: Generate new key and save
+    key = Fernet.generate_key()
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(key_file, 'wb') as f:
+        f.write(key)
+    # Also print it so it can be set as env var
+    print(f"🔑 Generated new encryption key. Set as env var: ENCRYPTION_KEY={key.decode()}")
+    return key
 
 ENCRYPTION_KEY = get_encryption_key()
 cipher = Fernet(ENCRYPTION_KEY)
@@ -129,8 +143,13 @@ def encrypt_secret(secret: str) -> str:
 
 
 def decrypt_secret(encrypted: str) -> str:
-    """Decrypt API secret"""
-    return cipher.decrypt(encrypted.encode()).decode()
+    """Decrypt API secret, returns placeholder if key mismatch"""
+    try:
+        return cipher.decrypt(encrypted.encode()).decode()
+    except Exception:
+        # Key mismatch - return masked value instead of crashing
+        print(f"⚠️ Could not decrypt secret (key mismatch). Returning placeholder.")
+        return "ENCRYPTED_KEY_MISMATCH"
 
 
 class AccountManager:
@@ -444,11 +463,22 @@ class AccountManager:
     
     def migrate_legacy_account(self):
         """Migrate existing single-account setup to multi-account"""
-        # Check if default account already exists
-        existing = self.get_account_by_name("Default Account")
-        if existing:
-            print("✅ Default account already exists")
-            return existing["id"]
+        try:
+            # Check if default account already exists
+            existing = self.get_account_by_name("Default Account")
+            if existing:
+                # If the secret couldn't be decrypted, re-encrypt with current key
+                if existing.get("api_secret") == "ENCRYPTED_KEY_MISMATCH":
+                    print("🔄 Re-encrypting Default Account with current key...")
+                    api_key = os.getenv("BINANCE_API_KEY", "")
+                    api_secret = os.getenv("BINANCE_API_SECRET", "")
+                    if api_key and api_secret:
+                        self.update_account(existing["id"], api_key=api_key, api_secret=api_secret)
+                        print("✅ Re-encrypted Default Account successfully")
+                print("✅ Default account already exists")
+                return existing["id"]
+        except Exception as e:
+            print(f"⚠️ Error checking existing account: {e}")
         
         # Get credentials from environment
         api_key = os.getenv("BINANCE_API_KEY", "")
