@@ -195,7 +195,7 @@ USE_ADX_FILTER     = _os.getenv("USE_ADX_FILTER", "true").lower()=="true"
 ADX_WINDOW         = int(_os.getenv("ADX_WINDOW", "14"))
 ADX_MIN_TREND      = float(_os.getenv("ADX_MIN_TREND", "15.0"))     # Lowered for more opportunities
 # --- Entry thresholds (tunable via ENV) ---
-ENTRY_SCORE_MIN    = float(_os.getenv("ENTRY_SCORE_MIN", "0.35"))   # Aggressive for 1% daily
+ENTRY_SCORE_MIN    = float(_os.getenv("ENTRY_SCORE_MIN", "0.25"))   # Lowered — bot needs to actually trade
 BREAKOUT_PCT       = float(_os.getenv("BREAKOUT_PCT", "0.00005"))   # 0.005% über HH20 (easier)
 RSI_MIN            = float(_os.getenv("RSI_MIN", "35"))              # More opportunities
 RSI_MAX            = float(_os.getenv("RSI_MAX", "75"))              # Allow higher RSI entries
@@ -854,7 +854,7 @@ def decide_and_trade():
     )
 
     # ---------------- Oversold-Fast-Lane ----------------
-    os_min = float(_os.getenv("OS_ENTRY_SCORE_MIN", "0.32"))
+    os_min = float(_os.getenv("OS_ENTRY_SCORE_MIN", "0.20"))
     if not open_position and oversold_ok and entry_score >= os_min:
         sl_pct = max(STOP_FLOOR, STOP_ATR_MULT * (atr / max(px,1e-9)))
         eq = current_equity(px)
