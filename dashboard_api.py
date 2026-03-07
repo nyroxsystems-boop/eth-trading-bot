@@ -870,12 +870,18 @@ async def auto_learning_background():
                 hour_tested = 0
             
             # Refresh historical data every hour
-            if use_real_backtest and (datetime.now() - last_data_fetch).seconds > 3600:
+            # BUG FIX: .seconds only gives 0-59, use .total_seconds()
+            if use_real_backtest and (datetime.now() - last_data_fetch).total_seconds() > 3600:
                 print("📊 Fetching fresh historical data from Binance...")
-                historical_candles = fetch_historical_data(60)
-                if historical_candles:
-                    historical_candles = calculate_indicators(historical_candles)
-                    print(f"✅ Got {len(historical_candles)} candles with indicators")
+                try:
+                    historical_candles = fetch_historical_data(60)
+                    if historical_candles:
+                        historical_candles = calculate_indicators(historical_candles)
+                        print(f"✅ Got {len(historical_candles)} candles with indicators")
+                    else:
+                        print("⚠️ No candles returned, will retry next cycle")
+                except Exception as fetch_err:
+                    print(f"⚠️ Data fetch failed: {fetch_err} — will retry next cycle")
                 last_data_fetch = datetime.now()
             
             # Generate and test a single strategy
@@ -961,7 +967,9 @@ async def auto_learning_background():
             await asyncio.sleep(wait_time)
             
         except Exception as e:
+            import traceback
             print(f"❌ Auto-learning error: {e}")
+            traceback.print_exc()
             await asyncio.sleep(60)  # Wait 1 minute on error
 
 
@@ -1936,12 +1944,34 @@ async def get_learning_stats():
         strategies = load_strategies_json()
         current = load_current_strategy_json()
         
-        # Calculate stats
-        total_tested = len(strategies)
-        best_score = max([s.get("score", 0) for s in strategies]) if strategies else 0
-        total_applied = len([s for s in strategies if s.get("applied", False)])
+        # Stats from tested_strategies.json
+        json_total = len(strategies)
+        json_best = max([s.get("score", 0) for s in strategies]) if strategies else 0
+        json_applied = len([s for s in strategies if s.get("applied", False)])
         
-        # Today's tests (check timestamp)
+        # Also count from learning.db for full picture
+        db_total = 0
+        db_best = 0
+        try:
+            import sqlite3
+            learning_db = LEARNING_LOG_DIR / "learning.db"
+            if learning_db.exists():
+                conn = sqlite3.connect(learning_db)
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*), MAX(score) FROM strategies")
+                row = cursor.fetchone()
+                db_total = row[0] or 0
+                db_best = min(row[1] or 0, 500)  # Cap insane legacy scores
+                conn.close()
+        except Exception:
+            pass
+        
+        # Combined totals
+        total_tested = json_total + db_total
+        best_score = max(json_best, db_best)
+        total_applied = json_applied
+        
+        # Today's tests (check timestamp in JSON)
         today = datetime.now().date().isoformat()
         today_tested = len([s for s in strategies if s.get("timestamp", "").startswith(today)])
         

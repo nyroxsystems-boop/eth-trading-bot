@@ -211,7 +211,8 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
                 position["pnl"] = pnl_pct
                 position["win"] = True
                 trades.append(position)
-                equity *= (1 + pnl_pct * 0.95)  # 5% fee
+                # Only risk_pct of equity is in play, apply PnL on that portion
+                equity += equity * risk_pct * pnl_pct * 0.95  # 5% fee
                 position = None
             # Stop loss
             elif pnl_pct <= -stop_floor:
@@ -219,7 +220,8 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
                 position["pnl"] = pnl_pct
                 position["win"] = False
                 trades.append(position)
-                equity *= (1 + pnl_pct)
+                # Only risk_pct of equity is in play
+                equity += equity * risk_pct * pnl_pct
                 position = None
             
             # Update max drawdown
@@ -262,10 +264,11 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     std_pnl = (sum((p - avg_pnl) ** 2 for p in pnls) / len(pnls)) ** 0.5
     sharpe = (avg_pnl / std_pnl * (len(trades) ** 0.5)) if std_pnl > 0 else 0
     
-    # Composite score
+    # Composite score — cap ROI contribution to prevent runaway scores
+    capped_roi = max(-50, min(roi, 100))  # Cap ROI between -50% and 100%
     score = (
         win_rate * 0.3 +
-        roi * 2.0 +
+        capped_roi * 2.0 +
         sharpe * 10 -
         max_drawdown * 100 * 0.5
     )

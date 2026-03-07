@@ -203,7 +203,7 @@ SEC_PML_MIN        = float(_os.getenv("SEC_PML_MIN", "0.40"))       # Lower ML t
         # ab hier gilt 'trendend'
 
 PAPER_BASE_USDT    = float(_os.getenv("PAPER_BASE_USDT", "100000"))
-SLEEP_SECONDS      = int(_os.getenv("LOOP_SLEEP", "60"))
+SLEEP_SECONDS      = int(_os.getenv("LOOP_SLEEP", "300"))  # 5min default — saves ScraperAPI credits
 
 TG_TOKEN           = _os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT            = _os.getenv("TELEGRAM_CHAT_ID", "")
