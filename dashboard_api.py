@@ -2997,7 +2997,16 @@ async def get_training_progress():
             "processes": []
         }
     
-    # Fallback: check for local processes
+    # Fallback: if _training_active flag is set (from /start endpoint), trust it
+    if _training_active:
+        return {
+            "training_active": True,
+            "source": "server_flag",
+            "status": "running",
+            "processes": []
+        }
+    
+    # Last resort: check for local processes
     try:
         import subprocess
         
