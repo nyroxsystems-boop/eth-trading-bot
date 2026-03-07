@@ -255,6 +255,38 @@ current_params = {
 }
 last_optimization = 0.0  # Timestamp of last parameter adjustment
 
+# --- Adaptive Entry Threshold ---
+# Auto-adjusts ENTRY_SCORE_MIN based on trading activity
+_adaptive_entry_min = ENTRY_SCORE_MIN
+_last_trade_ts = time.time()
+_ENTRY_FLOOR = 0.15       # Never go below this
+_ENTRY_CEILING = 0.45     # Never go above this
+_NO_TRADE_DECAY_HOURS = 2 # Start lowering after 2h of no trades
+_DECAY_STEP = 0.02        # Lower by 0.02 each check
+
+def adapt_entry_threshold():
+    """
+    Auto-adjust entry threshold based on trading activity.
+    - No trades for 2h+: lower threshold (bot is too picky)
+    - Winning trades: slightly raise threshold (be more selective)
+    - Losing streak: lower threshold (need more data)
+    """
+    global _adaptive_entry_min, ENTRY_SCORE_MIN, _last_trade_ts
+    
+    hours_since_trade = (time.time() - _last_trade_ts) / 3600.0
+    
+    if hours_since_trade >= _NO_TRADE_DECAY_HOURS:
+        # No trades = threshold too high, lower it
+        old = _adaptive_entry_min
+        _adaptive_entry_min = max(_ENTRY_FLOOR, _adaptive_entry_min - _DECAY_STEP)
+        ENTRY_SCORE_MIN = _adaptive_entry_min
+        if old != _adaptive_entry_min:
+            log(f"ADAPT entry threshold lowered: {old:.2f} -> {_adaptive_entry_min:.2f} (no trades for {hours_since_trade:.1f}h)")
+    elif today_trades > 0 and loss_streak == 0:
+        # Winning = can afford to be pickier
+        _adaptive_entry_min = min(_ENTRY_CEILING, _adaptive_entry_min + 0.01)
+        ENTRY_SCORE_MIN = _adaptive_entry_min
+
 # ------------------ INIT ------------------
 def init_env():
     """Initialize environment & libraries safely."""
@@ -806,6 +838,9 @@ def decide_and_trade():
         return
 
     ml_online_update(df_feat)
+    
+    # Adaptive entry threshold: auto-lower if not trading
+    adapt_entry_threshold()
 
     row   = df_feat.iloc[-1]
     px    = float(row["close"])
@@ -864,6 +899,7 @@ def decide_and_trade():
                 open_position = __add_open_bar_time({"entry": px, "qty": qty, "atr": atr}, row)
                 today_trades += 1
                 bars_in_position = 0
+                _last_trade_ts = time.time()  # Reset adaptive threshold timer
                 tg(f"▶️ LONG {BASE_ASSET} (OS-FAST) @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | adx={regime['adx']:.1f} | rsi={rsi14:.1f}")
                 return
     # ----------------------------------------------------
@@ -914,6 +950,7 @@ def decide_and_trade():
             open_position = __add_open_bar_time({"entry": px, "qty": qty, "atr": atr}, row)
             today_trades += 1
             bars_in_position = 0
+            _last_trade_ts = time.time()  # Reset adaptive threshold timer
             tg(f"▶️ LONG {BASE_ASSET} @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | p_ml={p_ml:.2f} | adx={regime['adx']:.1f} | oversold={oversold_ok} sec={secondary_ok}")
     else:
         log(f"INFO no entry | score={entry_score:.2f} p_ml={p_ml:.2f} adx={regime['adx']:.1f} px={px:.2f} rsi={rsi14:.1f} brk={breakout_ok} sec={secondary_ok} tr={trend_ok} dd={drawdown_ok} os={oversold_ok}")
