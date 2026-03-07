@@ -259,7 +259,11 @@ const LearningView = () => {
                         ))
                     }
                 } else {
-                    setTrainingActive(false)
+                    // Only override button state from polling if we're confident
+                    // training is truly not active (not just starting up)
+                    if (!data.training_active && data.status !== 'starting') {
+                        setTrainingActive(false)
+                    }
                 }
             }
         } catch (e) {

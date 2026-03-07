@@ -917,10 +917,15 @@ async def auto_learning_background():
                 best = all_strategies[0]
                 
                 current = learning_store.get_current_strategy()
-                current_score = current.get("score", 0) if current else 0
+                current_score = current.get("score", 0) if current else float('-inf')
                 
-                # Apply if best is significantly better (5%+)
-                if best["score"] > current_score * 1.05 and best["score"] > 20:
+                # Apply if best is significantly better (5%+) or first strategy
+                # Threshold: score > 0 (must be at least break-even)
+                should_apply = (
+                    (current_score == float('-inf') and best["score"] > 0) or  # First strategy
+                    (best["score"] > current_score * 1.05 and best["score"] > 0)  # Better strategy
+                )
+                if should_apply:
                     best["applied"] = True
                     best["applied_at"] = datetime.now().isoformat()
                     learning_store.set_current_strategy(best)
@@ -2808,9 +2813,32 @@ async def get_feature_importance():
 @app.get("/api/ml/training-progress")
 async def get_training_progress():
     """Check ML training status - includes synced data from local machines"""
-    global _synced_training_data
+    global _synced_training_data, _training_active
     
-    # First check if we have synced training data from local machine
+    # If training is active but no episode data yet (startup phase), report starting
+    if _training_active and (not _synced_training_data or _synced_training_data.get("episode", 0) == 0):
+        return {
+            "training_active": True,
+            "source": "server",
+            "status": "starting",
+            "model": _synced_training_data.get("model_type", "enhanced_dqn") if _synced_training_data else "enhanced_dqn",
+            "architecture": "Initializing...",
+            "episode": 1,  # Report 1 so frontend shows progress
+            "total_episodes": _synced_training_data.get("total_episodes", 500) if _synced_training_data else 500,
+            "progress_pct": 0.1,
+            "current_reward": 0,
+            "best_reward": 0,
+            "roi": 0,
+            "best_roi": 0,
+            "win_rate": 0,
+            "trades": 0,
+            "portfolio_value": 10000,
+            "elapsed_seconds": 0,
+            "last_update": datetime.now().isoformat(),
+            "processes": []
+        }
+    
+    # Check synced training data with episode progress
     if _synced_training_data and _synced_training_data.get("episode", 0) > 0:
         return {
             "training_active": True,
@@ -3199,11 +3227,31 @@ async def start_training(model: str = "all", episodes: int = 500):
                     "received_at": datetime.now().isoformat()
                 }
                 
-                if model == "dqn" or model == "all":
-                    from tools.continuous_ml_trainer import TrainingOrchestrator
-                    orchestrator = TrainingOrchestrator()
-                    orchestrator.prices = orchestrator.fetch_training_data(60)
+                from tools.continuous_ml_trainer import TrainingOrchestrator
+                orchestrator = TrainingOrchestrator()
+                orchestrator.prices = orchestrator.fetch_training_data(60)
+                
+                if model == "all":
+                    # Train DQN first
                     orchestrator.train_dqn(episodes=episodes)
+                    
+                    # Then Gradient Boosting
+                    if _training_active:
+                        _synced_training_data["model_type"] = "gradient_boosting"
+                        _synced_training_data["architecture"] = "XGBoost Ensemble"
+                        _synced_training_data["episode"] = 0
+                        orchestrator.train_gradient_boosting()
+                    
+                    # Then Strategy Backtester
+                    if _training_active:
+                        _synced_training_data["model_type"] = "strategy_backtester"
+                        _synced_training_data["architecture"] = "Parameter Optimization"
+                        _synced_training_data["episode"] = 0
+                        orchestrator.train_strategy_backtester()
+                elif model == "dqn":
+                    orchestrator.train_dqn(episodes=episodes)
+                elif model == "gradient_boosting":
+                    orchestrator.train_gradient_boosting()
                 
                 _synced_training_data["status"] = "completed"
                 _synced_training_data["progress_pct"] = 100
