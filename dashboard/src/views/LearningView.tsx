@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
     Brain, TrendingUp, Target, Zap, CheckCircle, Activity,
     BarChart3, Clock, Cpu, Database, RefreshCw, Settings,
@@ -71,12 +71,14 @@ const LearningView = () => {
     const [isRefreshing, setIsRefreshing] = useState(false)
     const [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null)
     const [isStartingTraining, setIsStartingTraining] = useState(false)
+    // Lock: prevents polling from overriding button state after user action
+    const userActionLock = useRef<number>(0)
 
     // Start training function
     const startTraining = async () => {
         setIsStartingTraining(true)
         try {
-            const token = localStorage.getItem('token')
+            const token = localStorage.getItem('auth_token')
             const res = await fetch(`${API_URL}/api/ml/training/start`, {
                 method: 'POST',
                 headers: {
@@ -86,8 +88,9 @@ const LearningView = () => {
                 body: JSON.stringify({ model: 'all', episodes: 500 })
             })
             const data = await res.json()
-            if (data.status === 'started') {
+            if (data.status !== 'error') {
                 setTrainingActive(true)
+                userActionLock.current = Date.now() + 30000 // Lock for 30s
                 setLogs(prev => [{
                     time: new Date().toLocaleTimeString(),
                     level: 'success',
@@ -109,12 +112,13 @@ const LearningView = () => {
     // Stop training function
     const stopTraining = async () => {
         try {
-            const token = localStorage.getItem('token')
+            const token = localStorage.getItem('auth_token')
             await fetch(`${API_URL}/api/ml/training/stop`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` }
             })
             setTrainingActive(false)
+            userActionLock.current = Date.now() + 30000 // Lock for 30s
             setLogs(prev => [{
                 time: new Date().toLocaleTimeString(),
                 level: 'info',
@@ -173,7 +177,7 @@ const LearningView = () => {
 
     const fetchLearningData = async () => {
         try {
-            const token = localStorage.getItem('token')
+            const token = localStorage.getItem('auth_token')
             const res = await fetch(`${API_URL}/api/learning/stats`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             })
@@ -265,9 +269,11 @@ const LearningView = () => {
                     }
                 } else {
                     // Only override button state from polling if we're confident
-                    // training is truly not active (not just starting up)
-                    if (!data.training_active && data.status !== 'starting') {
-                        setTrainingActive(false)
+                    // AND user hasn't manually clicked within the last 30s
+                    if (!data.training_active && data.status !== 'starting' && data.status !== 'running') {
+                        if (Date.now() > userActionLock.current) {
+                            setTrainingActive(false)
+                        }
                     }
                 }
             }
