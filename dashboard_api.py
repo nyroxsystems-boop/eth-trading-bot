@@ -27,6 +27,13 @@ from db_adapter import get_db_connection, USE_POSTGRES
 # Import learning store (PostgreSQL-backed)
 import learning_store
 
+# Import config sync
+try:
+    from src.utils.config import reload_from_settings
+except ImportError:
+    def reload_from_settings():
+        pass  # Fallback if config module not available
+
 # Import user manager for authentication
 from user_manager import UserManager, init_users_database
 
@@ -803,18 +810,14 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ Account auto-creation error: {e}")
     
-    # FORCE PAPER TRADING MODE ON STARTUP
-    # This ensures users always start in paper mode for safety
+    # Load initial settings into config (respects user's saved mode)
     try:
         settings = load_settings()
-        if not settings.get('dry_run', True):
-            settings['dry_run'] = True
-            save_settings(settings)
-            print("📄 Forced paper trading mode on startup (safety default)")
-        else:
-            print("📄 Paper trading mode active")
+        mode = "PAPER" if settings.get('dry_run', True) else "LIVE"
+        print(f"📄 Trading mode from saved settings: {mode}")
+        reload_from_settings()
     except Exception as e:
-        print(f"⚠️ Could not force paper mode: {e}")
+        print(f"⚠️ Could not load saved settings: {e}")
     
     # Start trade monitoring
     asyncio.create_task(monitor_trades())
@@ -1768,7 +1771,9 @@ async def update_capital(capital: float):
     current["trading_capital"] = capital
     
     if save_settings(current):
-        return {"status": "success", "message": f"Capital updated to ${capital:,.2f}"}
+        # Sync to running bot config
+        reload_from_settings()
+        return {"status": "success", "message": f"Capital updated to ${capital:,.2f} - effective immediately"}
     else:
         raise HTTPException(status_code=500, detail="Failed to save capital")
 
@@ -1955,10 +1960,12 @@ async def switch_trading_mode(mode_data: TradingMode):
         
         # Save settings
         if save_settings(settings):
+            # Sync to running bot config
+            reload_from_settings()
             return {
                 "status": "success",
                 "mode": mode,
-                "message": f"Switched to {mode.upper()} trading. Bot will use new mode on next trade."
+                "message": f"Switched to {mode.upper()} trading. Bot mode updated immediately."
             }
         else:
             raise HTTPException(status_code=500, detail="Failed to save settings")
@@ -2507,6 +2514,9 @@ async def toggle_trading_mode(current_user: Dict = Depends(get_current_user)):
         # Update settings
         settings['dry_run'] = (new_mode == "paper")
         save_settings(settings)
+        
+        # Sync to running bot config immediately
+        reload_from_settings()
         
         # Log the change
         print(f"User {current_user['id']} switched to {new_mode} mode")

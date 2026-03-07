@@ -5,7 +5,7 @@ Handles order placement, execution, and balance management
 from typing import Optional, Dict, Any
 import os
 
-from src.utils.config import get_config
+from src.utils.config import get_config, reload_from_settings
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -18,6 +18,29 @@ class OrderExecutor:
         self.config = get_config()
         self.paper_balance_usdt = self.config.system.paper_base_usdt
         self.paper_balance_eth = 0.0
+        self._last_capital = self.config.system.paper_base_usdt
+    
+    def sync_from_settings(self):
+        """
+        Sync config from dashboard settings.json.
+        Called before each trade to pick up mode/capital changes.
+        """
+        try:
+            reload_from_settings()
+            
+            # If capital changed and we haven't traded yet, update paper balance
+            new_capital = self.config.system.paper_base_usdt
+            if new_capital != self._last_capital:
+                # Scale paper balance proportionally
+                if self._last_capital > 0:
+                    ratio = new_capital / self._last_capital
+                    self.paper_balance_usdt *= ratio
+                else:
+                    self.paper_balance_usdt = new_capital
+                self._last_capital = new_capital
+                logger.info(f"💰 Capital updated to ${new_capital:,.2f} (paper balance: ${self.paper_balance_usdt:,.2f})")
+        except Exception as e:
+            logger.debug(f"Settings sync skipped: {e}")
     
     def get_usdt_balance(self) -> float:
         """
@@ -77,8 +100,20 @@ class OrderExecutor:
         if self.config.system.dry_run:
             eth_value = self.paper_balance_eth * current_price
         else:
-            # In live mode, would need to fetch ETH balance
+            # In live mode, fetch actual ETH balance from Binance
             eth_value = 0.0
+            try:
+                if self.config.api.binance_api_key and self.config.api.binance_api_secret:
+                    from binance.client import Client
+                    client = Client(
+                        self.config.api.binance_api_key,
+                        self.config.api.binance_api_secret
+                    )
+                    info = client.get_asset_balance(asset=self.config.trading.base_asset)
+                    if info:
+                        eth_value = float(info['free']) * current_price
+            except Exception as e:
+                logger.debug(f"Could not fetch ETH balance: {e}")
         
         return usdt + eth_value
     
@@ -134,6 +169,9 @@ class OrderExecutor:
         Returns:
             True if order succeeded, False otherwise
         """
+        # Sync latest settings from dashboard
+        self.sync_from_settings()
+        
         # Run pre-buy guards
         if not self.run_pre_buy_guards():
             return False
@@ -195,6 +233,9 @@ class OrderExecutor:
         Returns:
             True if order succeeded, False otherwise
         """
+        # Sync latest settings from dashboard
+        self.sync_from_settings()
+        
         price = self.get_last_price() or 0.0
         
         # DRY RUN mode

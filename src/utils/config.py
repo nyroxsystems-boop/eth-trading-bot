@@ -198,6 +198,81 @@ def reload_config() -> BotConfig:
     return config
 
 
+# Settings file path (must match dashboard_api.py)
+_SETTINGS_FILE = None
+
+def _get_settings_file():
+    """Get settings file path lazily"""
+    global _SETTINGS_FILE
+    if _SETTINGS_FILE is None:
+        from pathlib import Path
+        log_dir = Path(os.getenv("LOG_DIR", "logs"))
+        _SETTINGS_FILE = log_dir / "bot_settings.json"
+    return _SETTINGS_FILE
+
+
+def reload_from_settings() -> bool:
+    """
+    Reload config from settings.json (written by dashboard API).
+    Updates dry_run, trading_capital, and risk parameters in the live config.
+    
+    Returns True if settings were loaded, False otherwise.
+    """
+    import json
+    
+    settings_file = _get_settings_file()
+    
+    if not settings_file.exists():
+        return False
+    
+    try:
+        with open(settings_file, 'r') as f:
+            settings = json.load(f)
+        
+        cfg = get_config()
+        
+        # Sync trading mode
+        if 'dry_run' in settings:
+            old_mode = cfg.system.dry_run
+            cfg.system.dry_run = settings['dry_run']
+            if old_mode != cfg.system.dry_run:
+                mode_name = "PAPER" if cfg.system.dry_run else "LIVE"
+                print(f"🔄 Config sync: Trading mode changed to {mode_name}")
+        
+        # Sync trading capital
+        if 'trading_capital' in settings:
+            old_capital = cfg.system.paper_base_usdt
+            cfg.system.paper_base_usdt = float(settings['trading_capital'])
+            if old_capital != cfg.system.paper_base_usdt:
+                print(f"🔄 Config sync: Capital changed to ${cfg.system.paper_base_usdt:,.2f}")
+        
+        # Sync risk parameters
+        if 'risk_per_trade' in settings:
+            cfg.risk.risk_pct_per_trade = float(settings['risk_per_trade'])
+        if 'tp_min' in settings:
+            cfg.risk.tp_min = float(settings['tp_min'])
+        if 'tp_max' in settings:
+            cfg.risk.tp_max = float(settings['tp_max'])
+        if 'stop_floor' in settings:
+            cfg.risk.stop_floor = float(settings['stop_floor'])
+        if 'max_drawdown_day' in settings:
+            cfg.risk.max_drawdown_day = float(settings['max_drawdown_day'])
+        if 'max_trades_per_day' in settings:
+            cfg.trading.max_trades_per_day = int(settings['max_trades_per_day'])
+        
+        # Sync API keys if present
+        if settings.get('binance_api_key'):
+            cfg.api.binance_api_key = settings['binance_api_key']
+        if settings.get('binance_api_secret'):
+            cfg.api.binance_api_secret = settings['binance_api_secret']
+        
+        return True
+        
+    except Exception as e:
+        print(f"⚠️ Failed to reload from settings.json: {e}")
+        return False
+
+
 def load_active_strategy() -> bool:
     """
     Load active strategy from JSON file created by Strategy Lab.
