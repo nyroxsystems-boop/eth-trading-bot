@@ -523,8 +523,8 @@ class TrainingOrchestrator:
             except Exception as e:
                 logger.error(f"Training cycle error: {e}")
             
-            # Wait between cycles
-            for _ in range(30):  # 30 seconds
+            # Wait between cycles (15s — optimized for 100k ScraperAPI/month)
+            for _ in range(15):  # 15 seconds
                 if stop_event.is_set():
                     break
                 time.sleep(1)
