@@ -239,6 +239,7 @@ const LearningView = () => {
                     // Update models with live data ONLY if we have meaningful training data
                     // Don't overwrite existing API accuracy values with zeros
                     if (data.episode > 0 && data.win_rate > 0) {
+                        setTrainingActive(true)
                         setModels(prev => prev.map((m, i) =>
                             i === 0 ? {
                                 ...m,
@@ -251,12 +252,16 @@ const LearningView = () => {
                         ))
                     } else if (data.episode > 0) {
                         // Training active but no win_rate yet - just update lastTrained
+                        setTrainingActive(true)
                         setModels(prev => prev.map((m, i) =>
                             i === 0 ? {
                                 ...m,
                                 lastTrained: 'Training läuft...'
                             } : m
                         ))
+                    } else if (data.training_active) {
+                        // Training starting but no episode yet
+                        setTrainingActive(true)
                     }
                 } else {
                     // Only override button state from polling if we're confident
