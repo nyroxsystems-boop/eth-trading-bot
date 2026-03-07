@@ -6,6 +6,10 @@ from typing import Optional, Dict, Any
 import os
 import random
 import time
+import math
+import csv
+from datetime import datetime
+from pathlib import Path
 
 from src.utils.config import get_config, reload_from_settings
 from src.utils.logger import get_logger
@@ -22,6 +26,8 @@ class OrderExecutor:
         self.paper_balance_eth = 0.0
         self._last_capital = self.config.system.paper_base_usdt
         self.total_fees_paid = 0.0  # Track cumulative fees
+        self._exchange_info: Optional[Dict] = None  # Cache for Binance symbol info
+        self._trade_log_path = Path(os.getenv("LOG_DIR", "./logs")) / "trades.csv"
     
     def _simulate_execution_price(self, price: float, side: str) -> float:
         """
@@ -57,6 +63,85 @@ class OrderExecutor:
         )
         
         return exec_price
+    
+    def _fetch_exchange_info(self) -> Dict:
+        """Fetch and cache Binance symbol exchange info (lot size, min qty)."""
+        if self._exchange_info:
+            return self._exchange_info
+        
+        try:
+            import requests
+            resp = requests.get(
+                "https://api.binance.com/api/v3/exchangeInfo",
+                params={"symbol": self.config.trading.pair},
+                timeout=10
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            
+            for s in data.get("symbols", []):
+                if s["symbol"] == self.config.trading.pair:
+                    for f in s.get("filters", []):
+                        if f["filterType"] == "LOT_SIZE":
+                            self._exchange_info = {
+                                "min_qty": float(f["minQty"]),
+                                "max_qty": float(f["maxQty"]),
+                                "step_size": float(f["stepSize"])
+                            }
+                            logger.info(
+                                f"Exchange info: min={self._exchange_info['min_qty']}, "
+                                f"step={self._exchange_info['step_size']}"
+                            )
+                            return self._exchange_info
+        except Exception as e:
+            logger.warning(f"Failed to fetch exchange info: {e}")
+        
+        # Safe defaults for ETHUSDT
+        self._exchange_info = {"min_qty": 0.0001, "max_qty": 9000.0, "step_size": 0.0001}
+        return self._exchange_info
+    
+    def _validate_quantity(self, qty: float) -> float:
+        """
+        Validate and adjust quantity to match Binance LOT_SIZE filter.
+        Prevents 'Filter failure: LOT_SIZE' rejections on live orders.
+        """
+        info = self._fetch_exchange_info()
+        
+        # Check minimum
+        if qty < info["min_qty"]:
+            logger.warning(f"Qty {qty:.6f} below min {info['min_qty']}. Order rejected.")
+            return 0.0
+        
+        # Round down to step size
+        step = info["step_size"]
+        if step > 0:
+            qty = math.floor(qty / step) * step
+        
+        # Check maximum
+        qty = min(qty, info["max_qty"])
+        
+        return round(qty, 8)
+    
+    def _log_paper_trade(self, action: str, qty: float, price: float, exec_price: float):
+        """Log paper trade to CSV for P&L dashboard chart."""
+        try:
+            self._trade_log_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            file_exists = self._trade_log_path.exists()
+            with open(self._trade_log_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(['timestamp', 'action', 'qty', 'price', 'exec_price',
+                                     'balance_usdt', 'balance_eth', 'fees_paid'])
+                
+                writer.writerow([
+                    datetime.now().isoformat(),
+                    action, round(qty, 6), round(price, 2), round(exec_price, 2),
+                    round(self.paper_balance_usdt, 2), round(self.paper_balance_eth, 6),
+                    round(self.total_fees_paid, 2)
+                ])
+        except Exception as e:
+            logger.debug(f"Trade log write error: {e}")
     
     def sync_from_settings(self):
         """
@@ -229,6 +314,7 @@ class OrderExecutor:
                 f"[DRY] BUY {qty:.5f} {self.config.trading.base_asset} "
                 f"@ ~{price_hint:.2f} (exec: {exec_price:.2f}, cost: {cost:.2f})"
             )
+            self._log_paper_trade("BUY", qty, price_hint, exec_price)
             return True
         
         # LIVE mode
@@ -245,6 +331,12 @@ class OrderExecutor:
             
             quote_amount = round(qty * price_hint, 2)
             
+            # Validate quantity against Binance LOT_SIZE
+            valid_qty = self._validate_quantity(qty)
+            if valid_qty <= 0:
+                logger.error(f"Order qty {qty} failed validation")
+                return False
+            
             try:
                 # Try quote order quantity first
                 client.order_market_buy(
@@ -252,10 +344,10 @@ class OrderExecutor:
                     quoteOrderQty=quote_amount
                 )
             except Exception:
-                # Fallback to base quantity
+                # Fallback to base quantity (validated)
                 client.order_market_buy(
                     symbol=self.config.trading.pair,
-                    quantity=round(qty, 5)
+                    quantity=valid_qty
                 )
             
             logger.info(f"[LIVE] BUY {qty:.5f} {self.config.trading.base_asset} @ ~{price_hint:.2f}")
@@ -295,6 +387,7 @@ class OrderExecutor:
                 f"[DRY] SELL {qty:.5f} {self.config.trading.base_asset} "
                 f"@ ~{price:.2f} (exec: {exec_price:.2f}, proceeds: {proceeds:.2f})"
             )
+            self._log_paper_trade("SELL", qty, price, exec_price)
             return True
         
         # LIVE mode
@@ -309,9 +402,15 @@ class OrderExecutor:
                 self.config.api.binance_api_secret
             )
             
+            # Validate quantity against Binance LOT_SIZE
+            valid_qty = self._validate_quantity(qty)
+            if valid_qty <= 0:
+                logger.error(f"Sell qty {qty} failed validation")
+                return False
+            
             client.order_market_sell(
                 symbol=self.config.trading.pair,
-                quantity=round(qty, 5)
+                quantity=valid_qty
             )
             
             logger.info(f"[LIVE] SELL {qty:.5f} {self.config.trading.base_asset} @ ~{price:.2f}")

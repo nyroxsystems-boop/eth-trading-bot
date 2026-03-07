@@ -20,6 +20,13 @@ from multiprocessing import Process, Event
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Import ML model store for persistent storage
+try:
+    import ml_model_store
+    HAS_MODEL_STORE = True
+except ImportError:
+    HAS_MODEL_STORE = False
+
 import logging
 logging.basicConfig(
     level=logging.INFO,
@@ -197,6 +204,17 @@ class TrainingOrchestrator:
                 if total_reward > best_reward:
                     best_reward = total_reward
                     agent._save_model()
+                    # Persist to PostgreSQL so model survives deploys
+                    if HAS_MODEL_STORE:
+                        try:
+                            ml_model_store.save_model('dqn_agent', agent, {
+                                'type': 'DQN',
+                                'episodes': episode + 1,
+                                'best_reward': float(best_reward),
+                                'epsilon': float(agent.epsilon)
+                            })
+                        except Exception as e:
+                            logger.warning(f"Model store save failed: {e}")
                 
                 # Sync progress every 10 episodes
                 if (episode + 1) % 10 == 0:
@@ -389,6 +407,17 @@ class TrainingOrchestrator:
             # Train (simplified call)
             if hasattr(predictor, 'train'):
                 predictor.train(X, y)
+            
+            # Persist to PostgreSQL so model survives deploys
+            if HAS_MODEL_STORE:
+                try:
+                    ml_model_store.save_model('gradient_boosting', predictor, {
+                        'type': 'GradientBoosting',
+                        'samples': len(X),
+                        'features': X.shape[1] if hasattr(X, 'shape') else len(X[0])
+                    })
+                except Exception as e:
+                    logger.warning(f"Model store save failed: {e}")
             
             self.models["gradient_boosting"]["status"] = "idle"
             self.models["gradient_boosting"]["last_train"] = datetime.now()
