@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Bell, User, Settings, LogOut, TrendingUp } from 'lucide-react'
 import ThemeToggle from './ThemeToggle'
 import { LanguageSwitcher } from '../contexts/LanguageContext'
+import { useAuth } from '../contexts/AuthContext'
 import '../styles/premium.css'
 import '../styles/components.css'
 
@@ -19,6 +20,7 @@ interface HeaderProps {
 }
 
 const Header = ({ onSettingsClick }: HeaderProps) => {
+    const { logout } = useAuth()
     const [showNotifications, setShowNotifications] = useState(false)
     const [showUserMenu, setShowUserMenu] = useState(false)
     const [notifications, setNotifications] = useState<Notification[]>([
@@ -176,7 +178,7 @@ const Header = ({ onSettingsClick }: HeaderProps) => {
                                         <TrendingUp size={18} />
                                         <span>Performance</span>
                                     </button>
-                                    <button className="menu-item danger">
+                                    <button className="menu-item danger" onClick={() => { logout(); setShowUserMenu(false) }}>
                                         <LogOut size={18} />
                                         <span>Logout</span>
                                     </button>
