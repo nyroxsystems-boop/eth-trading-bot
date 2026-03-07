@@ -287,6 +287,40 @@ def adapt_entry_threshold():
         _adaptive_entry_min = min(_ENTRY_CEILING, _adaptive_entry_min + 0.01)
         ENTRY_SCORE_MIN = _adaptive_entry_min
 
+# --- Volatility Zone Awareness ---
+def get_volatility_boost() -> float:
+    """
+    Returns a score boost/penalty based on time-of-day volatility patterns.
+    Hot zones get a BOOST (easier to enter), dead zones get a small penalty.
+    Never blocks trades — strong signals always get through.
+    
+    Returns: float between -0.05 (dead zone) and +0.10 (peak zone)
+    """
+    utc_hour = datetime.now(timezone.utc).hour
+    
+    # US Market Open (13:30-16:00 UTC) — highest ETH volatility
+    if 13 <= utc_hour <= 16:
+        return 0.10
+    
+    # Asia Open (00:00-02:00 UTC) — second highest
+    if 0 <= utc_hour <= 2:
+        return 0.07
+    
+    # Europe Open (08:00-10:00 UTC)
+    if 8 <= utc_hour <= 10:
+        return 0.05
+    
+    # US Afternoon (16:00-20:00 UTC) — still active
+    if 16 < utc_hour <= 20:
+        return 0.03
+    
+    # Dead zones (03:00-07:00 UTC) — low volume, choppy
+    if 3 <= utc_hour <= 7:
+        return -0.05
+    
+    # Everything else — neutral
+    return 0.0
+
 # ------------------ INIT ------------------
 def init_env():
     """Initialize environment & libraries safely."""
@@ -910,7 +944,8 @@ def decide_and_trade():
     if regime["trend_ok"]:
         adx_bonus = max(0.0, min((regime["adx"] - 20.0) / 400.0, 0.15))
 
-    boost = (p_ml - 0.5) * 0.4 + (sent_score * 0.1) + adx_bonus
+    vol_zone_boost = get_volatility_boost()
+    boost = (p_ml - 0.5) * 0.4 + (sent_score * 0.1) + adx_bonus + vol_zone_boost
     effective_tp = compute_effective_tp(rsi14, regime, row)
 
     # Oversold stärker gewichten
