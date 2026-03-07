@@ -24,6 +24,9 @@ import aiosqlite
 # Import database adapter
 from db_adapter import get_db_connection, USE_POSTGRES
 
+# Import learning store (PostgreSQL-backed)
+import learning_store
+
 # Import user manager for authentication
 from user_manager import UserManager, init_users_database
 
@@ -816,26 +819,26 @@ async def startup_event():
     # Start trade monitoring
     asyncio.create_task(monitor_trades())
     
+    # Initialize learning store (PostgreSQL tables)
+    try:
+        learning_store.ensure_learning_tables()
+    except Exception as e:
+        print(f"⚠️ Learning store init error: {e}")
+    
     # Start auto-learning background service
     asyncio.create_task(auto_learning_background())
     print("🧠 Auto-Learning Background Service started!")
 
 
 async def auto_learning_background():
-    """Background task that continuously tests strategies using historical data"""
+    """Background task that continuously tests strategies using historical data.
+    Stores results in PostgreSQL (via learning_store) for persistence across deploys."""
     import random
     
     # Wait 30 seconds before starting (let API fully initialize)
     await asyncio.sleep(30)
     print("🚀 Auto-Learning Background Service active - testing strategies with REAL historical data...")
-    
-    # Get storage paths
-    log_dir = Path(os.getenv("LOG_DIR", "./logs"))
-    strategies_file = log_dir / "tested_strategies.json"
-    current_strategy_file = log_dir / "current_strategy.json"
-    
-    # Ensure directories exist
-    log_dir.mkdir(parents=True, exist_ok=True)
+    print(f"   Storage backend: {'PostgreSQL' if learning_store.USE_POSTGRES else 'Local JSON (dev)'}")
     
     # Import backtester
     try:
@@ -870,7 +873,6 @@ async def auto_learning_background():
                 hour_tested = 0
             
             # Refresh historical data every hour
-            # BUG FIX: .seconds only gives 0-59, use .total_seconds()
             if use_real_backtest and (datetime.now() - last_data_fetch).total_seconds() > 3600:
                 print("📊 Fetching fresh historical data from Binance...")
                 try:
@@ -899,7 +901,6 @@ async def auto_learning_background():
                         "data_source": "historical_binance"
                     }
                 else:
-                    # Fallback to mock if backtest fails
                     strategy = generate_mock_strategy()
             else:
                 strategy = generate_mock_strategy()
@@ -907,60 +908,27 @@ async def auto_learning_background():
             strategies_tested += 1
             hour_tested += 1
             
-            # Load existing strategies
-            all_strategies = []
-            if strategies_file.exists():
-                try:
-                    with open(strategies_file, "r") as f:
-                        all_strategies = json.load(f)
-                except:
-                    all_strategies = []
-            
-            # Add new strategy
-            all_strategies.append(strategy)
-            
-            # Keep only top 200 strategies (sorted by score)
-            all_strategies.sort(key=lambda x: x.get("score", 0), reverse=True)
-            all_strategies = all_strategies[:200]
-            
-            # Save updated strategies
-            with open(strategies_file, "w") as f:
-                json.dump(all_strategies, f, indent=2)
+            # Save strategy to PostgreSQL (or JSON fallback)
+            learning_store.save_strategy(strategy)
             
             # Auto-apply best strategy if it's better than current
+            all_strategies = learning_store.get_all_strategies(limit=1)
             if all_strategies:
                 best = all_strategies[0]
                 
-                # Load current strategy
-                current_score = 0
-                if current_strategy_file.exists():
-                    try:
-                        with open(current_strategy_file, "r") as f:
-                            current = json.load(f)
-                            current_score = current.get("score", 0)
-                    except:
-                        pass
+                current = learning_store.get_current_strategy()
+                current_score = current.get("score", 0) if current else 0
                 
                 # Apply if best is significantly better (5%+)
                 if best["score"] > current_score * 1.05 and best["score"] > 20:
                     best["applied"] = True
                     best["applied_at"] = datetime.now().isoformat()
-                    
-                    with open(current_strategy_file, "w") as f:
-                        json.dump(best, f, indent=2)
-                    
-                    # Update in all_strategies too
-                    for s in all_strategies:
-                        s["applied"] = (s == best)
-                    
-                    with open(strategies_file, "w") as f:
-                        json.dump(all_strategies, f, indent=2)
-                    
+                    learning_store.set_current_strategy(best)
                     print(f"\n✅ NEW BEST STRATEGY APPLIED! Score: {best['score']:.2f}")
             
             # Log every 10 strategies
             if strategies_tested % 10 == 0:
-                print(f"🧪 Strategy #{strategies_tested}: Score={strategy['score']:.2f} | This hour: {hour_tested} | Total: {len(all_strategies)}")
+                print(f"🧪 Strategy #{strategies_tested}: Score={strategy['score']:.2f} | This hour: {hour_tested} | Total: {strategies_tested}")
             
             # Wait 30-60 seconds before next test (60-120 strategies per hour)
             wait_time = random.randint(30, 60)
@@ -1912,87 +1880,14 @@ async def run_backtest(params: BacktestParams):
         "avg_loss": avg_loss
     }
 
-# Learning API Endpoints - reads from JSON files written by auto_learning_background()
-LEARNING_LOG_DIR = Path(os.getenv("LOG_DIR", "./logs"))
-STRATEGIES_FILE = LEARNING_LOG_DIR / "tested_strategies.json"
-CURRENT_STRATEGY_FILE = LEARNING_LOG_DIR / "current_strategy.json"
-
-def load_strategies_json():
-    """Load strategies from JSON file"""
-    if STRATEGIES_FILE.exists():
-        try:
-            with open(STRATEGIES_FILE, "r") as f:
-                return json.load(f)
-        except:
-            return []
-    return []
-
-def load_current_strategy_json():
-    """Load current strategy from JSON file"""
-    if CURRENT_STRATEGY_FILE.exists():
-        try:
-            with open(CURRENT_STRATEGY_FILE, "r") as f:
-                return json.load(f)
-        except:
-            return None
-    return None
+# Learning API Endpoints - reads from PostgreSQL via learning_store module
+# (falls back to JSON files in local dev when DATABASE_URL is not set)
 
 @app.get("/api/learning/stats")
 async def get_learning_stats():
-    """Get auto-learning statistics and strategies"""
+    """Get auto-learning statistics and strategies (PostgreSQL-backed)"""
     try:
-        strategies = load_strategies_json()
-        current = load_current_strategy_json()
-        
-        # Stats from tested_strategies.json
-        json_total = len(strategies)
-        json_best = max([s.get("score", 0) for s in strategies]) if strategies else 0
-        json_applied = len([s for s in strategies if s.get("applied", False)])
-        
-        # Also count from learning.db for full picture
-        db_total = 0
-        db_best = 0
-        try:
-            import sqlite3
-            learning_db = LEARNING_LOG_DIR / "learning.db"
-            if learning_db.exists():
-                conn = sqlite3.connect(learning_db)
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*), MAX(score) FROM strategies")
-                row = cursor.fetchone()
-                db_total = row[0] or 0
-                db_best = min(row[1] or 0, 500)  # Cap insane legacy scores
-                conn.close()
-        except Exception:
-            pass
-        
-        # Combined totals
-        total_tested = json_total + db_total
-        best_score = max(json_best, db_best)
-        total_applied = json_applied
-        
-        # Today's tests (check timestamp in JSON)
-        today = datetime.now().date().isoformat()
-        today_tested = len([s for s in strategies if s.get("timestamp", "").startswith(today)])
-        
-        # This hour's tests
-        one_hour_ago = (datetime.now() - timedelta(hours=1)).isoformat()
-        this_hour_tested = len([s for s in strategies if s.get("timestamp", "") >= one_hour_ago])
-        
-        # Sort strategies by score (best first)
-        sorted_strategies = sorted(strategies, key=lambda x: x.get("score", 0), reverse=True)
-        
-        return {
-            "stats": {
-                "total_tested": total_tested,
-                "best_score": round(best_score, 2),
-                "total_applied": total_applied,
-                "today_tested": today_tested,
-                "this_hour_tested": this_hour_tested
-            },
-            "strategies": sorted_strategies[:10],  # Top 10 strategies for display
-            "current_strategy": current
-        }
+        return learning_store.get_learning_stats()
     except Exception as e:
         print(f"Error getting learning stats: {e}")
         return {
@@ -2009,50 +1904,27 @@ async def get_learning_stats():
 
 @app.get("/api/learning/strategies")
 async def get_top_strategies(limit: int = 10):
-    """Get top performing strategies"""
+    """Get top performing strategies (PostgreSQL-backed)"""
     try:
-        strategies = load_strategies_json()
-        
-        # Sort by score and limit
-        strategies.sort(key=lambda x: x.get("score", 0), reverse=True)
-        
-        return strategies[:limit]
+        return learning_store.get_all_strategies(limit)
     except Exception as e:
         print(f"Error getting top strategies: {e}")
         return []
 
 @app.get("/api/learning/evolution")
 async def get_strategy_evolution(days: int = 7):
-    """Get strategy score evolution over time"""
+    """Get strategy score evolution over time (PostgreSQL-backed)"""
     try:
-        strategies = load_strategies_json()
-        
-        # Group by date and get best score each day
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
-        daily_best = {}
-        
-        for s in strategies:
-            ts = s.get("timestamp", "")
-            if ts >= cutoff:
-                date = ts[:10]  # YYYY-MM-DD
-                score = s.get("score", 0)
-                if date not in daily_best or score > daily_best[date]:
-                    daily_best[date] = score
-        
-        # Convert to list sorted by date
-        evolution = [{"date": d, "best_score": round(s, 2)} for d, s in sorted(daily_best.items())]
-        
-        return evolution
+        return learning_store.get_evolution(days)
     except Exception as e:
         print(f"Error getting evolution: {e}")
         return []
 
 @app.get("/api/learning/current")
 async def get_current_strategy():
-    """Get currently applied strategy"""
+    """Get currently applied strategy (PostgreSQL-backed)"""
     try:
-        current = load_current_strategy_json()
-        return current
+        return learning_store.get_current_strategy()
     except Exception as e:
         print(f"Error getting current strategy: {e}")
         return None
