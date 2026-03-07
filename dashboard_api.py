@@ -27,6 +27,9 @@ from db_adapter import get_db_connection, USE_POSTGRES
 # Import learning store (PostgreSQL-backed)
 import learning_store
 
+# Import ML model store (PostgreSQL-backed)
+import ml_model_store
+
 # Import config sync
 try:
     from src.utils.config import reload_from_settings
@@ -818,6 +821,19 @@ async def startup_event():
         reload_from_settings()
     except Exception as e:
         print(f"⚠️ Could not load saved settings: {e}")
+    
+    # Initialize ML model store tables
+    try:
+        ml_model_store.ensure_model_tables()
+    except Exception as e:
+        print(f"⚠️ ML Model Store init error: {e}")
+    
+    # Start WebSocket price stream
+    try:
+        from src.data.price_stream import start_price_stream
+        start_price_stream("ethusdt")
+    except Exception as e:
+        print(f"⚠️ Price stream startup error: {e}")
     
     # Start trade monitoring
     asyncio.create_task(monitor_trades())
@@ -1776,6 +1792,39 @@ async def update_capital(capital: float):
         return {"status": "success", "message": f"Capital updated to ${capital:,.2f} - effective immediately"}
     else:
         raise HTTPException(status_code=500, detail="Failed to save capital")
+
+@app.get("/api/price/live")
+async def get_live_price():
+    """Get real-time price from WebSocket stream."""
+    try:
+        from src.data.price_stream import get_price_stream
+        stream = get_price_stream()
+        status = stream.get_status()
+        return status
+    except Exception as e:
+        return {
+            "connected": False,
+            "error": str(e),
+            "latest_price": None
+        }
+
+@app.get("/api/ml/models/status")
+async def get_ml_models_status():
+    """Get status of all stored ML models."""
+    try:
+        models = ml_model_store.list_models()
+        return {
+            "status": "ok",
+            "models": models,
+            "total_stored": len(models)
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "models": [],
+            "total_stored": 0
+        }
 
 @app.get("/api/risk")
 async def get_risk_params():

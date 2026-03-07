@@ -4,6 +4,8 @@ Handles order placement, execution, and balance management
 """
 from typing import Optional, Dict, Any
 import os
+import random
+import time
 
 from src.utils.config import get_config, reload_from_settings
 from src.utils.logger import get_logger
@@ -19,6 +21,42 @@ class OrderExecutor:
         self.paper_balance_usdt = self.config.system.paper_base_usdt
         self.paper_balance_eth = 0.0
         self._last_capital = self.config.system.paper_base_usdt
+        self.total_fees_paid = 0.0  # Track cumulative fees
+    
+    def _simulate_execution_price(self, price: float, side: str) -> float:
+        """
+        Simulate realistic execution price with spread, fees, and slippage.
+        Makes paper trading results more realistic.
+        
+        Costs per trade:
+        - Bid-ask spread: 0.05%
+        - Binance taker fee: 0.1%
+        - Random slippage: 0-0.05% (order book depth)
+        Total per round-trip: ~0.4%
+        """
+        spread = 0.0005           # 0.05% bid-ask spread
+        fee = 0.001               # 0.1% Binance taker fee
+        slippage = random.uniform(0, 0.0005)  # 0-0.05% random
+        
+        total_cost = spread + fee + slippage
+        
+        if side == "BUY":
+            # Buyer pays more
+            exec_price = price * (1 + total_cost)
+        else:
+            # Seller receives less
+            exec_price = price * (1 - total_cost)
+        
+        # Track fees
+        fee_amount = price * fee
+        self.total_fees_paid += fee_amount
+        
+        logger.debug(
+            f"[SLIPPAGE] {side} {price:.2f} -> {exec_price:.2f} "
+            f"(spread={spread*100:.2f}%, fee={fee*100:.1f}%, slip={slippage*100:.3f}%)"
+        )
+        
+        return exec_price
     
     def sync_from_settings(self):
         """
@@ -178,7 +216,8 @@ class OrderExecutor:
         
         # DRY RUN mode
         if self.config.system.dry_run:
-            cost = qty * price_hint
+            exec_price = self._simulate_execution_price(price_hint, "BUY")
+            cost = qty * exec_price
             if cost > self.paper_balance_usdt:
                 logger.warning(f"Insufficient paper balance: {self.paper_balance_usdt:.2f} < {cost:.2f}")
                 return False
@@ -186,7 +225,10 @@ class OrderExecutor:
             self.paper_balance_usdt -= cost
             self.paper_balance_eth += qty
             
-            logger.info(f"[DRY] BUY {qty:.5f} {self.config.trading.base_asset} @ ~{price_hint:.2f}")
+            logger.info(
+                f"[DRY] BUY {qty:.5f} {self.config.trading.base_asset} "
+                f"@ ~{price_hint:.2f} (exec: {exec_price:.2f}, cost: {cost:.2f})"
+            )
             return True
         
         # LIVE mode
@@ -244,11 +286,15 @@ class OrderExecutor:
                 logger.warning(f"Insufficient paper ETH: {self.paper_balance_eth:.5f} < {qty:.5f}")
                 return False
             
-            proceeds = qty * price
+            exec_price = self._simulate_execution_price(price, "SELL")
+            proceeds = qty * exec_price
             self.paper_balance_eth -= qty
             self.paper_balance_usdt += proceeds
             
-            logger.info(f"[DRY] SELL {qty:.5f} {self.config.trading.base_asset} @ ~{price:.2f}")
+            logger.info(
+                f"[DRY] SELL {qty:.5f} {self.config.trading.base_asset} "
+                f"@ ~{price:.2f} (exec: {exec_price:.2f}, proceeds: {proceeds:.2f})"
+            )
             return True
         
         # LIVE mode
@@ -274,6 +320,139 @@ class OrderExecutor:
         except Exception as e:
             logger.error(f"Live sell order failed: {e}")
             return False
+    
+    def place_smart_buy(self, qty: float, price_hint: float, timeout: int = 30) -> bool:
+        """
+        Smart buy: tries limit order first, falls back to market if not filled.
+        Saves ~0.05-0.1% per trade vs market orders.
+        
+        Args:
+            qty: Quantity to buy
+            price_hint: Current market price
+            timeout: Seconds to wait for limit fill before market fallback
+        """
+        if self.config.system.dry_run:
+            return self.place_buy(qty, price_hint)
+        
+        if not (self.config.api.binance_api_key and self.config.api.binance_api_secret):
+            logger.error("Binance API credentials not configured")
+            return False
+        
+        try:
+            from binance.client import Client
+            client = Client(
+                self.config.api.binance_api_key,
+                self.config.api.binance_api_secret
+            )
+            
+            # Place limit order slightly above best bid
+            limit_price = round(price_hint * 1.0001, 2)  # 0.01% above market
+            
+            order = client.order_limit_buy(
+                symbol=self.config.trading.pair,
+                quantity=round(qty, 5),
+                price=str(limit_price),
+                timeInForce='GTC'
+            )
+            
+            order_id = order['orderId']
+            logger.info(f"[SMART] Limit BUY placed @ {limit_price:.2f} (order {order_id})")
+            
+            # Wait for fill
+            filled = self._wait_for_order(client, order_id, timeout)
+            
+            if filled:
+                logger.info(f"[SMART] Limit BUY filled @ {limit_price:.2f}")
+                return True
+            
+            # Cancel unfilled limit, fall back to market
+            try:
+                client.cancel_order(
+                    symbol=self.config.trading.pair,
+                    orderId=order_id
+                )
+                logger.info(f"[SMART] Limit order cancelled, falling back to market")
+            except Exception:
+                pass
+            
+            # Market fallback
+            return self.place_buy(qty, price_hint)
+            
+        except Exception as e:
+            logger.error(f"Smart buy failed: {e}, falling back to market")
+            return self.place_buy(qty, price_hint)
+    
+    def place_smart_sell(self, qty: float, timeout: int = 30) -> bool:
+        """
+        Smart sell: tries limit order first, falls back to market if not filled.
+        """
+        if self.config.system.dry_run:
+            return self.place_sell(qty)
+        
+        price = self.get_last_price() or 0.0
+        
+        if not (self.config.api.binance_api_key and self.config.api.binance_api_secret):
+            logger.error("Binance API credentials not configured")
+            return False
+        
+        try:
+            from binance.client import Client
+            client = Client(
+                self.config.api.binance_api_key,
+                self.config.api.binance_api_secret
+            )
+            
+            # Place limit slightly below best ask
+            limit_price = round(price * 0.9999, 2)  # 0.01% below market
+            
+            order = client.order_limit_sell(
+                symbol=self.config.trading.pair,
+                quantity=round(qty, 5),
+                price=str(limit_price),
+                timeInForce='GTC'
+            )
+            
+            order_id = order['orderId']
+            logger.info(f"[SMART] Limit SELL placed @ {limit_price:.2f} (order {order_id})")
+            
+            filled = self._wait_for_order(client, order_id, timeout)
+            
+            if filled:
+                logger.info(f"[SMART] Limit SELL filled @ {limit_price:.2f}")
+                return True
+            
+            # Cancel and market fallback
+            try:
+                client.cancel_order(
+                    symbol=self.config.trading.pair,
+                    orderId=order_id
+                )
+            except Exception:
+                pass
+            
+            return self.place_sell(qty)
+            
+        except Exception as e:
+            logger.error(f"Smart sell failed: {e}, falling back to market")
+            return self.place_sell(qty)
+    
+    def _wait_for_order(self, client, order_id: int, timeout: int = 30) -> bool:
+        """Wait for a limit order to fill, checking every 2 seconds."""
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                status = client.get_order(
+                    symbol=self.config.trading.pair,
+                    orderId=order_id
+                )
+                if status['status'] == 'FILLED':
+                    return True
+                if status['status'] in ['CANCELED', 'REJECTED', 'EXPIRED']:
+                    return False
+            except Exception:
+                pass
+            time.sleep(2)
+        return False
     
     def send_telegram_notification(self, message: str):
         """

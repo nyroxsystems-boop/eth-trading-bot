@@ -1,10 +1,11 @@
 """
-ML Backtester
-Simulates ML trading signals on historical data
+ML Backtester - Simulates ML trading signals on historical data with realistic slippage.
 """
 import os
 import json
+import random
 import numpy as np
+import requests
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
@@ -13,6 +14,12 @@ from dataclasses import dataclass, asdict
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Slippage/fee constants (same as order_executor)
+SPREAD_PCT = 0.0005       # 0.05% bid-ask spread
+FEE_PCT = 0.001           # 0.1% Binance taker fee
+MAX_SLIPPAGE_PCT = 0.0005 # 0-0.05% random slippage
+TOTAL_COST_PER_TRADE = SPREAD_PCT + FEE_PCT + MAX_SLIPPAGE_PCT / 2  # ~0.175% avg per side
 
 
 @dataclass
@@ -50,68 +57,93 @@ class BacktestResult:
 class MLBacktester:
     """
     Backtests ML trading signals on historical price data.
+    Includes realistic slippage and fee simulation.
     Calculates Sharpe ratio, win rate, drawdown, and other metrics.
     """
     
     def __init__(self, initial_capital: float = 10000.0, risk_per_trade: float = 0.02):
-        """
-        Args:
-            initial_capital: Starting capital for simulation
-            risk_per_trade: Percentage of capital per trade
-        """
         self.initial_capital = initial_capital
         self.risk_per_trade = risk_per_trade
         
-        # Storage
         log_dir = Path(os.getenv("LOG_DIR", "./logs"))
         self.results_path = log_dir / "backtest_results.json"
         
         self.trades: List[BacktestTrade] = []
         self.equity_curve: List[float] = [initial_capital]
     
+    @staticmethod
+    def _apply_slippage(price: float, side: str) -> float:
+        """Apply realistic slippage + fees to a trade price."""
+        slip = random.uniform(0, MAX_SLIPPAGE_PCT)
+        total = SPREAD_PCT + FEE_PCT + slip
+        if side == "BUY":
+            return price * (1 + total)  # Pay more
+        else:
+            return price * (1 - total)  # Receive less
+    
     def load_price_data(self, days: int = 60) -> np.ndarray:
         """
-        Load historical price data for backtesting
-        
-        Args:
-            days: Number of days of data
-            
-        Returns:
-            Array of close prices
+        Load historical price data. Tries real Binance klines first,
+        then local files, then synthetic as last resort.
         """
-        # Try to load from backtester data
+        # 1. Try fetching real Binance klines
+        try:
+            logger.info(f"Fetching {days} days of Binance ETHUSDT klines...")
+            url = "https://api.binance.com/api/v3/klines"
+            end_ms = int(datetime.now().timestamp() * 1000)
+            start_ms = int((datetime.now() - timedelta(days=days)).timestamp() * 1000)
+            
+            all_prices = []
+            current_start = start_ms
+            
+            while current_start < end_ms:
+                params = {
+                    "symbol": "ETHUSDT",
+                    "interval": "5m",
+                    "startTime": current_start,
+                    "limit": 1000
+                }
+                resp = requests.get(url, params=params, timeout=10)
+                resp.raise_for_status()
+                data = resp.json()
+                
+                if not data:
+                    break
+                
+                all_prices.extend([float(candle[4]) for candle in data])  # Close price
+                current_start = int(data[-1][6]) + 1  # Next after last close_time
+                
+                if len(data) < 1000:
+                    break
+            
+            if len(all_prices) > 100:
+                logger.info(f"Loaded {len(all_prices)} real price points from Binance")
+                return np.array(all_prices)
+        except Exception as e:
+            logger.warning(f"Binance klines fetch failed: {e}")
+        
+        # 2. Try local files
         log_dir = Path(os.getenv("LOG_DIR", "./logs"))
-        
-        # Check for existing price data
-        price_files = [
-            log_dir / "price_history.json",
-            log_dir / "trades.json"
-        ]
-        
-        for pf in price_files:
+        for pf in [log_dir / "price_history.json", log_dir / "trades.json"]:
             if pf.exists():
                 try:
                     with open(pf) as f:
                         data = json.load(f)
                         if isinstance(data, list) and len(data) > 100:
-                            # Extract prices if available
                             if "price" in data[0]:
                                 return np.array([d["price"] for d in data])
-                except:
+                except Exception:
                     pass
         
-        # Generate synthetic data for testing
+        # 3. Synthetic fallback
         logger.warning("No historical data found, using synthetic prices")
         np.random.seed(42)
-        
-        num_points = days * 24 * 12  # 5-min candles
+        num_points = days * 24 * 12
         prices = [3200.0]
-        
         for _ in range(num_points - 1):
             change = np.random.normal(0, 0.002)
             trend = np.sin(len(prices) / 500) * 0.0005
             prices.append(prices[-1] * (1 + change + trend))
-        
         return np.array(prices)
     
     def get_ml_signal(self, prices: np.ndarray, model: str = "ensemble") -> Dict[str, Any]:
@@ -199,11 +231,16 @@ class MLBacktester:
                     exit_idx = min(i + hold_periods, len(prices) - 1)
                     exit_price = prices[exit_idx]
                     
-                    # Calculate PnL
+                    # Apply slippage to entry and exit
+                    entry_with_slip = self._apply_slippage(position["entry"], position["signal"])
+                    exit_side = "SELL" if position["signal"] == "BUY" else "BUY"
+                    exit_with_slip = self._apply_slippage(exit_price, exit_side)
+                    
+                    # Calculate PnL with realistic costs
                     if position["signal"] == "BUY":
-                        pnl_pct = (exit_price - position["entry"]) / position["entry"]
+                        pnl_pct = (exit_with_slip - entry_with_slip) / entry_with_slip
                     else:
-                        pnl_pct = (position["entry"] - exit_price) / position["entry"]
+                        pnl_pct = (entry_with_slip - exit_with_slip) / entry_with_slip
                     
                     # Update capital
                     position_size = capital * self.risk_per_trade

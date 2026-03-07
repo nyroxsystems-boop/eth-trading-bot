@@ -17,6 +17,7 @@ class TradingConfig:
     lookback: int = 400
     max_trades_per_day: int = 15
     trade_capital_pct: float = 1.0
+    order_type: str = "market"  # market, limit, smart
     
     # Entry thresholds
     entry_score_min: float = 0.45

@@ -106,7 +106,8 @@ class MarketDataProvider:
     
     def get_last_price(self, symbol: Optional[str] = None) -> Optional[float]:
         """
-        Get the latest price for a symbol
+        Get the latest price for a symbol.
+        Tries WebSocket cache first (sub-second), falls back to REST API.
         
         Args:
             symbol: Trading pair (default from config)
@@ -116,6 +117,16 @@ class MarketDataProvider:
         """
         symbol = symbol or self.config.trading.pair
         
+        # Try WebSocket cache first (fastest)
+        try:
+            from src.data.price_stream import get_live_price
+            ws_price = get_live_price(max_age=10.0)
+            if ws_price is not None:
+                return ws_price
+        except ImportError:
+            pass
+        
+        # Fallback to REST API
         try:
             df = self.fetch_klines(symbol=symbol, lookback=2)
             return float(df["close"].iloc[-1])
