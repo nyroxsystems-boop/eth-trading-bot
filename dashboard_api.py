@@ -949,6 +949,18 @@ async def auto_learning_background():
                     best["applied_at"] = datetime.now().isoformat()
                     learning_store.set_current_strategy(best)
                     print(f"\n✅ NEW BEST STRATEGY APPLIED! Score: {best['score']:.2f}")
+                    
+                    # Apply entry_score_min to running bot if optimized
+                    best_params = best.get("params", {})
+                    if "entry_score_min" in best_params:
+                        try:
+                            import eth_master_bot
+                            old_min = getattr(eth_master_bot, 'ENTRY_SCORE_MIN', 0.25)
+                            eth_master_bot.ENTRY_SCORE_MIN = best_params["entry_score_min"]
+                            eth_master_bot._adaptive_entry_min = best_params["entry_score_min"]
+                            print(f"   📊 Entry threshold: {old_min:.2f} → {best_params['entry_score_min']:.2f}")
+                        except Exception:
+                            pass
             
             # Log every 10 strategies
             if strategies_tested % 10 == 0:

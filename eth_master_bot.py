@@ -523,6 +523,43 @@ def ml_predict_row(row) -> float:
     except Exception:
         return 0.5
 
+# --- Trade Outcome Feedback ---
+# Buffer of (features, outcome) from real trades for ML retraining
+_trade_feedback_buffer = []
+
+def ml_feedback_trade(entry_row, outcome_win: bool):
+    """
+    Feed trade outcome back into ML model.
+    Called after every trade close (TP/SL/TIME).
+    outcome_win: True if trade was profitable, False otherwise.
+    """
+    global _trade_feedback_buffer
+    
+    if not ml_warm:
+        return
+    
+    try:
+        features = [entry_row["ret1"], entry_row["ema20"], entry_row["ema50"],
+                     entry_row["macd"], entry_row["macd_sig"], entry_row["rsi14"],
+                     entry_row["atr"], entry_row["bb_hi"], entry_row["bb_lo"]]
+        label = 1 if outcome_win else 0
+        _trade_feedback_buffer.append((features, label))
+        
+        # Retrain every 5 trade outcomes (small batch for responsiveness)
+        if len(_trade_feedback_buffer) >= 5:
+            X = np.array([f for f, _ in _trade_feedback_buffer])
+            y = np.array([l for _, l in _trade_feedback_buffer])
+            
+            # Weight real trade outcomes 3x higher than price predictions
+            sample_weight = np.ones(len(y)) * 3.0
+            clf.named_steps["sgd"].partial_fit(X, y, classes=ml_classes, sample_weight=sample_weight)
+            
+            log(f"ML FEEDBACK: retrained on {len(_trade_feedback_buffer)} real trades "
+                f"(wins: {sum(y)}, losses: {len(y)-sum(y)})")
+            _trade_feedback_buffer.clear()
+    except Exception as e:
+        log(f"WARN ml feedback failed: {e}")
+
 # ------------------ SENTIMENT ------------------
 def ensure_vader():
     global nltk_downloaded, sia
@@ -896,7 +933,7 @@ def decide_and_trade():
         qty = position_size_for_risk(px, sl_pct, eq)
         if qty * px >= 10 and today_trades < MAX_TRADES_PER_DAY:
             if place_buy(qty, px):
-                open_position = __add_open_bar_time({"entry": px, "qty": qty, "atr": atr}, row)
+                open_position = __add_open_bar_time({"entry": px, "qty": qty, "atr": atr, "entry_row": dict(row)}, row)
                 today_trades += 1
                 bars_in_position = 0
                 _last_trade_ts = time.time()  # Reset adaptive threshold timer
@@ -911,6 +948,7 @@ def decide_and_trade():
         if decision == "TP":
             msg = f"✅ TP hit | +{(px/open_position['entry']-1.0)*100:.2f}% | close @{px:.2f}"
             log("INFO "+msg); tg(msg)
+            ml_feedback_trade(open_position.get("entry_row", row), outcome_win=True)
             place_sell(open_position["qty"])
             open_position = None
             bars_in_position = 0
@@ -919,6 +957,7 @@ def decide_and_trade():
         elif decision == "SL":
             msg = f"⚠️ SL hit | {(px/open_position['entry']-1.0)*100:.2f}% | close @{px:.2f}"
             log("INFO "+msg); tg(msg)
+            ml_feedback_trade(open_position.get("entry_row", row), outcome_win=False)
             place_sell(open_position["qty"])
             open_position = None
             bars_in_position = 0
@@ -930,6 +969,8 @@ def decide_and_trade():
         elif decision == "TIME":
             msg = f"⏱️ Time exit | close @{px:.2f}"
             log("INFO "+msg); tg(msg)
+            upnl_time = (px / open_position["entry"]) - 1.0
+            ml_feedback_trade(open_position.get("entry_row", row), outcome_win=(upnl_time > 0))
             place_sell(open_position["qty"])
             open_position = None
             bars_in_position = 0
@@ -947,7 +988,7 @@ def decide_and_trade():
             log("WARN position too small (<10 USDT) – skip")
             return
         if place_buy(qty, px):
-            open_position = __add_open_bar_time({"entry": px, "qty": qty, "atr": atr}, row)
+            open_position = __add_open_bar_time({"entry": px, "qty": qty, "atr": atr, "entry_row": dict(row)}, row)
             today_trades += 1
             bars_in_position = 0
             _last_trade_ts = time.time()  # Reset adaptive threshold timer

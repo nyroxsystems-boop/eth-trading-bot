@@ -34,7 +34,11 @@ PARAM_GRID = {
     "stop_floor": [0.004, 0.005, 0.006, 0.008],
     "rsi_oversold": [25, 30, 35],
     "rsi_overbought": [65, 70, 75],
-    "max_trades_per_day": [8, 10, 15, 20]
+    "max_trades_per_day": [8, 10, 15, 20],
+    # Entry score weights — auto-optimized now
+    "entry_score_min": [0.15, 0.20, 0.25, 0.30, 0.35],
+    "breakout_weight": [0.20, 0.25, 0.30, 0.35, 0.40],
+    "trend_weight": [0.10, 0.15, 0.20, 0.25, 0.30],
 }
 
 # Global state for live progress
@@ -231,16 +235,36 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
             if dd > max_drawdown:
                 max_drawdown = dd
         
-        # Check for entry
+        # Check for entry (using weighted scoring like the real bot)
         if not position and daily_trades < max_trades:
+            # Extract entry weights from params
+            entry_min = params.get("entry_score_min", 0.25)
+            brk_w = params.get("breakout_weight", 0.30)
+            trn_w = params.get("trend_weight", 0.20)
+            
             # Entry conditions
             trend_ok = price > sma20 and sma20 > sma50 if sma50 else price > sma20
             rsi_ok = rsi_oversold < rsi < rsi_overbought
+            oversold = rsi <= rsi_oversold + 5
             
-            # Simulate ML signal (based on ml_threshold)
+            # Simulate ML signal
             ml_signal = random.random() > (1 - ml_threshold * 0.8)
             
-            if trend_ok and rsi_ok and ml_signal:
+            # Breakout check (price above recent high)
+            recent_high = max(c["high"] for c in candles[max(0,i-20):i])
+            breakout = price > recent_high * 1.0001
+            
+            # Weighted entry score (mirrors eth_master_bot.py scoring)
+            remaining_w = 1.0 - brk_w - trn_w
+            entry_score = (
+                brk_w * (1.0 if breakout else 0.0) +
+                trn_w * (1.0 if trend_ok else 0.0) +
+                remaining_w * 0.3 * (1.0 if rsi_ok else 0.0) +
+                remaining_w * 0.3 * (1.0 if oversold else 0.0) +
+                remaining_w * 0.4 * (1.0 if ml_signal else 0.0)
+            )
+            
+            if entry_score >= entry_min:
                 position = {
                     "entry": price,
                     "time": candle["time"],
@@ -293,7 +317,10 @@ def generate_random_params() -> Dict:
         "stop_floor": random.choice(PARAM_GRID["stop_floor"]),
         "rsi_oversold": random.choice(PARAM_GRID["rsi_oversold"]),
         "rsi_overbought": random.choice(PARAM_GRID["rsi_overbought"]),
-        "max_trades_per_day": random.choice(PARAM_GRID["max_trades_per_day"])
+        "max_trades_per_day": random.choice(PARAM_GRID["max_trades_per_day"]),
+        "entry_score_min": random.choice(PARAM_GRID["entry_score_min"]),
+        "breakout_weight": random.choice(PARAM_GRID["breakout_weight"]),
+        "trend_weight": random.choice(PARAM_GRID["trend_weight"]),
     }
 
 
