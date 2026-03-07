@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Calendar, TrendingUp, TrendingDown, Brain, Download } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { useLanguage } from '../contexts/LanguageContext'
 import '../styles/premium.css'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
@@ -31,6 +31,7 @@ interface DaySummary {
 }
 
 const TradingJournalView = () => {
+    const { t } = useLanguage()
     const [trades, setTrades] = useState<Trade[]>([])
     const [, setSelectedTrade] = useState<Trade | null>(null)
     const [, setDaySummaries] = useState<DaySummary[]>([])
@@ -136,20 +137,16 @@ const TradingJournalView = () => {
     }
 
     return (
-        <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            style={{ padding: '32px' }}
-        >
+        <div style={{ padding: '32px' }}>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
                 <div>
                     <h1 style={{ fontSize: '28px', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px' }}>
                         <Calendar style={{ display: 'inline', marginRight: '12px' }} />
-                        Trading Journal
+                        {t('journal.title')}
                     </h1>
                     <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
-                        Review your trades and identify patterns
+                        {t('journal.subtitle')}
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: '12px' }}>
@@ -169,10 +166,10 @@ const TradingJournalView = () => {
                             minWidth: '140px'
                         }}
                     >
-                        <option value="1d" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>Today</option>
-                        <option value="7d" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>Last 7 Days</option>
-                        <option value="30d" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>Last 30 Days</option>
-                        <option value="90d" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>Last 90 Days</option>
+                        <option value="1d" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>{t('journal.today')}</option>
+                        <option value="7d" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>{t('journal.last7Days')}</option>
+                        <option value="30d" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>{t('journal.last30Days')}</option>
+                        <option value="90d" style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>{t('journal.last90Days')}</option>
                     </select>
                     <button style={{
                         display: 'flex',
@@ -186,7 +183,7 @@ const TradingJournalView = () => {
                         cursor: 'pointer'
                     }}>
                         <Download size={16} />
-                        Export
+                        {t('common.export')}
                     </button>
                 </div>
             </div>
@@ -194,23 +191,23 @@ const TradingJournalView = () => {
             {/* Summary Cards */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '32px' }}>
                 <div className="glass-card" style={{ padding: '20px' }}>
-                    <div style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '8px' }}>Total P&L</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '8px' }}>{t('dashboard.totalPnL')}</div>
                     <div style={{ fontSize: '28px', fontWeight: 700, color: totalPnl >= 0 ? 'var(--success)' : 'var(--error)' }}>
                         {totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)} USDT
                     </div>
                 </div>
                 <div className="glass-card" style={{ padding: '20px' }}>
-                    <div style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '8px' }}>Win Rate</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '8px' }}>{t('dashboard.winRate')}</div>
                     <div style={{ fontSize: '28px', fontWeight: 700, color: winRate >= 50 ? 'var(--success)' : 'var(--error)' }}>
                         {winRate.toFixed(1)}%
                     </div>
                 </div>
                 <div className="glass-card" style={{ padding: '20px' }}>
-                    <div style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '8px' }}>Total Trades</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '8px' }}>{t('journal.totalTrades')}</div>
                     <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--text-primary)' }}>{trades.length}</div>
                 </div>
                 <div className="glass-card" style={{ padding: '20px' }}>
-                    <div style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '8px' }}>Avg Trade</div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '8px' }}>{t('journal.avgTrade')}</div>
                     <div style={{ fontSize: '28px', fontWeight: 700, color: avgTrade >= 0 ? 'var(--success)' : 'var(--error)' }}>
                         {avgTrade >= 0 ? '+' : ''}{avgTrade.toFixed(2)}
                     </div>
@@ -220,7 +217,7 @@ const TradingJournalView = () => {
             {/* Trade List */}
             <div className="glass-card" style={{ padding: '24px' }}>
                 <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '20px' }}>
-                    Trade History
+                    {t('journal.tradeHistory')}
                 </h3>
 
                 {loading ? (
@@ -232,14 +229,14 @@ const TradingJournalView = () => {
                         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                             <thead>
                                 <tr style={{ borderBottom: '1px solid var(--glass-border)' }}>
-                                    <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px' }}>Time</th>
-                                    <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px' }}>Side</th>
-                                    <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '12px' }}>Entry</th>
-                                    <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '12px' }}>Exit</th>
-                                    <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '12px' }}>P&L</th>
-                                    <th style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>Duration</th>
+                                    <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px' }}>{t('table.time')}</th>
+                                    <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px' }}>{t('table.side')}</th>
+                                    <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '12px' }}>{t('table.entry')}</th>
+                                    <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '12px' }}>{t('table.exit')}</th>
+                                    <th style={{ padding: '12px', textAlign: 'right', color: 'var(--text-muted)', fontSize: '12px' }}>{t('table.pnl')}</th>
+                                    <th style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>{t('table.duration')}</th>
                                     <th style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>ML</th>
-                                    <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px' }}>Signals</th>
+                                    <th style={{ padding: '12px', textAlign: 'left', color: 'var(--text-muted)', fontSize: '12px' }}>{t('table.signals')}</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -324,7 +321,7 @@ const TradingJournalView = () => {
             <div className="glass-card" style={{ padding: '24px', marginTop: '24px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                     <Brain size={20} color="var(--primary-purple)" />
-                    <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>AI Insights</h3>
+                    <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>{t('journal.aiInsights')}</h3>
                 </div>
                 <div style={{ padding: '16px', background: 'rgba(139, 92, 246, 0.05)', borderRadius: '12px', border: '1px solid rgba(139, 92, 246, 0.1)' }}>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: '1.6' }}>
@@ -338,7 +335,7 @@ const TradingJournalView = () => {
                     </p>
                 </div>
             </div>
-        </motion.div>
+        </div>
     )
 }
 

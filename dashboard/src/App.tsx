@@ -1,4 +1,4 @@
-import { useState, useEffect, lazy, Suspense } from 'react'
+import { useState, useEffect, lazy, Suspense, Component, ErrorInfo } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { AnimatePresence } from 'framer-motion'
 import './App.css'
@@ -57,6 +57,65 @@ const LoadingFallback = () => (
     }} />
   </div>
 )
+
+// Error Boundary to prevent white screen crashes
+interface ErrorBoundaryState {
+  hasError: boolean
+  error?: Error
+}
+
+class ErrorBoundary extends Component<{ children: React.ReactNode }, ErrorBoundaryState> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('ErrorBoundary caught:', error, errorInfo)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+          minHeight: '300px',
+          padding: '40px',
+          textAlign: 'center'
+        }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚠️</div>
+          <h3 style={{ color: 'var(--text-primary)', marginBottom: '8px' }}>Something went wrong</h3>
+          <p style={{ color: 'var(--text-muted)', marginBottom: '20px', fontSize: '14px' }}>
+            {this.state.error?.message || 'An unexpected error occurred'}
+          </p>
+          <button
+            onClick={() => this.setState({ hasError: false, error: undefined })}
+            style={{
+              padding: '10px 24px',
+              background: 'linear-gradient(135deg, #8B5CF6, #06B6D4)',
+              border: 'none',
+              borderRadius: '8px',
+              color: 'white',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            Try Again
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 // Types
 import { Trade, Metrics, BotStatus, CandleData } from './types'
@@ -226,40 +285,42 @@ function Dashboard() {
       <div className="app-layout">
         <Sidebar activePage={activePage} onPageChange={setActivePage} />
         <main className="app-content">
-          <Suspense fallback={<LoadingFallback />}>
-            <AnimatePresence mode="wait">
-              {activePage === 'dashboard' && (
-                <DashboardView
-                  key="dashboard"
-                  trades={trades}
-                  metrics={metrics}
-                  status={status}
-                  candlestickData={candlestickData}
-                  tickerData={tickerData}
-                  timeframe={timeframe}
-                  setTimeframe={setTimeframe}
-                />
-              )}
-              {activePage === 'portfolio' && <PortfolioView key="portfolio" />}
-              {activePage === 'learning' && <LearningView key="learning" />}
-              {activePage === 'trading' && <TradingView key="trading" />}
-              {activePage === 'analytics' && <AnalyticsView key="analytics" />}
-              {activePage === 'social' && <SocialView key="social" />}
-              {activePage === 'journal' && <TradingJournalView key="journal" />}
-              {activePage === 'account' && <AccountView key="account" />}
-              {activePage === 'admin' && <AdminDashboardView key="admin" />}
-              {/* Legacy routes for direct navigation */}
-              {activePage === 'ml' && <MLMonitorView key="ml" />}
-              {activePage === 'accounts' && <AccountsView key="accounts" />}
-              {activePage === 'bots' && <BotsView key="bots" />}
-              {activePage === 'subscription' && <SubscriptionView key="subscription" />}
-              {activePage === 'pricing' && <PricingView key="pricing" />}
-              {activePage === 'leaderboard' && <LeaderboardView key="leaderboard" />}
-              {activePage === 'earnings' && <EarningsView key="earnings" />}
-              {activePage === 'strategy-lab' && <StrategyLabView key="strategy-lab" />}
-              {activePage === 'settings' && <SettingsView key="settings" />}
-            </AnimatePresence>
-          </Suspense>
+          <ErrorBoundary>
+            <Suspense fallback={<LoadingFallback />}>
+              <AnimatePresence mode="wait">
+                {activePage === 'dashboard' && (
+                  <DashboardView
+                    key="dashboard"
+                    trades={trades}
+                    metrics={metrics}
+                    status={status}
+                    candlestickData={candlestickData}
+                    tickerData={tickerData}
+                    timeframe={timeframe}
+                    setTimeframe={setTimeframe}
+                  />
+                )}
+                {activePage === 'portfolio' && <PortfolioView key="portfolio" />}
+                {activePage === 'learning' && <LearningView key="learning" />}
+                {activePage === 'trading' && <TradingView key="trading" />}
+                {activePage === 'analytics' && <AnalyticsView key="analytics" />}
+                {activePage === 'social' && <SocialView key="social" />}
+                {activePage === 'journal' && <TradingJournalView key="journal" />}
+                {activePage === 'account' && <AccountView key="account" />}
+                {activePage === 'admin' && <AdminDashboardView key="admin" />}
+                {/* Legacy routes for direct navigation */}
+                {activePage === 'ml' && <MLMonitorView key="ml" />}
+                {activePage === 'accounts' && <AccountsView key="accounts" />}
+                {activePage === 'bots' && <BotsView key="bots" />}
+                {activePage === 'subscription' && <SubscriptionView key="subscription" />}
+                {activePage === 'pricing' && <PricingView key="pricing" />}
+                {activePage === 'leaderboard' && <LeaderboardView key="leaderboard" />}
+                {activePage === 'earnings' && <EarningsView key="earnings" />}
+                {activePage === 'strategy-lab' && <StrategyLabView key="strategy-lab" />}
+                {activePage === 'settings' && <SettingsView key="settings" />}
+              </AnimatePresence>
+            </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
     </div>
