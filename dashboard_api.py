@@ -1551,12 +1551,16 @@ async def get_user_portfolio_pairs(current_user: Dict = Depends(get_current_user
                 total_capital += pair_data["allocated_capital"]
                 total_pnl += pair_data["total_pnl"]
             
+            # Use actual bot capital, not sum of pair allocations
+            settings = load_settings()
+            actual_capital = settings.get('paper_base_usdt', float(os.getenv('PAPER_BASE_USDT', 10000)))
+            
             return {
                 "pairs": pairs,
                 "total_pairs": len(pairs),
-                "total_capital": total_capital,
+                "total_capital": actual_capital if actual_capital > total_capital else total_capital,
                 "total_pnl": total_pnl,
-                "total_pnl_percent": (total_pnl / total_capital * 100) if total_capital > 0 else 0
+                "total_pnl_percent": (total_pnl / actual_capital * 100) if actual_capital > 0 else 0
             }
     except Exception as e:
         print(f"Error fetching portfolio pairs: {e}")
