@@ -913,28 +913,34 @@ async def startup_event():
 
 async def auto_learning_background():
     """Background task that continuously tests strategies using historical data.
-    Stores results in PostgreSQL (via learning_store) for persistence across deploys."""
+    Stores results in PostgreSQL (via learning_store) for persistence across deploys.
+    Syncs progress to _synced_training_data so dashboard shows live updates."""
+    global _training_active, _synced_training_data
     import random
     
     # Wait 30 seconds before starting (let API fully initialize)
     await asyncio.sleep(30)
-    print("🚀 Auto-Learning Background Service active - testing strategies with REAL historical data...")
+    
+    # Auto-start training on boot
+    _training_active = True
+    print("Auto-Learning Background Service active - CONTINUOUS strategy optimization...")
     print(f"   Storage backend: {'PostgreSQL' if learning_store.USE_POSTGRES else 'Local JSON (dev)'}")
     
-    # Import backtester
+    # Import backtester with evolution support
     try:
         from src.ml.strategy_backtester import (
             fetch_historical_data, 
             calculate_indicators, 
             run_backtest,
+            generate_evolved_params,
             generate_random_params,
             ensure_db
         )
         ensure_db()
         use_real_backtest = True
-        print("✅ Using REAL historical backtesting!")
+        print("Using REAL historical backtesting with evolutionary optimization!")
     except ImportError as e:
-        print(f"⚠️ Backtester not available, using mock data: {e}")
+        print(f"Backtester not available, using mock data: {e}")
         use_real_backtest = False
     
     # Fetch historical data once and reuse (refresh every hour)
@@ -944,9 +950,20 @@ async def auto_learning_background():
     strategies_tested = 0
     hour_start = datetime.now().hour
     hour_tested = 0
+    best_score_session = 0
     
     while True:
         try:
+            # Respect Start/Stop button
+            if not _training_active:
+                _synced_training_data = {
+                    "status": "stopped", "training_active": False,
+                    "episode": strategies_tested, "total_episodes": strategies_tested,
+                    "received_at": datetime.now().isoformat()
+                }
+                await asyncio.sleep(5)
+                continue
+            
             # Reset hourly counter
             current_hour = datetime.now().hour
             if current_hour != hour_start:
@@ -955,88 +972,122 @@ async def auto_learning_background():
             
             # Refresh historical data every hour
             if use_real_backtest and (datetime.now() - last_data_fetch).total_seconds() > 3600:
-                print("📊 Fetching fresh historical data from Binance...")
+                print("Fetching fresh historical data from Binance...")
                 try:
                     historical_candles = fetch_historical_data(60)
                     if historical_candles:
                         historical_candles = calculate_indicators(historical_candles)
-                        print(f"✅ Got {len(historical_candles)} candles with indicators")
+                        print(f"Got {len(historical_candles)} candles with indicators")
                     else:
-                        print("⚠️ No candles returned, will retry next cycle")
+                        print("No candles returned, will retry next cycle")
                 except Exception as fetch_err:
-                    print(f"⚠️ Data fetch failed: {fetch_err} — will retry next cycle")
+                    print(f"Data fetch failed: {fetch_err}")
                 last_data_fetch = datetime.now()
             
-            # Generate and test a single strategy
-            if use_real_backtest and len(historical_candles) > 60:
-                params = generate_random_params()
-                metrics = run_backtest(historical_candles, params)
+            # Generate and test a single strategy with EVOLUTION
+            if use_real_backtest and len(historical_candles) > 120:
+                # Use evolved params (70% mutation of top strategies, 30% random)
+                params = generate_evolved_params()
                 
+                # Walk-forward validation: 70% train / 30% test
+                split_idx = int(len(historical_candles) * 0.7)
+                train_candles = historical_candles[:split_idx]
+                test_candles = historical_candles[split_idx:]
+                
+                train_metrics = run_backtest(train_candles, params)
+                if train_metrics and train_metrics["score"] >= 0:
+                    test_metrics = run_backtest(test_candles, params)
+                    if test_metrics:
+                        # Out-of-sample score: 70% test + 30% train
+                        oos_score = test_metrics["score"] * 0.7 + train_metrics["score"] * 0.3
+                        test_metrics["score"] = round(oos_score, 2)
+                        test_metrics["data_source"] = "historical_binance"
+                        
+                        strategy = {
+                            "params": params,
+                            "metrics": test_metrics,
+                            "score": test_metrics["score"],
+                            "timestamp": datetime.now().isoformat(),
+                            "applied": False,
+                            "data_source": "historical_binance"
+                        }
+                    else:
+                        strategy = None
+                else:
+                    strategy = None
+            elif use_real_backtest and len(historical_candles) > 60:
+                # Fallback: simple backtest (not enough data for walk-forward)
+                params = generate_evolved_params()
+                metrics = run_backtest(historical_candles, params)
                 if metrics:
+                    metrics["data_source"] = "historical_binance"
                     strategy = {
-                        "params": params,
-                        "metrics": metrics,
-                        "score": metrics["score"],
-                        "timestamp": datetime.now().isoformat(),
-                        "applied": False,
-                        "data_source": "historical_binance"
+                        "params": params, "metrics": metrics,
+                        "score": metrics["score"], "timestamp": datetime.now().isoformat(),
+                        "applied": False, "data_source": "historical_binance"
                     }
                 else:
-                    strategy = generate_mock_strategy()
+                    strategy = None
             else:
                 strategy = generate_mock_strategy()
             
-            strategies_tested += 1
-            hour_tested += 1
-            
-            # Save strategy to PostgreSQL (or JSON fallback)
-            learning_store.save_strategy(strategy)
-            
-            # Auto-apply best strategy if it's better than current
-            all_strategies = learning_store.get_all_strategies(limit=1)
-            if all_strategies:
-                best = all_strategies[0]
+            if strategy:
+                strategies_tested += 1
+                hour_tested += 1
                 
-                current = learning_store.get_current_strategy()
-                current_score = current.get("score", 0) if current else float('-inf')
+                # Save strategy to PostgreSQL
+                learning_store.save_strategy(strategy)
                 
-                # Apply if best is significantly better (5%+) or first strategy
-                # Threshold: score > 0 (must be at least break-even)
-                should_apply = (
-                    (current_score == float('-inf') and best["score"] > 0) or  # First strategy
-                    (best["score"] > current_score * 1.05 and best["score"] > 0)  # Better strategy
-                )
-                if should_apply:
-                    best["applied"] = True
-                    best["applied_at"] = datetime.now().isoformat()
-                    learning_store.set_current_strategy(best)
-                    print(f"\n✅ NEW BEST STRATEGY APPLIED! Score: {best['score']:.2f}")
+                if strategy["score"] > best_score_session:
+                    best_score_session = strategy["score"]
+                
+                # Auto-apply best strategy
+                all_strategies = learning_store.get_all_strategies(limit=1)
+                if all_strategies:
+                    best = all_strategies[0]
+                    current = learning_store.get_current_strategy()
+                    current_score = current.get("score", 0) if current else float('-inf')
                     
-                    # Apply entry_score_min to running bot if optimized
-                    best_params = best.get("params", {})
-                    if "entry_score_min" in best_params:
-                        try:
-                            import eth_master_bot
-                            old_min = getattr(eth_master_bot, 'ENTRY_SCORE_MIN', 0.25)
-                            eth_master_bot.ENTRY_SCORE_MIN = best_params["entry_score_min"]
-                            eth_master_bot._adaptive_entry_min = best_params["entry_score_min"]
-                            print(f"   📊 Entry threshold: {old_min:.2f} → {best_params['entry_score_min']:.2f}")
-                        except Exception:
-                            pass
+                    should_apply = (
+                        (current_score == float('-inf') and best["score"] > 0) or
+                        (best["score"] > current_score * 1.05 and best["score"] > 0)
+                    )
+                    if should_apply:
+                        best["applied"] = True
+                        best["applied_at"] = datetime.now().isoformat()
+                        learning_store.set_current_strategy(best)
+                        print(f"\nNEW BEST STRATEGY APPLIED! Score: {best['score']:.2f}")
+                
+                # SYNC progress to dashboard
+                _synced_training_data = {
+                    "status": "training",
+                    "model_type": "strategy_backtester",
+                    "model": "strategy_backtester",
+                    "architecture": "Parameter Optimization",
+                    "episode": strategies_tested,
+                    "total_episodes": strategies_tested,
+                    "progress_pct": min(99, strategies_tested % 100),
+                    "win_rate": strategy.get("metrics", {}).get("win_rate", 0),
+                    "trades": strategy.get("metrics", {}).get("total_trades", 0),
+                    "roi": strategy.get("metrics", {}).get("roi", 0),
+                    "best_roi": best_score_session,
+                    "training_active": True,
+                    "received_at": datetime.now().isoformat()
+                }
+                
+                # Log every 10 strategies
+                if strategies_tested % 10 == 0:
+                    print(f"Strategy #{strategies_tested}: Score={strategy['score']:.2f} | Hour: {hour_tested} | Best: {best_score_session:.1f}")
             
-            # Log every 10 strategies
-            if strategies_tested % 10 == 0:
-                print(f"🧪 Strategy #{strategies_tested}: Score={strategy['score']:.2f} | This hour: {hour_tested} | Total: {strategies_tested}")
-            
-            # Wait 30-60 seconds before next test (60-120 strategies per hour)
-            wait_time = random.randint(30, 60)
+            # Wait 10-30 seconds between tests
+            wait_time = random.randint(10, 30)
             await asyncio.sleep(wait_time)
             
         except Exception as e:
             import traceback
-            print(f"❌ Auto-learning error: {e}")
+            print(f"Auto-learning error: {e}")
             traceback.print_exc()
-            await asyncio.sleep(60)  # Wait 1 minute on error
+            await asyncio.sleep(60)
 
 
 def generate_mock_strategy():
@@ -3364,7 +3415,9 @@ _training_active = False
 
 @app.post("/api/ml/training/start")
 async def start_training(model: str = "all", episodes: int = 500):
-    """Start 24/7 ML training orchestrator"""
+    """Start continuous ML training + strategy backtesting loop.
+    Runs until explicitly stopped via /api/ml/training/stop.
+    Independent of browser - keeps running even if page is closed."""
     global _training_process, _training_active, _synced_training_data
     
     if _training_active:
@@ -3374,174 +3427,129 @@ async def start_training(model: str = "all", episodes: int = 500):
         }
     
     try:
-        import subprocess
         import threading
         
-        # Mark as active
         _training_active = True
         
-        # Start training in background thread
-        def run_training():
+        def run_continuous_training():
             global _training_active, _synced_training_data
+            import time as _time
+            import random as _random
+            
+            total_strategies_tested = 0
+            best_score_session = 0
+            
             try:
                 import sys
                 sys.path.insert(0, str(Path(__file__).parent))
+                sys.path.insert(0, str(Path(__file__).parent / "src" / "ml"))
+                import learning_store
                 
-                # Update synced data to show starting
+                # Phase 1: Train gradient boosting model (once)
                 _synced_training_data = {
-                    "status": "starting",
-                    "model_type": "gradient_boosting",
-                    "architecture": "Lightweight Ensemble",
-                    "episode": 0,
-                    "total_episodes": 10,
-                    "progress_pct": 0,
-                    "received_at": datetime.now().isoformat()
+                    "status": "training", "model_type": "gradient_boosting",
+                    "model": "strategy_backtester", "architecture": "Parameter Optimization",
+                    "episode": 1, "total_episodes": 10, "progress_pct": 10,
+                    "win_rate": 0, "trades": 0, "roi": 0,
+                    "training_active": True, "received_at": datetime.now().isoformat()
                 }
                 
-                import numpy as np
-                import requests
-                
-                # Step 1: Fetch price data (lightweight - 30 days, 4h candles)
-                _synced_training_data["status"] = "fetching_data"
-                _synced_training_data["episode"] = 1
-                _synced_training_data["progress_pct"] = 10
-                
                 try:
-                    resp = requests.get("https://api.binance.com/api/v3/klines", params={
+                    import numpy as np, requests as req2
+                    resp = req2.get("https://api.binance.com/api/v3/klines", params={
                         "symbol": "ETHUSDT", "interval": "4h", "limit": 180
                     }, timeout=15)
-                    candles = resp.json()
-                    prices = [float(c[4]) for c in candles]  # Close prices
-                    print(f"✅ Fetched {len(prices)} candles for training")
-                except Exception as e:
-                    print(f"⚠️ Binance fetch failed, using synthetic: {e}")
-                    prices = [2500 + np.random.randn() * 50 for _ in range(180)]
-                
-                # Step 2: Train gradient boosting inline (no heavy imports)
-                _synced_training_data["status"] = "training"
-                _synced_training_data["model_type"] = "gradient_boosting"
-                _synced_training_data["episode"] = 3
-                _synced_training_data["progress_pct"] = 30
-                
-                try:
+                    prices = [float(c[4]) for c in resp.json()]
+                    
                     from sklearn.ensemble import GradientBoostingClassifier
                     from sklearn.preprocessing import StandardScaler
-                    
                     X, y = [], []
                     for i in range(20, len(prices) - 1):
-                        features = []
-                        for j in range(5):
-                            ret = (prices[i-j] - prices[i-j-1]) / prices[i-j-1]
-                            features.append(ret)
-                        features.append(np.mean(prices[i-5:i]) / prices[i])
-                        features.append(np.mean(prices[i-20:i]) / prices[i])
-                        features.append(np.std(prices[i-20:i]) / prices[i])
-                        X.append(features)
+                        f = [(prices[i-j] - prices[i-j-1]) / prices[i-j-1] for j in range(5)]
+                        f += [np.mean(prices[i-5:i]) / prices[i], np.mean(prices[i-20:i]) / prices[i], np.std(prices[i-20:i]) / prices[i]]
+                        X.append(f)
                         y.append(1 if prices[i+1] > prices[i] else 0)
-                    
-                    X = np.array(X)
-                    y = np.array(y)
-                    
+                    X, y = np.array(X), np.array(y)
                     scaler = StandardScaler()
-                    X_scaled = scaler.fit_transform(X)
-                    
-                    gb = GradientBoostingClassifier(
-                        n_estimators=50, max_depth=3, learning_rate=0.1,
-                        random_state=42
-                    )
+                    X_s = scaler.fit_transform(X)
+                    gb = GradientBoostingClassifier(n_estimators=50, max_depth=3, learning_rate=0.1, random_state=42)
                     split = int(len(X) * 0.8)
-                    gb.fit(X_scaled[:split], y[:split])
-                    
-                    acc = gb.score(X_scaled[split:], y[split:]) * 100
-                    _synced_training_data["episode"] = 6
-                    _synced_training_data["progress_pct"] = 60
+                    gb.fit(X_s[:split], y[:split])
+                    acc = gb.score(X_s[split:], y[split:]) * 100
                     _synced_training_data["win_rate"] = round(acc, 1)
                     _synced_training_data["trades"] = len(X)
-                    
-                    print(f"✅ Gradient Boosting trained: {acc:.1f}% accuracy on {len(X)} samples")
-                    
-                    # Save model
                     try:
                         import pickle
-                        model_file = Path(os.getenv("LOG_DIR", "./logs")) / "ml_model.pkl"
-                        model_file.parent.mkdir(exist_ok=True)
-                        with open(model_file, "wb") as f:
-                            pickle.dump({"model": gb, "scaler": scaler}, f)
-                        print(f"✅ Model saved to {model_file}")
-                    except Exception as e:
-                        print(f"⚠️ Model save failed: {e}")
-                        
+                        mf = Path(os.getenv("LOG_DIR", "./logs")) / "ml_model.pkl"
+                        mf.parent.mkdir(exist_ok=True)
+                        with open(mf, "wb") as f: pickle.dump({"model": gb, "scaler": scaler}, f)
+                    except Exception: pass
                 except Exception as e:
-                    print(f"⚠️ Gradient Boosting training failed: {e}")
+                    print(f"GB training skipped: {e}")
+                
+                # Phase 2: Import backtester
+                try:
+                    from strategy_backtester import (
+                        fetch_historical_data, calculate_indicators,
+                        run_backtest, generate_evolved_params, save_strategy,
+                        ensure_db
+                    )
+                    ensure_db()
+                except Exception as e:
+                    print(f"Backtester import error: {e}")
                     import traceback; traceback.print_exc()
+                    _training_active = False
+                    return
                 
-                # Step 3: Run strategy backtest cycle
-                _synced_training_data["status"] = "backtesting"
-                _synced_training_data["model_type"] = "strategy_backtester"
-                _synced_training_data["architecture"] = "Parameter Optimization"
-                _synced_training_data["episode"] = 8
-                _synced_training_data["progress_pct"] = 80
-                
-                if _training_active:
+                # Phase 3: CONTINUOUS backtesting loop
+                print("Continuous strategy backtesting started...")
+                while _training_active:
                     try:
-                        sys.path.insert(0, str(Path(__file__).parent / "src" / "ml"))
-                        from strategy_backtester import run_batch
-                        run_batch(5)
-                        print("✅ Strategy backtester ran 5 tests")
+                        params = generate_evolved_params()
+                        candles = fetch_historical_data(60)
+                        if not candles or len(candles) < 120:
+                            _time.sleep(30); continue
+                        candles = calculate_indicators(candles)
+                        
+                        sp = int(len(candles) * 0.7)
+                        train_m = run_backtest(candles[:sp], params)
+                        if not train_m or train_m["score"] < 0:
+                            total_strategies_tested += 1; _time.sleep(5); continue
+                        test_m = run_backtest(candles[sp:], params)
+                        if not test_m: _time.sleep(5); continue
+                        
+                        test_m["score"] = round(test_m["score"] * 0.7 + train_m["score"] * 0.3, 2)
+                        test_m["data_source"] = "historical_binance"
+                        save_strategy(params, test_m)
+                        total_strategies_tested += 1
+                        if test_m["score"] > best_score_session:
+                            best_score_session = test_m["score"]
+                        
+                        _synced_training_data = {
+                            "status": "training", "model_type": "strategy_backtester",
+                            "model": "strategy_backtester", "architecture": "Parameter Optimization",
+                            "episode": total_strategies_tested, "total_episodes": total_strategies_tested,
+                            "progress_pct": min(99, (total_strategies_tested % 100)),
+                            "win_rate": test_m.get("win_rate", 0), "trades": test_m.get("total_trades", 0),
+                            "roi": test_m.get("roi", 0), "best_roi": best_score_session,
+                            "training_active": True, "received_at": datetime.now().isoformat()
+                        }
                     except Exception as e:
-                        print(f"⚠️ Strategy backtest skipped: {e}")
+                        print(f"Backtest cycle error: {e}")
+                    _time.sleep(_random.randint(10, 30))
                 
-                # Done
-                _synced_training_data["status"] = "completed"
-                _synced_training_data["progress_pct"] = 100
-                _synced_training_data["episode"] = 10
-                print("✅ Training cycle complete!")
-                
+                print(f"Training stopped. Tested {total_strategies_tested} strats. Best: {best_score_session:.1f}")
             except Exception as e:
-                print(f"Training error: {e}")
-                import traceback
-                traceback.print_exc()
-                _synced_training_data = {
-                    "status": "error",
-                    "message": str(e),
-                    "received_at": datetime.now().isoformat()
-                }
+                print(f"Training thread error: {e}")
+                import traceback; traceback.print_exc()
             finally:
                 _training_active = False
+                if _synced_training_data:
+                    _synced_training_data["training_active"] = False
+                    _synced_training_data["status"] = "stopped"
         
-        # Progress poller thread - reads from file written by TrainingOrchestrator
-        def poll_progress():
-            global _synced_training_data
-            import json
-            progress_file = Path(os.getenv("LOG_DIR", "./logs")) / "training_orchestrator.json"
-            
-            while _training_active:
-                try:
-                    if progress_file.exists():
-                        with open(progress_file, "r") as f:
-                            data = json.load(f)
-                        # Update synced data with real progress
-                        _synced_training_data = {
-                            **_synced_training_data,
-                            **data,
-                            "status": "training",
-                            "received_at": datetime.now().isoformat()
-                        }
-                except Exception:
-                    pass
-                import time
-                time.sleep(2)  # Poll every 2 seconds
-        
-        training_thread = threading.Thread(target=run_training, daemon=True)
-        progress_thread = threading.Thread(target=poll_progress, daemon=True)
-        training_thread.start()
-        progress_thread.start()
-        
-        return {
-            "status": "started",
-            "message": f"Started training for model: {model}",
-            "episodes": episodes
-        }
+        threading.Thread(target=run_continuous_training, daemon=True).start()
+        return {"status": "started", "message": "Continuous training started - runs until stopped"}
         
     except Exception as e:
         _training_active = False
