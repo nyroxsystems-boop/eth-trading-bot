@@ -341,7 +341,7 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
 
 
 def generate_random_params() -> Dict:
-    """Generate random parameter set from grid"""
+    """Generate completely random parameter set (exploration)"""
     return {
         "ml_threshold": random.choice(PARAM_GRID["ml_threshold"]),
         "risk_per_trade": random.choice(PARAM_GRID["risk_per_trade"]),
@@ -355,6 +355,124 @@ def generate_random_params() -> Dict:
         "breakout_weight": random.choice(PARAM_GRID["breakout_weight"]),
         "trend_weight": random.choice(PARAM_GRID["trend_weight"]),
     }
+
+
+def get_top_strategies(n: int = 10) -> List[Dict]:
+    """Fetch top N strategies from local DB for evolution"""
+    try:
+        conn = sqlite3.connect(LEARNING_DB)
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor,
+                   rsi_oversold, rsi_overbought, max_trades_per_day, score
+            FROM strategies ORDER BY score DESC LIMIT ?
+        """, (n,))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [{
+            "ml_threshold": r[0], "risk_per_trade": r[1],
+            "tp_min": r[2], "tp_max": r[3], "stop_floor": r[4],
+            "rsi_oversold": int(r[5]), "rsi_overbought": int(r[6]),
+            "max_trades_per_day": int(r[7]), "score": r[8]
+        } for r in rows]
+    except Exception as e:
+        logger.error(f"Failed to fetch top strategies: {e}")
+        return []
+
+
+def mutate_strategy(parent: Dict, mutation_rate: float = 0.20) -> Dict:
+    """
+    Mutate a parent strategy's params by ±mutation_rate.
+    Also randomly picks entry_score_min/breakout_weight/trend_weight
+    from grid since they're not in the DB schema.
+    """
+    def mutate_float(val, grid_key=None):
+        """Mutate a float value by ±mutation_rate, clamp to grid range"""
+        delta = val * mutation_rate * random.uniform(-1, 1)
+        new_val = val + delta
+        if grid_key and grid_key in PARAM_GRID:
+            grid = PARAM_GRID[grid_key]
+            new_val = max(min(grid), min(max(grid), new_val))
+        return round(new_val, 6)
+    
+    def mutate_int(val, grid_key=None):
+        """Mutate an int value by ±1-2 steps"""
+        delta = random.choice([-2, -1, 0, 0, 1, 2])
+        new_val = val + delta
+        if grid_key and grid_key in PARAM_GRID:
+            grid = PARAM_GRID[grid_key]
+            new_val = max(min(grid), min(max(grid), new_val))
+        return int(new_val)
+    
+    return {
+        "ml_threshold": mutate_float(parent["ml_threshold"], "ml_threshold"),
+        "risk_per_trade": mutate_float(parent["risk_per_trade"], "risk_per_trade"),
+        "tp_min": mutate_float(parent["tp_min"], "tp_min"),
+        "tp_max": mutate_float(parent["tp_max"], "tp_max"),
+        "stop_floor": mutate_float(parent["stop_floor"], "stop_floor"),
+        "rsi_oversold": mutate_int(parent["rsi_oversold"], "rsi_oversold"),
+        "rsi_overbought": mutate_int(parent["rsi_overbought"], "rsi_overbought"),
+        "max_trades_per_day": mutate_int(parent["max_trades_per_day"], "max_trades_per_day"),
+        # These aren't in DB, pick from grid or mutate from defaults
+        "entry_score_min": random.choice(PARAM_GRID["entry_score_min"]),
+        "breakout_weight": random.choice(PARAM_GRID["breakout_weight"]),
+        "trend_weight": random.choice(PARAM_GRID["trend_weight"]),
+    }
+
+
+def crossover(parent_a: Dict, parent_b: Dict) -> Dict:
+    """Combine two parents: randomly pick each param from either parent"""
+    child = {}
+    for key in parent_a:
+        if key == "score":
+            continue
+        child[key] = parent_a[key] if random.random() > 0.5 else parent_b[key]
+    # Ensure entry weights are included
+    for key in ["entry_score_min", "breakout_weight", "trend_weight"]:
+        if key not in child:
+            child[key] = random.choice(PARAM_GRID[key])
+    return child
+
+
+def generate_evolved_params() -> Dict:
+    """
+    Evolutionary parameter generation:
+    - 70% chance: mutate or crossover from top strategies
+    - 30% chance: random exploration (discover new regions)
+    """
+    top = get_top_strategies(10)
+    
+    # If no top strategies yet, explore randomly
+    if len(top) < 3:
+        return generate_random_params()
+    
+    if random.random() < 0.70:
+        # EVOLUTION: build on what works
+        roll = random.random()
+        if roll < 0.50:
+            # Mutate single parent (most common)
+            parent = random.choice(top[:5])  # Focus on top 5
+            child = mutate_strategy(parent)
+            logger.info(f"🧬 MUTATE from parent score={parent['score']:.1f}")
+            return child
+        elif roll < 0.80:
+            # Crossover two parents
+            pa = random.choice(top[:5])
+            pb = random.choice(top[:10])
+            child = crossover(pa, pb)
+            logger.info(f"🧬 CROSSOVER parents score={pa['score']:.1f} x {pb['score']:.1f}")
+            return child
+        else:
+            # Mutate with higher rate (explore around known good)
+            parent = random.choice(top[:3])  # Only top 3
+            child = mutate_strategy(parent, mutation_rate=0.35)
+            logger.info(f"🧬 BIG MUTATE from top parent score={parent['score']:.1f}")
+            return child
+    else:
+        # EXPLORATION: try completely new combinations
+        logger.info("🔍 EXPLORE random params")
+        return generate_random_params()
 
 
 def save_strategy(params: Dict, metrics: Dict):
@@ -413,7 +531,8 @@ async def run_single_backtest():
     
     try:
         # Generate random params
-        params = generate_random_params()
+        # Generate params: 70% evolved from top strategies, 30% random exploration
+        params = generate_evolved_params()
         BACKTEST_STATE["current_params"] = params
         
         # Fetch historical data (cached for 1 hour)
