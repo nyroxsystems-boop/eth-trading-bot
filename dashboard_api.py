@@ -3367,6 +3367,26 @@ async def get_backtest_results():
         return {"status": "error", "message": str(e)}
 
 
+@app.post("/api/ml/strategies/reset")
+async def reset_strategies():
+    """Clear old inflated strategies from PostgreSQL.
+    Call this after switching to walk-forward validation to remove
+    pre-walk-forward scores that would block new honest strategies."""
+    try:
+        if learning_store.USE_POSTGRES and learning_store.HAS_DB_ADAPTER:
+            from db_adapter import get_db_connection
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM learning_strategies")
+                cursor.execute("DELETE FROM learning_current_strategy")
+                deleted = cursor.rowcount
+            return {"status": "success", "message": f"Cleared all strategies. Fresh start!", "deleted": deleted}
+        else:
+            return {"status": "error", "message": "PostgreSQL not available"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
 @app.post("/api/ml/backtest/run")
 async def run_backtest(model: str = "ensemble", days: int = 30):
     """Run a new backtest"""

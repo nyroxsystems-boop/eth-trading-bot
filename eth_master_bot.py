@@ -1074,16 +1074,27 @@ def decide_and_trade():
     effective_tp = compute_effective_tp(rsi14, regime, row)
 
     # Oversold stärker gewichten
-    entry_score = (
+    base_score = (
         0.32*(1.0 if breakout_ok else 0.0) +
         0.18*(1.0 if drawdown_ok else 0.0) +
         0.16*(1.0 if trend_ok else 0.0) +
         0.06*(1.0 if rsi_ok_band else 0.0) +
-        0.18*(1.0 if oversold_ok else 0.0) +   # kräftiger Boost für os
+        0.18*(1.0 if oversold_ok else 0.0) +
         0.05*(1.0 if secondary_ok else 0.0) +
         0.05*(1.0 if regime["vol_ok"] else 0.0) +
         boost
     )
+    
+    # PAPER MODE GUARANTEE: if no trades for 4h+, boost score so bot trades
+    hours_idle = (time.time() - _last_trade_ts) / 3600.0
+    if PAPER_MODE and today_trades == 0 and hours_idle >= 4.0:
+        # Force a trade: any positive signal gets through
+        paper_boost = 0.30  # Guaranteed to exceed any threshold
+        if trend_ok or rsi_ok_band or p_ml > 0.48:
+            base_score += paper_boost
+            log(f"PAPER-FORCE: boosting entry score by {paper_boost} (idle {hours_idle:.1f}h, 0 trades)")
+    
+    entry_score = base_score
 
     # ---------------- Oversold-Fast-Lane ----------------
     os_min = float(_os.getenv("OS_ENTRY_SCORE_MIN", "0.20"))
