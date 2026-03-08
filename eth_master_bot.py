@@ -570,12 +570,13 @@ def ml_online_update(df_feat: pd.DataFrame):
             stats_file.parent.mkdir(exist_ok=True)
             with open(stats_file, "w") as f:
                 json.dump(ml_stats, f)
-            # Sync to Web container via API
-            api_url = os.getenv("RAILWAY_PUBLIC_DOMAIN", os.getenv("RAILWAY_STATIC_URL", ""))
-            if api_url:
-                if not api_url.startswith("http"):
-                    api_url = f"https://{api_url}"
-                requests.post(f"{api_url}/api/ml/stats-sync", json=ml_stats, timeout=5)
+            # Sync to Web container via API (try internal networking first, then public URL)
+            api_url = os.getenv("RAILWAY_URL", os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
+            if not api_url:
+                api_url = "https://web-production-d57ac.up.railway.app"
+            if api_url and not api_url.startswith("http"):
+                api_url = f"https://{api_url}"
+            requests.post(f"{api_url}/api/ml/stats-sync", json=ml_stats, timeout=5)
         except Exception:
             pass
     except Exception as e:

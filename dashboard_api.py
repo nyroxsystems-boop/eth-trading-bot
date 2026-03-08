@@ -3059,23 +3059,19 @@ async def get_all_models_status():
         except Exception:
             pass
     
-    # Read strategy backtester stats from learning.db
+    # Read strategy backtester stats from PostgreSQL (shared between containers)
     backtester_stats = {"total_tested": 0, "best_score": 0, "last_tested": None}
     try:
-        import sqlite3
-        db_path = log_dir / "learning.db"
-        if db_path.exists():
-            conn = sqlite3.connect(str(db_path))
-            cur = conn.cursor()
-            cur.execute("SELECT COUNT(*), MAX(score), MAX(timestamp) FROM backtest_results")
-            row = cur.fetchone()
-            if row:
-                backtester_stats["total_tested"] = row[0] or 0
-                backtester_stats["best_score"] = round(row[1] or 0, 1)
-                backtester_stats["last_tested"] = row[2]
-            conn.close()
-    except Exception:
-        pass
+        ls = learning_store.get_learning_stats()
+        if ls and "stats" in ls:
+            backtester_stats["total_tested"] = ls["stats"].get("total_tested", 0)
+            backtester_stats["best_score"] = round(ls["stats"].get("best_score", 0), 1)
+        # Get last tested time from current strategy
+        current = ls.get("current_strategy")
+        if current and current.get("timestamp"):
+            backtester_stats["last_tested"] = current["timestamp"]
+    except Exception as e:
+        print(f"Error reading learning stats for models: {e}")
     
     # Format last trained time
     def format_age(iso_str):
@@ -3120,8 +3116,8 @@ async def get_all_models_status():
             "name": "Gradient Booster",
             "type": "XGBoost Ensemble",
             "version": "v2.0.0",
-            "accuracy": 0,
-            "samples": 0,
+            "accuracy": round(_synced_training_data.get("win_rate", 0), 1) if _synced_training_data else 0,
+            "samples": _synced_training_data.get("trades", 0) if _synced_training_data else 0,
             "lastTrained": "Not trained",
             "status": "idle"
         },
