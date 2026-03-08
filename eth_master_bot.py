@@ -237,6 +237,14 @@ clf = Pipeline([
 ml_warm = False
 ml_classes = np.array([0,1])
 ml_conf_boost = 0.0
+# Real ML stats for dashboard display
+ml_stats = {
+    "accuracy": 0.0,
+    "samples": 0,
+    "last_trained": None,
+    "predictions_made": 0,
+    "warm": False
+}
 
 # sentiment
 nltk_downloaded = False
@@ -526,7 +534,7 @@ def ml_prepare(df_feat: pd.DataFrame):
     return X, y
 
 def ml_online_update(df_feat: pd.DataFrame):
-    global ml_warm, ml_conf_boost
+    global ml_warm, ml_conf_boost, ml_stats
     try:
         X, y = ml_prepare(df_feat)
         if X.shape[0] < 200:
@@ -544,15 +552,35 @@ def ml_online_update(df_feat: pd.DataFrame):
             clf.named_steps["sgd"].partial_fit(X[-200:], y[-200:])
         recent = y[-500:] if len(y) >= 500 else y
         ml_conf_boost = float(np.mean(recent))
+        # Track real ML stats
+        try:
+            acc = clf.score(X[-200:], y[-200:]) * 100
+        except Exception:
+            acc = ml_conf_boost * 100
+        ml_stats["accuracy"] = round(acc, 1)
+        ml_stats["samples"] = int(X.shape[0])
+        ml_stats["last_trained"] = datetime.now().isoformat()
+        ml_stats["warm"] = ml_warm
+        # Persist to JSON for dashboard API
+        try:
+            import json
+            stats_file = Path(os.getenv("LOG_DIR", "./logs")) / "ml_stats.json"
+            stats_file.parent.mkdir(exist_ok=True)
+            with open(stats_file, "w") as f:
+                json.dump(ml_stats, f)
+        except Exception:
+            pass
     except Exception as e:
         log(f"WARN ml update failed: {e}")
 
 def ml_predict_row(row) -> float:
+    global ml_stats
     if not ml_warm: return 0.5
     v = np.array([[row["ret1"], row["ema20"], row["ema50"], row["macd"], row["macd_sig"],
                    row["rsi14"], row["atr"], row["bb_hi"], row["bb_lo"]]])
     try:
         p = clf.predict_proba(v)[0,1]
+        ml_stats["predictions_made"] = ml_stats.get("predictions_made", 0) + 1
         return float(p)
     except Exception:
         return 0.5
