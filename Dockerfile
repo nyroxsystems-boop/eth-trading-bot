@@ -20,6 +20,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     python -m nltk.downloader vader_lexicon
 
+# Cache-bust: any change below here forces fresh copy
+ARG CACHE_BUST=1
 # Copy application code
 COPY . .
 
