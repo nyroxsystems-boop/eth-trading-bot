@@ -52,6 +52,11 @@ BACKTEST_STATE = {
     "last_best_strategy": None
 }
 
+# Cached historical data
+_cached_candles = None
+_cache_time = None
+CACHE_TTL = 3600  # 1 hour
+
 
 def ensure_db():
     """Ensure database and table exist"""
@@ -87,9 +92,16 @@ def ensure_db():
 
 def fetch_historical_data(days: int = 60) -> List[Dict]:
     """
-    Fetch historical OHLCV data from Binance.
+    Fetch historical OHLCV data from Binance with caching.
     Returns list of candles with: time, open, high, low, close, volume
     """
+    global _cached_candles, _cache_time
+    import time as _time
+    
+    # Return cached data if fresh
+    if _cached_candles and _cache_time and (_time.time() - _cache_time) < CACHE_TTL:
+        return _cached_candles
+    
     import requests
     
     try:
@@ -115,11 +127,13 @@ def fetch_historical_data(days: int = 60) -> List[Dict]:
                 "volume": float(k[5])
             })
         
-        logger.info(f"Fetched {len(candles)} historical candles")
+        _cached_candles = candles
+        _cache_time = _time.time()
+        logger.info(f"Fetched and cached {len(candles)} historical candles")
         return candles
     except Exception as e:
         logger.error(f"Failed to fetch historical data: {e}")
-        return []
+        return _cached_candles or []
 
 
 def calculate_indicators(candles: List[Dict]) -> List[Dict]:
@@ -164,6 +178,7 @@ def calculate_indicators(candles: List[Dict]) -> List[Dict]:
 def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     """
     Run a single backtest with given parameters.
+    Uses TA-based entry signals (not random), fixed take-profit.
     Returns performance metrics.
     """
     if len(candles) < 60:
@@ -189,6 +204,10 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     max_equity = equity
     max_drawdown = 0
     
+    # Pre-compute average volume for volume spike detection
+    volumes = [c.get("volume", 0) for c in candles[40:60]]
+    avg_volume = sum(volumes) / len(volumes) if volumes else 1
+    
     # Run simulation
     for i in range(60, len(candles)):
         candle = candles[i]
@@ -196,6 +215,10 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
         rsi = candle.get("rsi", 50)
         sma20 = candle.get("sma20", price)
         sma50 = candle.get("sma50", price)
+        vol = candle.get("volume", 0)
+        
+        # Update rolling average volume
+        avg_volume = avg_volume * 0.95 + vol * 0.05
         
         # Reset daily counter
         day = candle["time"] // (24 * 60 * 60 * 1000)
@@ -208,15 +231,21 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
             entry = position["entry"]
             pnl_pct = (price - entry) / entry
             
-            # Take profit
-            tp_target = tp_min + (tp_max - tp_min) * random.random()
-            if pnl_pct >= tp_target:
+            # Fixed take-profit at tp_max (not random)
+            if pnl_pct >= tp_max:
                 position["exit"] = price
                 position["pnl"] = pnl_pct
                 position["win"] = True
                 trades.append(position)
-                # Only risk_pct of equity is in play, apply PnL on that portion
                 equity += equity * risk_pct * pnl_pct * 0.95  # 5% fee
+                position = None
+            # Partial take-profit at tp_min if RSI overbought
+            elif pnl_pct >= tp_min and rsi > rsi_overbought:
+                position["exit"] = price
+                position["pnl"] = pnl_pct
+                position["win"] = True
+                trades.append(position)
+                equity += equity * risk_pct * pnl_pct * 0.95
                 position = None
             # Stop loss
             elif pnl_pct <= -stop_floor:
@@ -224,7 +253,6 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
                 position["pnl"] = pnl_pct
                 position["win"] = False
                 trades.append(position)
-                # Only risk_pct of equity is in play
                 equity += equity * risk_pct * pnl_pct
                 position = None
             
@@ -235,36 +263,42 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
             if dd > max_drawdown:
                 max_drawdown = dd
         
-        # Check for entry (using weighted scoring like the real bot)
+        # Check for entry using TA-based signals (no randomness!)
         if not position and daily_trades < max_trades:
-            # Extract entry weights from params
             entry_min = params.get("entry_score_min", 0.25)
             brk_w = params.get("breakout_weight", 0.30)
             trn_w = params.get("trend_weight", 0.20)
             
-            # Entry conditions
-            trend_ok = price > sma20 and sma20 > sma50 if sma50 else price > sma20
+            # --- TA-based signal components (deterministic) ---
+            # 1. Trend: price > SMA20 > SMA50
+            trend_ok = price > sma20 and (sma50 is None or sma20 > sma50)
+            
+            # 2. RSI conditions
             rsi_ok = rsi_oversold < rsi < rsi_overbought
             oversold = rsi <= rsi_oversold + 5
             
-            # Simulate ML signal
-            ml_signal = random.random() > (1 - ml_threshold * 0.8)
-            
-            # Breakout check (price above recent high)
+            # 3. Breakout: price above 20-period high
             recent_high = max(c["high"] for c in candles[max(0,i-20):i])
             breakout = price > recent_high * 1.0001
             
-            # Weighted entry score (mirrors eth_master_bot.py scoring)
-            remaining_w = 1.0 - brk_w - trn_w
-            entry_score = (
+            # 4. Volume spike: current volume > 1.5x average
+            vol_spike = vol > avg_volume * 1.5 if avg_volume > 0 else False
+            
+            # 5. Momentum: price higher than 3 candles ago
+            momentum = price > candles[i-3]["close"] if i >= 3 else False
+            
+            # Composite TA score (deterministic, no random!)
+            ta_score = (
                 brk_w * (1.0 if breakout else 0.0) +
                 trn_w * (1.0 if trend_ok else 0.0) +
-                remaining_w * 0.3 * (1.0 if rsi_ok else 0.0) +
-                remaining_w * 0.3 * (1.0 if oversold else 0.0) +
-                remaining_w * 0.4 * (1.0 if ml_signal else 0.0)
+                0.15 * (1.0 if oversold else 0.0) +
+                0.10 * (1.0 if vol_spike else 0.0) +
+                0.10 * (1.0 if momentum else 0.0) +
+                0.10 * (1.0 if rsi_ok else 0.0)
             )
             
-            if entry_score >= entry_min:
+            # ML signal: TA score exceeds threshold (deterministic!)
+            if ta_score >= entry_min and ta_score >= ml_threshold * 0.7:
                 position = {
                     "entry": price,
                     "time": candle["time"],
@@ -279,7 +313,6 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     wins = [t for t in trades if t["win"]]
     win_rate = len(wins) / len(trades) * 100
     
-    total_pnl = sum(t["pnl"] for t in trades)
     roi = (equity - initial_equity) / initial_equity * 100
     
     # Sharpe ratio (simplified)
@@ -375,7 +408,7 @@ def save_strategy(params: Dict, metrics: Dict):
 
 
 async def run_single_backtest():
-    """Run a single backtest cycle"""
+    """Run a single backtest with walk-forward validation (70/30 split)"""
     global BACKTEST_STATE
     
     try:
@@ -383,34 +416,56 @@ async def run_single_backtest():
         params = generate_random_params()
         BACKTEST_STATE["current_params"] = params
         
-        # Fetch historical data (cached in real implementation)
+        # Fetch historical data (cached for 1 hour)
         candles = fetch_historical_data(60)
-        if not candles:
+        if not candles or len(candles) < 120:
             return
         
         # Add indicators
         candles = calculate_indicators(candles)
         
-        # Run backtest
-        metrics = run_backtest(candles, params)
+        # Walk-Forward Validation: 70% train / 30% test
+        split_idx = int(len(candles) * 0.7)
+        train_candles = candles[:split_idx]
+        test_candles = candles[split_idx:]
         
-        if metrics:
-            # Save result
-            save_strategy(params, metrics)
-            
-            # Update state
+        # Run backtest on TRAIN set first (for param validation)
+        train_metrics = run_backtest(train_candles, params)
+        if not train_metrics or train_metrics["score"] < 0:
+            # Strategy doesn't even work on train data, skip
             BACKTEST_STATE["tested_this_hour"] += 1
             BACKTEST_STATE["total_tested_today"] += 1
-            BACKTEST_STATE["last_test_time"] = datetime.utcnow().isoformat()
-            
-            if metrics["score"] > BACKTEST_STATE["best_score_today"]:
-                BACKTEST_STATE["best_score_today"] = metrics["score"]
-                BACKTEST_STATE["last_best_strategy"] = {**params, **metrics}
-            
-            logger.info(
-                f"Tested strategy #{BACKTEST_STATE['total_tested_today']}: "
-                f"Score={metrics['score']}, WinRate={metrics['win_rate']}%, ROI={metrics['roi']}%"
-            )
+            return
+        
+        # Run backtest on TEST set (out-of-sample, this is the real score)
+        test_metrics = run_backtest(test_candles, params)
+        if not test_metrics:
+            return
+        
+        # Use TEST score as the final score (out-of-sample validation)
+        # Average with train score to reduce variance, but weight test higher
+        oos_score = test_metrics["score"] * 0.7 + train_metrics["score"] * 0.3
+        test_metrics["score"] = round(oos_score, 2)
+        test_metrics["train_score"] = train_metrics["score"]
+        test_metrics["data_source"] = "historical_binance"
+        
+        # Save result (using test metrics)
+        save_strategy(params, test_metrics)
+        
+        # Update state
+        BACKTEST_STATE["tested_this_hour"] += 1
+        BACKTEST_STATE["total_tested_today"] += 1
+        BACKTEST_STATE["last_test_time"] = datetime.utcnow().isoformat()
+        
+        if test_metrics["score"] > BACKTEST_STATE["best_score_today"]:
+            BACKTEST_STATE["best_score_today"] = test_metrics["score"]
+            BACKTEST_STATE["last_best_strategy"] = {**params, **test_metrics}
+        
+        logger.info(
+            f"Tested strategy #{BACKTEST_STATE['total_tested_today']}: "
+            f"Train={train_metrics['score']:.1f} Test={test_metrics['score']:.1f} "
+            f"WinRate={test_metrics['win_rate']}% ROI={test_metrics['roi']}%"
+        )
     except Exception as e:
         logger.error(f"Backtest error: {e}")
 
