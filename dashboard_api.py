@@ -1886,23 +1886,8 @@ async def get_live_price():
             "latest_price": None
         }
 
-@app.get("/api/ml/models/status")
-async def get_ml_models_status():
-    """Get status of all stored ML models."""
-    try:
-        models = ml_model_store.list_models()
-        return {
-            "status": "ok",
-            "models": models,
-            "total_stored": len(models)
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "error": str(e),
-            "models": [],
-            "total_stored": 0
-        }
+# NOTE: /api/ml/models/status is defined later in the file (around line 3056)
+# with real data from ml_stats.json and learning.db. Do NOT duplicate it here.
 
 @app.get("/api/risk")
 async def get_risk_params():
