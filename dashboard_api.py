@@ -951,6 +951,7 @@ async def auto_learning_background():
     hour_start = datetime.now().hour
     hour_tested = 0
     best_score_session = 0
+    last_saved_score = None  # Duplicate detection
     
     while True:
         try:
@@ -1032,8 +1033,14 @@ async def auto_learning_background():
                 strategy = generate_mock_strategy()
             
             if strategy:
+                # Skip duplicates (same score as last saved)
+                if last_saved_score is not None and abs(strategy["score"] - last_saved_score) < 0.01:
+                    await asyncio.sleep(2)
+                    continue
+                
                 strategies_tested += 1
                 hour_tested += 1
+                last_saved_score = strategy["score"]
                 
                 # Save strategy to PostgreSQL
                 learning_store.save_strategy(strategy)
@@ -1079,8 +1086,8 @@ async def auto_learning_background():
                 if strategies_tested % 10 == 0:
                     print(f"Strategy #{strategies_tested}: Score={strategy['score']:.2f} | Hour: {hour_tested} | Best: {best_score_session:.1f}")
             
-            # Wait 10-30 seconds between tests
-            wait_time = random.randint(10, 30)
+            # Wait 3-5 seconds between tests (720-1200/hour)
+            wait_time = random.randint(3, 5)
             await asyncio.sleep(wait_time)
             
         except Exception as e:
@@ -3435,145 +3442,21 @@ _training_active = False
 
 @app.post("/api/ml/training/start")
 async def start_training(model: str = "all", episodes: int = 500):
-    """Start continuous ML training + strategy backtesting loop.
-    Runs until explicitly stopped via /api/ml/training/stop.
-    Independent of browser - keeps running even if page is closed."""
-    global _training_process, _training_active, _synced_training_data
+    """Start continuous training. Just toggles _training_active flag.
+    The actual training runs in auto_learning_background() which starts on boot."""
+    global _training_active, _synced_training_data
     
     if _training_active:
-        return {
-            "status": "already_running",
-            "message": "Training is already active"
-        }
+        return {"status": "already_running", "message": "Training is already active"}
     
-    try:
-        import threading
-        
-        _training_active = True
-        
-        def run_continuous_training():
-            global _training_active, _synced_training_data
-            import time as _time
-            import random as _random
-            
-            total_strategies_tested = 0
-            best_score_session = 0
-            
-            try:
-                import sys
-                sys.path.insert(0, str(Path(__file__).parent))
-                sys.path.insert(0, str(Path(__file__).parent / "src" / "ml"))
-                import learning_store
-                
-                # Phase 1: Train gradient boosting model (once)
-                _synced_training_data = {
-                    "status": "training", "model_type": "gradient_boosting",
-                    "model": "strategy_backtester", "architecture": "Parameter Optimization",
-                    "episode": 1, "total_episodes": 10, "progress_pct": 10,
-                    "win_rate": 0, "trades": 0, "roi": 0,
-                    "training_active": True, "received_at": datetime.now().isoformat()
-                }
-                
-                try:
-                    import numpy as np, requests as req2
-                    resp = req2.get("https://api.binance.com/api/v3/klines", params={
-                        "symbol": "ETHUSDT", "interval": "4h", "limit": 180
-                    }, timeout=15)
-                    prices = [float(c[4]) for c in resp.json()]
-                    
-                    from sklearn.ensemble import GradientBoostingClassifier
-                    from sklearn.preprocessing import StandardScaler
-                    X, y = [], []
-                    for i in range(20, len(prices) - 1):
-                        f = [(prices[i-j] - prices[i-j-1]) / prices[i-j-1] for j in range(5)]
-                        f += [np.mean(prices[i-5:i]) / prices[i], np.mean(prices[i-20:i]) / prices[i], np.std(prices[i-20:i]) / prices[i]]
-                        X.append(f)
-                        y.append(1 if prices[i+1] > prices[i] else 0)
-                    X, y = np.array(X), np.array(y)
-                    scaler = StandardScaler()
-                    X_s = scaler.fit_transform(X)
-                    gb = GradientBoostingClassifier(n_estimators=50, max_depth=3, learning_rate=0.1, random_state=42)
-                    split = int(len(X) * 0.8)
-                    gb.fit(X_s[:split], y[:split])
-                    acc = gb.score(X_s[split:], y[split:]) * 100
-                    _synced_training_data["win_rate"] = round(acc, 1)
-                    _synced_training_data["trades"] = len(X)
-                    try:
-                        import pickle
-                        mf = Path(os.getenv("LOG_DIR", "./logs")) / "ml_model.pkl"
-                        mf.parent.mkdir(exist_ok=True)
-                        with open(mf, "wb") as f: pickle.dump({"model": gb, "scaler": scaler}, f)
-                    except Exception: pass
-                except Exception as e:
-                    print(f"GB training skipped: {e}")
-                
-                # Phase 2: Import backtester
-                try:
-                    from strategy_backtester import (
-                        fetch_historical_data, calculate_indicators,
-                        run_backtest, generate_evolved_params, save_strategy,
-                        ensure_db
-                    )
-                    ensure_db()
-                except Exception as e:
-                    print(f"Backtester import error: {e}")
-                    import traceback; traceback.print_exc()
-                    _training_active = False
-                    return
-                
-                # Phase 3: CONTINUOUS backtesting loop
-                print("Continuous strategy backtesting started...")
-                while _training_active:
-                    try:
-                        params = generate_evolved_params()
-                        candles = fetch_historical_data(60)
-                        if not candles or len(candles) < 120:
-                            _time.sleep(30); continue
-                        candles = calculate_indicators(candles)
-                        
-                        sp = int(len(candles) * 0.7)
-                        train_m = run_backtest(candles[:sp], params)
-                        if not train_m or train_m["score"] < 0:
-                            total_strategies_tested += 1; _time.sleep(5); continue
-                        test_m = run_backtest(candles[sp:], params)
-                        if not test_m: _time.sleep(5); continue
-                        
-                        test_m["score"] = round(test_m["score"] * 0.7 + train_m["score"] * 0.3, 2)
-                        test_m["data_source"] = "historical_binance"
-                        save_strategy(params, test_m)
-                        total_strategies_tested += 1
-                        if test_m["score"] > best_score_session:
-                            best_score_session = test_m["score"]
-                        
-                        _synced_training_data = {
-                            "status": "training", "model_type": "strategy_backtester",
-                            "model": "strategy_backtester", "architecture": "Parameter Optimization",
-                            "episode": total_strategies_tested, "total_episodes": total_strategies_tested,
-                            "progress_pct": min(99, (total_strategies_tested % 100)),
-                            "win_rate": test_m.get("win_rate", 0), "trades": test_m.get("total_trades", 0),
-                            "roi": test_m.get("roi", 0), "best_roi": best_score_session,
-                            "training_active": True, "received_at": datetime.now().isoformat()
-                        }
-                    except Exception as e:
-                        print(f"Backtest cycle error: {e}")
-                    _time.sleep(_random.randint(10, 30))
-                
-                print(f"Training stopped. Tested {total_strategies_tested} strats. Best: {best_score_session:.1f}")
-            except Exception as e:
-                print(f"Training thread error: {e}")
-                import traceback; traceback.print_exc()
-            finally:
-                _training_active = False
-                if _synced_training_data:
-                    _synced_training_data["training_active"] = False
-                    _synced_training_data["status"] = "stopped"
-        
-        threading.Thread(target=run_continuous_training, daemon=True).start()
-        return {"status": "started", "message": "Continuous training started - runs until stopped"}
-        
-    except Exception as e:
-        _training_active = False
-        return {"status": "error", "message": str(e)}
+    _training_active = True
+    _synced_training_data = {
+        "status": "training", "model_type": "strategy_backtester",
+        "model": "strategy_backtester", "architecture": "Parameter Optimization",
+        "episode": 0, "total_episodes": 0, "progress_pct": 0,
+        "training_active": True, "received_at": datetime.now().isoformat()
+    }
+    return {"status": "started", "message": "Training resumed"}
 
 
 @app.post("/api/ml/training/stop")
