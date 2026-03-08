@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import {
     Brain, TrendingUp, Target, Zap, CheckCircle, Activity,
     BarChart3, Clock, Cpu, Database, RefreshCw, Settings,
@@ -67,12 +67,15 @@ const LearningView = () => {
     const [strategies, setStrategies] = useState<Strategy[]>([])
     const [, setLoading] = useState(true)
     const [activeTab, setActiveTab] = useState<'overview' | 'training' | 'models' | 'logs'>('overview')
-    const [trainingActive, setTrainingActive] = useState(false)
+    // Training state persisted in localStorage — ONLY user clicks change this
+    const [trainingActive, _setTrainingActive] = useState(() => localStorage.getItem('training_active') === 'true')
+    const setTrainingActive = (val: boolean) => {
+        _setTrainingActive(val)
+        localStorage.setItem('training_active', String(val))
+    }
     const [isRefreshing, setIsRefreshing] = useState(false)
     const [selectedModel, setSelectedModel] = useState<ModelInfo | null>(null)
     const [isStartingTraining, setIsStartingTraining] = useState(false)
-    // Lock: prevents polling from overriding button state after user action
-    const userActionLock = useRef<number>(0)
 
     // Start training function
     const startTraining = async () => {
@@ -90,7 +93,6 @@ const LearningView = () => {
             const data = await res.json()
             if (data.status !== 'error') {
                 setTrainingActive(true)
-                userActionLock.current = Date.now() + 30000 // Lock for 30s
                 setLogs(prev => [{
                     time: new Date().toLocaleTimeString(),
                     level: 'success',
@@ -118,7 +120,6 @@ const LearningView = () => {
                 headers: { 'Authorization': `Bearer ${token}` }
             })
             setTrainingActive(false)
-            userActionLock.current = Date.now() + 30000 // Lock for 30s
             setLogs(prev => [{
                 time: new Date().toLocaleTimeString(),
                 level: 'info',
@@ -268,13 +269,8 @@ const LearningView = () => {
                         setTrainingActive(true)
                     }
                 } else {
-                    // Only override button state from polling if we're confident
-                    // AND user hasn't manually clicked within the last 30s
-                    if (!data.training_active && data.status !== 'starting' && data.status !== 'running') {
-                        if (Date.now() > userActionLock.current) {
-                            setTrainingActive(false)
-                        }
-                    }
+                    // NEVER reset button state from polling
+                    // Only user clicks change trainingActive
                 }
             }
         } catch (e) {
