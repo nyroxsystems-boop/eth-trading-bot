@@ -153,10 +153,10 @@ const LearningView = () => {
     ])
 
     const [models, setModels] = useState<ModelInfo[]>([
-        { name: 'Enhanced DQN', type: 'Dueling DQN + Attention + LSTM', accuracy: 0, lastTrained: 'Loading...', samples: 0, version: 'v3.0.0' },
+        { name: 'SGD Classifier', type: 'Online Learning (SGDClassifier)', accuracy: 0, lastTrained: 'Loading...', samples: 0, version: 'v3.1.0' },
+        { name: 'Strategy Optimizer', type: 'Parameter Grid Search + Backtest', accuracy: 0, lastTrained: 'Loading...', samples: 0, version: 'v2.5.0' },
         { name: 'Gradient Booster', type: 'XGBoost Ensemble', accuracy: 0, lastTrained: 'Loading...', samples: 0, version: 'v2.0.0' },
-        { name: 'LSTM Predictor', type: 'Deep Learning', accuracy: 0, lastTrained: 'Loading...', samples: 0, version: 'v1.2.4' },
-        { name: 'Sentiment Analyzer', type: 'NLP', accuracy: 0, lastTrained: 'Loading...', samples: 0, version: 'v3.0.2' },
+        { name: 'Sentiment Analyzer', type: 'RSS Feed Analysis', accuracy: 0, lastTrained: 'Loading...', samples: 0, version: 'v3.0.2' },
     ])
 
     // Manual refresh function that fetches all data
@@ -185,6 +185,11 @@ const LearningView = () => {
             if (res.ok) {
                 const data = await res.json()
                 setStats(data.stats || stats)
+                // Fix applied count: if current_strategy exists, at least 1 is applied
+                if (data.current_strategy && data.stats) {
+                    data.stats.total_applied = Math.max(data.stats.total_applied || 0, 1)
+                    setStats(data.stats)
+                }
                 setStrategies(data.strategies || [])
             } else {
                 setStrategies(generateMockStrategies())
@@ -228,18 +233,17 @@ const LearningView = () => {
                         win_rate: data.win_rate || 0,
                         trades: data.trades || 0,
                         portfolio_value: data.portfolio_value || 0,
-                        model: data.model || 'Enhanced DQN',
+                        model: data.model || 'Gradient Booster',
                         architecture: data.architecture || 'Unknown',
                         elapsed_seconds: data.elapsed_seconds || 0
                     })
 
-                    // Add to logs
-                    const newLog = {
-                        time: new Date().toLocaleTimeString(),
-                        level: 'success',
-                        message: `Episode ${data.episode}/${data.total_episodes} - ROI: ${data.roi?.toFixed(1)}% - WinRate: ${data.win_rate?.toFixed(0)}%`
-                    }
-                    setLogs(prev => [newLog, ...prev.slice(0, 19)])
+                    // Add to logs (only if message changed)
+                    const newMsg = `Episode ${data.episode}/${data.total_episodes} - ROI: ${data.roi?.toFixed(1)}% - WinRate: ${data.win_rate?.toFixed(0)}%`
+                    setLogs(prev => {
+                        if (prev.length > 0 && prev[0].message === newMsg) return prev
+                        return [{ time: new Date().toLocaleTimeString(), level: 'success', message: newMsg }, ...prev.slice(0, 19)]
+                    })
 
                     // Update models with live data ONLY if we have meaningful training data
                     // Don't overwrite existing API accuracy values with zeros
@@ -379,7 +383,7 @@ const LearningView = () => {
                 <StatCard icon={<TrendingUp />} label="Best Score" value={stats.best_score.toFixed(2)} positive={stats.best_score > 0} color="var(--primary-cyan)" />
                 <StatCard icon={<CheckCircle />} label="Applied" value={stats.total_applied} sublabel="Strategies in use" color="var(--success)" />
                 <StatCard icon={<Clock />} label="This Hour" value={stats.this_hour_tested} sublabel="Tests running" color="var(--warning)" />
-                <StatCard icon={<Zap />} label="Learning Rate" value="Adaptive" sublabel="DQN + Ensemble" color="var(--primary-pink)" />
+                <StatCard icon={<Zap />} label="Learning Rate" value="Adaptive" sublabel="SGD + Gradient Boosting" color="var(--primary-pink)" />
             </div>
 
             {/* Tab Navigation */}
@@ -579,12 +583,12 @@ const LearningView = () => {
                                     Hyperparameters
                                 </h3>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                    <HyperParam label="Replay Buffer Size" value="100,000" />
-                                    <HyperParam label="Target Update Freq" value="1,000 steps" />
-                                    <HyperParam label="Discount Factor (γ)" value="0.99" />
-                                    <HyperParam label="Epsilon (exploration)" value="0.1 → 0.01" />
-                                    <HyperParam label="Optimizer" value="Adam" />
-                                    <HyperParam label="Loss Function" value="Huber Loss" />
+                                    <HyperParam label="Training Method" value="Gradient Boosting" />
+                                    <HyperParam label="Estimators" value="50 trees" />
+                                    <HyperParam label="Max Depth" value="3" />
+                                    <HyperParam label="Learning Rate" value="0.1" />
+                                    <HyperParam label="Strategy Tests" value="500+ backtests" />
+                                    <HyperParam label="Online ML" value="SGDClassifier (live)" />
                                 </div>
                             </div>
 
