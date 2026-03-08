@@ -267,7 +267,7 @@ last_optimization = 0.0  # Timestamp of last parameter adjustment
 # Auto-adjusts ENTRY_SCORE_MIN based on trading activity
 _adaptive_entry_min = ENTRY_SCORE_MIN
 _last_trade_ts = time.time()
-_ENTRY_FLOOR = 0.15       # Never go below this
+_ENTRY_FLOOR = 0.10       # Lowered — paper mode needs to trade to learn
 _ENTRY_CEILING = 0.45     # Never go above this
 _NO_TRADE_DECAY_HOURS = 2 # Start lowering after 2h of no trades
 _DECAY_STEP = 0.02        # Lower by 0.02 each check
@@ -537,7 +537,7 @@ def ml_online_update(df_feat: pd.DataFrame):
     global ml_warm, ml_conf_boost, ml_stats
     try:
         X, y = ml_prepare(df_feat)
-        if X.shape[0] < 200:
+        if X.shape[0] < 60:
             return
         if not ml_warm:
             clf.named_steps["sgd"].random_state = 42
@@ -545,9 +545,11 @@ def ml_online_update(df_feat: pd.DataFrame):
             clf.named_steps["sgd"].tol = 1e-3
             clf.named_steps["sgd"].alpha = 1e-4
             clf.named_steps["sgd"].loss = "log_loss"
-            clf.named_steps["sgd"].fit(X[:500], y[:500])
-            clf.named_steps["sgd"].partial_fit(X[500:], y[500:], classes=ml_classes)
+            clf.named_steps["sgd"].fit(X[:min(200, len(X))], y[:min(200, len(y))])
+            if len(X) > 200:
+                clf.named_steps["sgd"].partial_fit(X[200:], y[200:], classes=ml_classes)
             ml_warm = True
+            log(f"ML warm! Trained on {len(X)} samples")
         else:
             clf.named_steps["sgd"].partial_fit(X[-200:], y[-200:])
         recent = y[-500:] if len(y) >= 500 else y
@@ -575,7 +577,21 @@ def ml_online_update(df_feat: pd.DataFrame):
 
 def ml_predict_row(row) -> float:
     global ml_stats
-    if not ml_warm: return 0.5
+    if not ml_warm:
+        # Fallback: use technical indicators instead of flat 0.5
+        try:
+            rsi = float(row.get("rsi14", 50))
+            ema20 = float(row.get("ema20", 0))
+            close = float(row.get("close", 0))
+            macd = float(row.get("macd", 0))
+            # Simple TA-based signal: combine RSI + EMA trend + MACD
+            rsi_sig = 0.5 + (rsi - 50) / 200.0  # 0.25 to 0.75
+            trend_sig = 0.55 if close > ema20 else 0.45
+            macd_sig = 0.5 + np.tanh(macd * 100) * 0.1
+            p_ml = (rsi_sig * 0.4 + trend_sig * 0.3 + macd_sig * 0.3)
+            return float(np.clip(p_ml, 0.3, 0.7))
+        except Exception:
+            return 0.5
     v = np.array([[row["ret1"], row["ema20"], row["ema50"], row["macd"], row["macd_sig"],
                    row["rsi14"], row["atr"], row["bb_hi"], row["bb_lo"]]])
     try:
