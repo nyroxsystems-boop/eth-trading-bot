@@ -203,6 +203,7 @@ SEC_PML_MIN        = float(_os.getenv("SEC_PML_MIN", "0.40"))       # Lower ML t
         # ab hier gilt 'trendend'
 
 PAPER_BASE_USDT    = float(_os.getenv("PAPER_BASE_USDT", "100000"))
+PAPER_MODE         = _os.getenv("PAPER_MODE", "true").lower() in ("true", "1", "yes")
 SLEEP_SECONDS      = int(_os.getenv("LOOP_SLEEP", "120"))  # 2min — optimized for 100k ScraperAPI/month
 
 TG_TOKEN           = _os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -264,34 +265,51 @@ current_params = {
 last_optimization = 0.0  # Timestamp of last parameter adjustment
 
 # --- Adaptive Entry Threshold ---
-# Auto-adjusts ENTRY_SCORE_MIN based on trading activity
+# Self-correcting: bot MUST trade to learn and hit 1%/day target
 _adaptive_entry_min = ENTRY_SCORE_MIN
 _last_trade_ts = time.time()
-_ENTRY_FLOOR = 0.10       # Lowered — paper mode needs to trade to learn
-_ENTRY_CEILING = 0.45     # Never go above this
-_NO_TRADE_DECAY_HOURS = 2 # Start lowering after 2h of no trades
-_DECAY_STEP = 0.02        # Lower by 0.02 each check
+_ENTRY_FLOOR = 0.05        # Absolute minimum — nearly any signal triggers trade
+_ENTRY_CEILING = 0.40      # Max threshold after winning streak
+_NO_TRADE_DECAY_MIN = 30   # Start lowering after 30min of no trades (was 2h)
+_DECAY_STEP = 0.03         # Lower by 0.03 each check (was 0.02)
+_EMERGENCY_HOURS = 4       # After 4h with 0 trades: emergency mode
 
 def adapt_entry_threshold():
     """
-    Auto-adjust entry threshold based on trading activity.
-    - No trades for 2h+: lower threshold (bot is too picky)
-    - Winning trades: slightly raise threshold (be more selective)
-    - Losing streak: lower threshold (need more data)
+    Self-correcting entry threshold:
+    - No trades for 30min+: aggressively lower threshold
+    - Emergency mode after 4h: enter on ANY positive signal
+    - Winning trades: gently raise threshold
+    - Goal: bot MUST trade to learn and hit 1%/day
     """
-    global _adaptive_entry_min, ENTRY_SCORE_MIN, _last_trade_ts
+    global _adaptive_entry_min, ENTRY_SCORE_MIN, _last_trade_ts, SEC_PML_MIN
     
     hours_since_trade = (time.time() - _last_trade_ts) / 3600.0
+    min_since_trade = hours_since_trade * 60
     
-    if hours_since_trade >= _NO_TRADE_DECAY_HOURS:
-        # No trades = threshold too high, lower it
+    if min_since_trade >= _NO_TRADE_DECAY_MIN:
+        # No trades = threshold too high, lower it aggressively
         old = _adaptive_entry_min
-        _adaptive_entry_min = max(_ENTRY_FLOOR, _adaptive_entry_min - _DECAY_STEP)
+        # Faster decay the longer we haven't traded
+        decay = _DECAY_STEP * max(1, int(hours_since_trade))
+        _adaptive_entry_min = max(_ENTRY_FLOOR, _adaptive_entry_min - decay)
         ENTRY_SCORE_MIN = _adaptive_entry_min
+        
+        # Also lower ML threshold after 1h of no trades
+        if hours_since_trade >= 1.0:
+            SEC_PML_MIN = max(0.30, SEC_PML_MIN - 0.02)
+        
         if old != _adaptive_entry_min:
-            log(f"ADAPT entry threshold lowered: {old:.2f} -> {_adaptive_entry_min:.2f} (no trades for {hours_since_trade:.1f}h)")
+            log(f"ADAPT⚡ entry threshold: {old:.2f} -> {_adaptive_entry_min:.2f} | ml_min: {SEC_PML_MIN:.2f} | no trades for {min_since_trade:.0f}min")
+        
+        # EMERGENCY MODE: 4+ hours with 0 trades today
+        if hours_since_trade >= _EMERGENCY_HOURS and today_trades == 0:
+            _adaptive_entry_min = _ENTRY_FLOOR
+            ENTRY_SCORE_MIN = _ENTRY_FLOOR
+            SEC_PML_MIN = 0.25
+            log(f"🚨 EMERGENCY MODE: 0 trades in {hours_since_trade:.1f}h! Threshold={_ENTRY_FLOOR}, ml_min=0.25 — MUST TRADE")
     elif today_trades > 0 and loss_streak == 0:
-        # Winning = can afford to be pickier
+        # Winning = gently raise threshold
         _adaptive_entry_min = min(_ENTRY_CEILING, _adaptive_entry_min + 0.01)
         ENTRY_SCORE_MIN = _adaptive_entry_min
 
@@ -989,7 +1007,11 @@ def decide_and_trade():
     oversold_ok  = (rsi14 <= max(40.0, RSI_MIN)) and drawdown_ok and (px >= bb_lo * 1.0005)
 
     p_ml         = ml_predict_row(row)
-    secondary_ok = trend_ok and (rsi14 >= RSI_MIN) and (p_ml >= SEC_PML_MIN) and (px > ema20)
+    # In paper mode or when adapting: relax secondary check
+    if PAPER_MODE or ENTRY_SCORE_MIN <= 0.15:
+        secondary_ok = trend_ok and (px > ema20)  # Skip p_ml requirement
+    else:
+        secondary_ok = trend_ok and (rsi14 >= RSI_MIN) and (p_ml >= SEC_PML_MIN) and (px > ema20)
 
     adx_bonus = 0.0
     if regime["trend_ok"]:
