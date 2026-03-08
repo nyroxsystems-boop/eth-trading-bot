@@ -567,6 +567,39 @@ async def record_trade(trade: dict = None, request: Request = None):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+
+# Paper balance persistence file
+PAPER_BALANCE_FILE = LOG_DIR / "paper_balance.json"
+
+@app.post("/api/paper-balance")
+async def save_paper_balance(request: Request):
+    """Save paper trading balance (called by Worker bot on every trade exit)."""
+    try:
+        data = await request.json()
+        balance = data.get("balance", 0)
+        if balance > 0:
+            PAPER_BALANCE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            import json
+            with open(PAPER_BALANCE_FILE, 'w') as f:
+                json.dump({"balance": balance, "updated_at": datetime.now().isoformat()}, f)
+            return {"status": "saved", "balance": balance}
+        return {"status": "error", "message": "Invalid balance"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/paper-balance")
+async def get_paper_balance():
+    """Get persisted paper trading balance."""
+    try:
+        if PAPER_BALANCE_FILE.exists():
+            import json
+            with open(PAPER_BALANCE_FILE, 'r') as f:
+                data = json.load(f)
+            return data
+        return {"balance": 100000, "updated_at": None}
+    except Exception as e:
+        return {"balance": 100000, "updated_at": None}
+
 @app.get("/api/performance", response_model=PerformanceMetrics)
 async def get_performance():
     """Get performance metrics"""

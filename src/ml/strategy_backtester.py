@@ -64,9 +64,10 @@ _cache_time = None
 CACHE_TTL = 3600  # 1 hour
 
 
-def fetch_historical_data(days: int = 60) -> List[Dict]:
+def fetch_historical_data(days: int = 7) -> List[Dict]:
     """
     Fetch historical OHLCV data from Binance with caching.
+    Uses 5m candles to MATCH the bot's trading timeframe.
     Returns list of candles with: time, open, high, low, close, volume
     """
     global _cached_candles, _cache_time
@@ -79,32 +80,46 @@ def fetch_historical_data(days: int = 60) -> List[Dict]:
     import requests
     
     try:
-        # Binance API - 4h candles for 60 days = ~360 candles
+        # Binance API - 5m candles to match bot's INTERVAL
+        # 7 days × 288 candles/day = ~2016 candles (needs 2 requests)
         url = "https://api.binance.com/api/v3/klines"
-        params = {
-            "symbol": "ETHUSDT",
-            "interval": "4h",
-            "limit": min(1000, days * 6)  # 6 candles per day for 4h
-        }
+        all_candles = []
+        candles_needed = min(days * 288, 2000)  # 288 5m candles per day
         
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
+        # Paginate (Binance limit = 1000 per request)
+        start_time = int((_time.time() - days * 86400) * 1000)
         
-        candles = []
-        for k in response.json():
-            candles.append({
-                "time": k[0],
-                "open": float(k[1]),
-                "high": float(k[2]),
-                "low": float(k[3]),
-                "close": float(k[4]),
-                "volume": float(k[5])
-            })
+        while len(all_candles) < candles_needed:
+            params = {
+                "symbol": "ETHUSDT",
+                "interval": "5m",
+                "startTime": start_time,
+                "limit": 1000
+            }
+            response = requests.get(url, params=params, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            if not data:
+                break
+            
+            for k in data:
+                all_candles.append({
+                    "time": k[0],
+                    "open": float(k[1]),
+                    "high": float(k[2]),
+                    "low": float(k[3]),
+                    "close": float(k[4]),
+                    "volume": float(k[5])
+                })
+            
+            if len(data) < 1000:
+                break
+            start_time = int(data[-1][6]) + 1  # Next batch after last close_time
         
-        _cached_candles = candles
+        _cached_candles = all_candles
         _cache_time = _time.time()
-        logger.info(f"Fetched and cached {len(candles)} historical candles")
-        return candles
+        logger.info(f"Fetched {len(all_candles)} 5m candles ({days} days)")
+        return all_candles
     except Exception as e:
         logger.error(f"Failed to fetch historical data: {e}")
         return _cached_candles or []
@@ -372,18 +387,18 @@ def mutate_strategy(parent: Dict, mutation_rate: float = 0.20) -> Dict:
         return int(new_val)
     
     return {
-        "ml_threshold": mutate_float(parent["ml_threshold"], "ml_threshold"),
-        "risk_per_trade": mutate_float(parent["risk_per_trade"], "risk_per_trade"),
-        "tp_min": mutate_float(parent["tp_min"], "tp_min"),
-        "tp_max": mutate_float(parent["tp_max"], "tp_max"),
-        "stop_floor": mutate_float(parent["stop_floor"], "stop_floor"),
-        "rsi_oversold": mutate_int(parent["rsi_oversold"], "rsi_oversold"),
-        "rsi_overbought": mutate_int(parent["rsi_overbought"], "rsi_overbought"),
-        "max_trades_per_day": mutate_int(parent["max_trades_per_day"], "max_trades_per_day"),
-        # These aren't in DB, pick from grid or mutate from defaults
-        "entry_score_min": random.choice(PARAM_GRID["entry_score_min"]),
-        "breakout_weight": random.choice(PARAM_GRID["breakout_weight"]),
-        "trend_weight": random.choice(PARAM_GRID["trend_weight"]),
+        "ml_threshold": mutate_float(parent.get("ml_threshold", 0.5), "ml_threshold"),
+        "risk_per_trade": mutate_float(parent.get("risk_per_trade", 0.008), "risk_per_trade"),
+        "tp_min": mutate_float(parent.get("tp_min", 0.01), "tp_min"),
+        "tp_max": mutate_float(parent.get("tp_max", 0.02), "tp_max"),
+        "stop_floor": mutate_float(parent.get("stop_floor", 0.005), "stop_floor"),
+        "rsi_oversold": mutate_int(parent.get("rsi_oversold", 30), "rsi_oversold"),
+        "rsi_overbought": mutate_int(parent.get("rsi_overbought", 70), "rsi_overbought"),
+        "max_trades_per_day": mutate_int(parent.get("max_trades_per_day", 10), "max_trades_per_day"),
+        # NOW EVOLVED from parent instead of random!
+        "entry_score_min": mutate_float(parent.get("entry_score_min", 0.25), "entry_score_min"),
+        "breakout_weight": mutate_float(parent.get("breakout_weight", 0.30), "breakout_weight"),
+        "trend_weight": mutate_float(parent.get("trend_weight", 0.20), "trend_weight"),
     }
 
 

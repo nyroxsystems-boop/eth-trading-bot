@@ -204,6 +204,7 @@ SEC_PML_MIN        = float(_os.getenv("SEC_PML_MIN", "0.40"))       # Lower ML t
 
 PAPER_BASE_USDT    = float(_os.getenv("PAPER_BASE_USDT", "100000"))
 PAPER_MODE         = _os.getenv("PAPER_MODE", "true").lower() in ("true", "1", "yes")
+_paper_position_locked = 0.0  # Value locked in open positions
 SLEEP_SECONDS      = int(_os.getenv("LOOP_SLEEP", "120"))  # 2min — optimized for 100k ScraperAPI/month
 
 TG_TOKEN           = _os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -271,6 +272,7 @@ def apply_best_strategy():
     Load the best strategy from PostgreSQL and apply its params.
     Called every trading loop — picks up improvements from the backtester in real-time.
     Only reloads every 5 minutes to avoid DB spam.
+    NOTE: Does NOT set ENTRY_SCORE_MIN — that's controlled by adapt_entry_threshold().
     """
     global TP_MIN, TP_MAX, STOP_FLOOR, RISK_PCT_PER_TRADE, current_params
     global _last_strategy_load, SEC_PML_MIN
@@ -290,7 +292,7 @@ def apply_best_strategy():
         old_tp = TP_MAX
         old_stop = STOP_FLOOR
         
-        # Apply strategy params to live trading
+        # Apply strategy params to live trading (TP/SL/Risk only)
         if "tp_min" in p:
             TP_MIN = float(p["tp_min"])
         if "tp_max" in p:
@@ -309,7 +311,7 @@ def apply_best_strategy():
         
         if old_tp != TP_MAX or old_stop != STOP_FLOOR:
             score = best.get("score", 0)
-            log(f"🧠 AUTO-APPLY strategy (score={score:.1f}): TP={TP_MIN*100:.2f}-{TP_MAX*100:.2f}% Stop={STOP_FLOOR*100:.2f}% Risk={RISK_PCT_PER_TRADE*100:.2f}% ML_th={SEC_PML_MIN:.2f}")
+            log(f"AUTO-APPLY strategy (score={score:.1f}): TP={TP_MIN*100:.2f}-{TP_MAX*100:.2f}% Stop={STOP_FLOOR*100:.2f}% Risk={RISK_PCT_PER_TRADE*100:.2f}% ML_th={SEC_PML_MIN:.2f}")
     except Exception as e:
         pass  # Silently fail — don't break trading loop
 
@@ -757,9 +759,41 @@ if AUTO_OPTIMIZE:
         log("WARN auto_optimizer module not found, disabling auto-optimization")
 
 # ------------------ BALANCE / ORDERS ------------------
+def _save_paper_balance():
+    """Persist paper balance to PostgreSQL so it survives deploys."""
+    try:
+        api_url = _os.getenv("RAILWAY_URL", _os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
+        if not api_url:
+            api_url = "https://web-production-d57ac.up.railway.app"
+        if api_url and not api_url.startswith("http"):
+            api_url = f"https://{api_url}"
+        requests.post(f"{api_url}/api/paper-balance",
+                      json={"balance": round(PAPER_BASE_USDT, 2)}, timeout=5)
+    except Exception:
+        pass
+
+def _load_paper_balance():
+    """Load persisted paper balance from web API."""
+    global PAPER_BASE_USDT
+    try:
+        api_url = _os.getenv("RAILWAY_URL", _os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
+        if not api_url:
+            api_url = "https://web-production-d57ac.up.railway.app"
+        if api_url and not api_url.startswith("http"):
+            api_url = f"https://{api_url}"
+        r = requests.get(f"{api_url}/api/paper-balance", timeout=5)
+        data = r.json()
+        if data.get("balance") and data["balance"] > 0:
+            PAPER_BASE_USDT = float(data["balance"])
+            log(f"Loaded paper balance from DB: ${PAPER_BASE_USDT:.2f}")
+    except Exception:
+        pass  # Use default from env
+
 def usdt_balance() -> float:
     if DRY_RUN:
-        return PAPER_BASE_USDT
+        # Subtract value locked in open positions
+        available = PAPER_BASE_USDT - _paper_position_locked
+        return max(0, available)
     if not (BINANCE_API_KEY and BINANCE_API_SECRET):
         return 0.0
     try:
@@ -1128,6 +1162,7 @@ def decide_and_trade():
         if qty * px >= 10 and today_trades < MAX_TRADES_PER_DAY:
             if place_buy(qty, px):
                 open_position = __add_open_bar_time({"entry": px, "qty": qty, "atr": atr, "entry_row": dict(row)}, row)
+                _paper_position_locked = qty * px  # Lock capital in position
                 today_trades += 1
                 bars_in_position = 0
                 _last_trade_ts = time.time()  # Reset adaptive threshold timer
@@ -1147,6 +1182,8 @@ def decide_and_trade():
             ml_feedback_trade(open_position.get("entry_row", row), outcome_win=True)
             sync_paper_trade("SELL", open_position["qty"], px, pnl_val)
             PAPER_BASE_USDT += pnl_val  # Track paper PnL
+            _paper_position_locked = 0.0  # Release locked capital
+            _save_paper_balance()  # Persist across deploys
             place_sell(open_position["qty"])
             open_position = None
             bars_in_position = 0
@@ -1159,6 +1196,8 @@ def decide_and_trade():
             ml_feedback_trade(open_position.get("entry_row", row), outcome_win=False)
             sync_paper_trade("SELL", open_position["qty"], px, pnl_val)
             PAPER_BASE_USDT += pnl_val  # Track paper PnL
+            _paper_position_locked = 0.0
+            _save_paper_balance()
             place_sell(open_position["qty"])
             open_position = None
             bars_in_position = 0
@@ -1175,6 +1214,8 @@ def decide_and_trade():
             ml_feedback_trade(open_position.get("entry_row", row), outcome_win=(upnl_time > 0))
             sync_paper_trade("SELL", open_position["qty"], px, pnl_val)
             PAPER_BASE_USDT += pnl_val  # Track paper PnL
+            _paper_position_locked = 0.0
+            _save_paper_balance()
             place_sell(open_position["qty"])
             open_position = None
             bars_in_position = 0
@@ -1193,6 +1234,7 @@ def decide_and_trade():
             return
         if place_buy(qty, px):
             open_position = __add_open_bar_time({"entry": px, "qty": qty, "atr": atr, "entry_row": dict(row)}, row)
+            _paper_position_locked = qty * px  # Lock capital
             today_trades += 1
             bars_in_position = 0
             _last_trade_ts = time.time()  # Reset adaptive threshold timer
@@ -1211,9 +1253,10 @@ def rss_thread():
                 break
 
 def main_loop():
-    tg("✅ Bot gestartet | DRY_RUN=%s | MaxTrades=%s" % (DRY_RUN, MAX_TRADES_PER_DAY))
+    tg("Bot gestartet | DRY_RUN=%s | MaxTrades=%s" % (DRY_RUN, MAX_TRADES_PER_DAY))
     log(f"START ETH Master Bot | DRY_RUN={DRY_RUN} | MaxTrades={MAX_TRADES_PER_DAY}")
     if DRY_RUN:
+        _load_paper_balance()  # Load persisted balance from PostgreSQL
         log(f"Paper USDT: {PAPER_BASE_USDT:.2f}")
     if not (TG_TOKEN and TG_CHAT):
         log("HINWEIS: Telegram nicht konfiguriert (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)")
