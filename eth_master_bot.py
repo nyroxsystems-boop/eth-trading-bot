@@ -263,6 +263,55 @@ current_params = {
     'tp_max': TP_MAX,
 }
 last_optimization = 0.0  # Timestamp of last parameter adjustment
+_last_strategy_load = 0.0  # Timestamp of last strategy load
+_STRATEGY_RELOAD_INTERVAL = 300  # Check for better strategy every 5 minutes
+
+def apply_best_strategy():
+    """
+    Load the best strategy from PostgreSQL and apply its params.
+    Called every trading loop — picks up improvements from the backtester in real-time.
+    Only reloads every 5 minutes to avoid DB spam.
+    """
+    global TP_MIN, TP_MAX, STOP_FLOOR, RISK_PCT_PER_TRADE, current_params
+    global _last_strategy_load, SEC_PML_MIN
+    
+    # Only reload every 5 minutes
+    if time.time() - _last_strategy_load < _STRATEGY_RELOAD_INTERVAL:
+        return
+    _last_strategy_load = time.time()
+    
+    try:
+        import learning_store
+        best = learning_store.get_current_strategy()
+        if not best or not best.get("params"):
+            return
+        
+        p = best["params"]
+        old_tp = TP_MAX
+        old_stop = STOP_FLOOR
+        
+        # Apply strategy params to live trading
+        if "tp_min" in p:
+            TP_MIN = float(p["tp_min"])
+        if "tp_max" in p:
+            TP_MAX = float(p["tp_max"])
+        if "stop_floor" in p:
+            STOP_FLOOR = float(p["stop_floor"])
+        if "risk_per_trade" in p:
+            RISK_PCT_PER_TRADE = float(p["risk_per_trade"])
+        if "ml_threshold" in p:
+            SEC_PML_MIN = max(0.30, float(p["ml_threshold"]))
+        
+        # Update current_params dict for tracking
+        current_params['tp_min'] = TP_MIN
+        current_params['tp_max'] = TP_MAX
+        current_params['risk_pct'] = RISK_PCT_PER_TRADE
+        
+        if old_tp != TP_MAX or old_stop != STOP_FLOOR:
+            score = best.get("score", 0)
+            log(f"🧠 AUTO-APPLY strategy (score={score:.1f}): TP={TP_MIN*100:.2f}-{TP_MAX*100:.2f}% Stop={STOP_FLOOR*100:.2f}% Risk={RISK_PCT_PER_TRADE*100:.2f}% ML_th={SEC_PML_MIN:.2f}")
+    except Exception as e:
+        pass  # Silently fail — don't break trading loop
 
 # --- Adaptive Entry Threshold ---
 # Self-correcting: bot MUST trade to learn and hit 1%/day target
@@ -981,6 +1030,9 @@ def decide_and_trade():
     
     # Adaptive entry threshold: auto-lower if not trading
     adapt_entry_threshold()
+    
+    # Auto-apply best strategy from backtester (every 5 min)
+    apply_best_strategy()
 
     row   = df_feat.iloc[-1]
     px    = float(row["close"])

@@ -9,7 +9,6 @@ Target: 60-120 strategies per hour (1 every 30-60 seconds)
 """
 
 import os
-import sqlite3
 import asyncio
 import random
 from datetime import datetime, timedelta
@@ -17,13 +16,21 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import logging
 
+# Import shared learning store (PostgreSQL-backed, persistent across deploys)
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+import learning_store
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Paths
-LOG_DIR = Path(os.getenv("LOG_DIR", "./logs"))
-LEARNING_DB = LOG_DIR / "learning.db"
+
+def ensure_db():
+    """Ensure PostgreSQL tables exist via learning_store"""
+    learning_store.ensure_learning_tables()
+    logger.info("✅ Strategy Backtester: using PostgreSQL via learning_store")
+
 
 # Strategy parameter ranges for grid search
 PARAM_GRID = {
@@ -35,7 +42,6 @@ PARAM_GRID = {
     "rsi_oversold": [25, 30, 35],
     "rsi_overbought": [65, 70, 75],
     "max_trades_per_day": [8, 10, 15, 20],
-    # Entry score weights — auto-optimized now
     "entry_score_min": [0.15, 0.20, 0.25, 0.30, 0.35],
     "breakout_weight": [0.20, 0.25, 0.30, 0.35, 0.40],
     "trend_weight": [0.10, 0.15, 0.20, 0.25, 0.30],
@@ -56,38 +62,6 @@ BACKTEST_STATE = {
 _cached_candles = None
 _cache_time = None
 CACHE_TTL = 3600  # 1 hour
-
-
-def ensure_db():
-    """Ensure database and table exist"""
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(LEARNING_DB)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS strategies (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ml_threshold REAL NOT NULL,
-            risk_per_trade REAL NOT NULL,
-            tp_min REAL NOT NULL,
-            tp_max REAL NOT NULL,
-            stop_floor REAL NOT NULL,
-            rsi_oversold INTEGER DEFAULT 30,
-            rsi_overbought INTEGER DEFAULT 70,
-            max_trades_per_day INTEGER NOT NULL,
-            total_trades INTEGER NOT NULL,
-            win_rate REAL NOT NULL,
-            roi REAL NOT NULL,
-            sharpe_ratio REAL NOT NULL,
-            max_drawdown REAL NOT NULL,
-            score REAL NOT NULL,
-            timestamp TEXT NOT NULL,
-            applied INTEGER DEFAULT 0,
-            applied_at TEXT,
-            backtest_period_days INTEGER DEFAULT 30
-        )
-    """)
-    conn.commit()
-    conn.close()
 
 
 def fetch_historical_data(days: int = 60) -> List[Dict]:
@@ -358,24 +332,16 @@ def generate_random_params() -> Dict:
 
 
 def get_top_strategies(n: int = 10) -> List[Dict]:
-    """Fetch top N strategies from local DB for evolution"""
+    """Fetch top N strategies from PostgreSQL for evolution"""
     try:
-        conn = sqlite3.connect(LEARNING_DB)
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor,
-                   rsi_oversold, rsi_overbought, max_trades_per_day, score
-            FROM strategies ORDER BY score DESC LIMIT ?
-        """, (n,))
-        rows = cursor.fetchall()
-        conn.close()
-        
-        return [{
-            "ml_threshold": r[0], "risk_per_trade": r[1],
-            "tp_min": r[2], "tp_max": r[3], "stop_floor": r[4],
-            "rsi_oversold": int(r[5]), "rsi_overbought": int(r[6]),
-            "max_trades_per_day": int(r[7]), "score": r[8]
-        } for r in rows]
+        all_strats = learning_store.get_all_strategies(limit=n)
+        results = []
+        for s in all_strats:
+            p = s.get("params", {})
+            # Extract params for mutation/crossover
+            p["score"] = s.get("score", 0)
+            results.append(p)
+        return results
     except Exception as e:
         logger.error(f"Failed to fetch top strategies: {e}")
         return []
@@ -476,53 +442,30 @@ def generate_evolved_params() -> Dict:
 
 
 def save_strategy(params: Dict, metrics: Dict):
-    """Save strategy result to database"""
-    conn = sqlite3.connect(LEARNING_DB)
-    cursor = conn.cursor()
+    """Save strategy result to PostgreSQL via learning_store"""
+    strategy = {
+        "params": params,
+        "metrics": metrics,
+        "score": metrics.get("score", 0),
+        "applied": False,
+        "data_source": metrics.get("data_source", "historical_binance")
+    }
     
-    cursor.execute("""
-        INSERT INTO strategies (
-            ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor,
-            rsi_oversold, rsi_overbought, max_trades_per_day,
-            total_trades, win_rate, roi, sharpe_ratio, max_drawdown,
-            score, timestamp, backtest_period_days
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        params["ml_threshold"],
-        params["risk_per_trade"],
-        params["tp_min"],
-        params["tp_max"],
-        params["stop_floor"],
-        params["rsi_oversold"],
-        params["rsi_overbought"],
-        params["max_trades_per_day"],
-        metrics["total_trades"],
-        metrics["win_rate"],
-        metrics["roi"],
-        metrics["sharpe_ratio"],
-        metrics["max_drawdown"],
-        metrics["score"],
-        datetime.utcnow().isoformat(),
-        60  # backtest period
-    ))
-    
-    conn.commit()
-    
-    # Check if this is the new best and auto-apply
-    cursor.execute("SELECT MAX(score) FROM strategies WHERE applied = 0")
-    max_score = cursor.fetchone()[0] or 0
-    
-    if metrics["score"] >= max_score and metrics["score"] > 20:
-        # Auto-apply this strategy
-        cursor.execute("UPDATE strategies SET applied = 0")  # Clear previous
-        cursor.execute(
-            "UPDATE strategies SET applied = 1, applied_at = ? WHERE score = ?",
-            (datetime.utcnow().isoformat(), metrics["score"])
-        )
-        conn.commit()
-        logger.info(f"Auto-applied new best strategy with score {metrics['score']}")
-    
-    conn.close()
+    try:
+        learning_store.save_strategy(strategy)
+        
+        # Check if this is the new best and auto-apply
+        current = learning_store.get_current_strategy()
+        current_score = current.get("score", 0) if current else 0
+        
+        if metrics["score"] > current_score and metrics["score"] > 15:
+            # Auto-apply this strategy as current best
+            strategy["applied"] = True
+            strategy["applied_at"] = datetime.utcnow().isoformat()
+            learning_store.set_current_strategy(strategy)
+            logger.info(f"🏆 Auto-applied new best strategy! Score: {metrics['score']:.1f} (was {current_score:.1f})")
+    except Exception as e:
+        logger.error(f"Error saving strategy: {e}")
 
 
 async def run_single_backtest():
