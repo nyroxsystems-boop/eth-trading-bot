@@ -3045,16 +3045,19 @@ async def get_all_models_status():
     
     log_dir = Path(os.getenv("LOG_DIR", "./logs"))
     
-    # Read real ML stats from bot's ml_stats.json
-    ml_stats = {}
-    stats_file = log_dir / "ml_stats.json"
-    try:
-        if stats_file.exists():
-            import json
-            with open(stats_file, "r") as f:
-                ml_stats = json.load(f)
-    except Exception:
-        pass
+    # Read real ML stats from Worker (synced via /api/ml/stats-sync)
+    ml_stats = _synced_ml_stats if _synced_ml_stats else {}
+    
+    # Also try local file as fallback
+    if not ml_stats:
+        stats_file = log_dir / "ml_stats.json"
+        try:
+            if stats_file.exists():
+                import json
+                with open(stats_file, "r") as f:
+                    ml_stats = json.load(f)
+        except Exception:
+            pass
     
     # Read strategy backtester stats from learning.db
     backtester_stats = {"total_tested": 0, "best_score": 0, "last_tested": None}
@@ -3190,6 +3193,15 @@ async def get_dqn_live_training():
 
 # In-memory cache for synced training data (from local machines)
 _synced_training_data = {}
+# In-memory cache for ML stats synced from Worker container
+_synced_ml_stats = {}
+
+@app.post("/api/ml/stats-sync")
+async def sync_ml_stats(data: dict):
+    """Receive ML stats from Worker container"""
+    global _synced_ml_stats
+    _synced_ml_stats = data
+    return {"ok": True}
 
 @app.post("/api/ml/training-sync")
 async def sync_training_data(data: dict):
