@@ -1051,6 +1051,7 @@ def should_one_and_done(today_trades, loss_streak):
 def decide_and_trade():
     global today_trades, last_trade_day, open_position
     global day_start_equity, loss_streak, cooldown_until_ts, bars_in_position
+    global _last_trade_ts, _paper_position_locked, PAPER_BASE_USDT
 
 
     if now_date() != last_trade_day:

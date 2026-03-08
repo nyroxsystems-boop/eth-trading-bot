@@ -4,7 +4,7 @@ ETH Trading Bot - Dashboard API
 Real-time WebSocket API for Premium Trading Dashboard
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Header
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, FileResponse
