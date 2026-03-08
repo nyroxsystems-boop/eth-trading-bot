@@ -770,6 +770,29 @@ def usdt_balance() -> float:
     except Exception as e:
         log(f"WARN balance fetch: {e}")
         return 0.0
+def sync_paper_trade(action: str, qty: float, price: float, pnl: float = 0):
+    """Sync paper trade to Web container Dashboard.
+    Posts to /api/trades/record so trades appear on the UI."""
+    try:
+        api_url = _os.getenv("RAILWAY_URL", _os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
+        if not api_url:
+            api_url = "https://web-production-d57ac.up.railway.app"
+        if api_url and not api_url.startswith("http"):
+            api_url = f"https://{api_url}"
+        
+        trade_data = {
+            "timestamp": datetime.now().isoformat(),
+            "action": action,
+            "qty": round(qty, 6),
+            "price": round(price, 2),
+            "pnl": round(pnl, 2)
+        }
+        requests.post(f"{api_url}/api/trades/record", json=trade_data, timeout=5)
+        log(f"PAPER-TRADE synced: {action} {qty:.5f} @ {price:.2f} PnL={pnl:.2f}")
+    except Exception as e:
+        log(f"WARN paper trade sync failed: {e}")
+
+
 def place_buy(qty: float, price_hint: float) -> bool:
     """
     BUY ausführen mit Pre-BUY-Guards und Trailing-State.
@@ -1108,6 +1131,7 @@ def decide_and_trade():
                 today_trades += 1
                 bars_in_position = 0
                 _last_trade_ts = time.time()  # Reset adaptive threshold timer
+                sync_paper_trade("BUY", qty, px)
                 tg(f"▶️ LONG {BASE_ASSET} (OS-FAST) @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | adx={regime['adx']:.1f} | rsi={rsi14:.1f}")
                 return
     # ----------------------------------------------------
@@ -1117,18 +1141,24 @@ def decide_and_trade():
         bars_in_position += 1
         decision = update_position_management(px, row, effective_tp)
         if decision == "TP":
+            pnl_val = (px - open_position['entry']) * open_position['qty']
             msg = f"✅ TP hit | +{(px/open_position['entry']-1.0)*100:.2f}% | close @{px:.2f}"
             log("INFO "+msg); tg(msg)
             ml_feedback_trade(open_position.get("entry_row", row), outcome_win=True)
+            sync_paper_trade("SELL", open_position["qty"], px, pnl_val)
+            PAPER_BASE_USDT += pnl_val  # Track paper PnL
             place_sell(open_position["qty"])
             open_position = None
             bars_in_position = 0
             loss_streak = 0
             return
         elif decision == "SL":
+            pnl_val = (px - open_position['entry']) * open_position['qty']
             msg = f"⚠️ SL hit | {(px/open_position['entry']-1.0)*100:.2f}% | close @{px:.2f}"
             log("INFO "+msg); tg(msg)
             ml_feedback_trade(open_position.get("entry_row", row), outcome_win=False)
+            sync_paper_trade("SELL", open_position["qty"], px, pnl_val)
+            PAPER_BASE_USDT += pnl_val  # Track paper PnL
             place_sell(open_position["qty"])
             open_position = None
             bars_in_position = 0
@@ -1138,10 +1168,13 @@ def decide_and_trade():
                 log(f"COOLDOWN {COOLDOWN_MIN}m after loss streak ({loss_streak})")
             return
         elif decision == "TIME":
+            pnl_val = (px - open_position['entry']) * open_position['qty']
             msg = f"⏱️ Time exit | close @{px:.2f}"
             log("INFO "+msg); tg(msg)
             upnl_time = (px / open_position["entry"]) - 1.0
             ml_feedback_trade(open_position.get("entry_row", row), outcome_win=(upnl_time > 0))
+            sync_paper_trade("SELL", open_position["qty"], px, pnl_val)
+            PAPER_BASE_USDT += pnl_val  # Track paper PnL
             place_sell(open_position["qty"])
             open_position = None
             bars_in_position = 0
@@ -1163,6 +1196,7 @@ def decide_and_trade():
             today_trades += 1
             bars_in_position = 0
             _last_trade_ts = time.time()  # Reset adaptive threshold timer
+            sync_paper_trade("BUY", qty, px)
             tg(f"▶️ LONG {BASE_ASSET} @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | p_ml={p_ml:.2f} | adx={regime['adx']:.1f} | oversold={oversold_ok} sec={secondary_ok}")
     else:
         log(f"INFO no entry | score={entry_score:.2f} p_ml={p_ml:.2f} adx={regime['adx']:.1f} px={px:.2f} rsi={rsi14:.1f} brk={breakout_ok} sec={secondary_ok} tr={trend_ok} dd={drawdown_ok} os={oversold_ok}")

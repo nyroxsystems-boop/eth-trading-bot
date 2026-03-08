@@ -536,6 +536,37 @@ async def get_trades(limit: int = 100):
     trades = await read_trades_csv()
     return trades[-limit:]
 
+
+@app.post("/api/trades/record")
+async def record_trade(trade: dict = None, request: Request = None):
+    """Record a paper trade from the Worker bot.
+    Called by eth_master_bot on every entry/exit."""
+    try:
+        if trade is None and request:
+            trade = await request.json()
+        
+        if not trade:
+            return {"status": "error", "message": "No trade data"}
+        
+        # Ensure CSV exists with header
+        if not TRADES_CSV.exists():
+            TRADES_CSV.parent.mkdir(parents=True, exist_ok=True)
+            with open(TRADES_CSV, 'w') as f:
+                f.write("timestamp,action,qty,price,pnl\n")
+        
+        # Append trade
+        with open(TRADES_CSV, 'a') as f:
+            ts = trade.get("timestamp", datetime.now().isoformat())
+            action = trade.get("action", "BUY")
+            qty = trade.get("qty", 0)
+            price = trade.get("price", 0)
+            pnl = trade.get("pnl", 0)
+            f.write(f"{ts},{action},{qty},{price},{pnl}\n")
+        
+        return {"status": "recorded", "action": trade.get("action")}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @app.get("/api/performance", response_model=PerformanceMetrics)
 async def get_performance():
     """Get performance metrics"""
