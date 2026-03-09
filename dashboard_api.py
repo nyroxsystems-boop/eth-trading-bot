@@ -532,7 +532,24 @@ async def get_trade_journal(limit: int = 200):
 
 @app.get("/api/trades", response_model=List[Trade])
 async def get_trades(limit: int = 100):
-    """Get recent trades"""
+    """Get recent trades — reads from PostgreSQL first, falls back to CSV"""
+    # Try PostgreSQL first (survives deploys)
+    if USE_POSTGRES:
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT timestamp, action, qty, price, pnl, mode 
+                    FROM paper_trades ORDER BY created_at DESC LIMIT %s
+                """, (limit,))
+                rows = cursor.fetchall()
+                if rows:
+                    return [{"timestamp": r[0], "action": r[1], "qty": r[2], 
+                             "price": r[3], "pnl": r[4] or 0, "mode": r[5] or "paper"} 
+                            for r in reversed(rows)]
+        except Exception as e:
+            print(f"⚠️ PG trades read error: {e}")
+    # Fallback to CSV
     trades = await read_trades_csv()
     return trades[-limit:]
 
@@ -554,7 +571,7 @@ async def record_trade(trade: dict = None, request: Request = None):
             with open(TRADES_CSV, 'w') as f:
                 f.write("timestamp,action,qty,price,pnl\n")
         
-        # Append trade
+        # Append trade to CSV
         with open(TRADES_CSV, 'a') as f:
             ts = trade.get("timestamp", datetime.now().isoformat())
             action = trade.get("action", "BUY")
@@ -562,6 +579,19 @@ async def record_trade(trade: dict = None, request: Request = None):
             price = trade.get("price", 0)
             pnl = trade.get("pnl", 0)
             f.write(f"{ts},{action},{qty},{price},{pnl}\n")
+        
+        # Also persist to PostgreSQL (survives deploys)
+        if USE_POSTGRES:
+            try:
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO paper_trades (timestamp, action, qty, price, pnl, mode)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (ts, action, float(qty), float(price), float(pnl),
+                          trade.get("mode", "paper")))
+            except Exception as e:
+                print(f"⚠️ PG trade save error: {e}")
         
         return {"status": "recorded", "action": trade.get("action")}
     except Exception as e:
@@ -1038,6 +1068,26 @@ async def startup_event():
                 """)
     except Exception as e:
         print(f"Trade journal table: {e}")
+    
+    # Create paper_trades table for trade persistence across deploys
+    try:
+        if USE_POSTGRES:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS paper_trades (
+                        id SERIAL PRIMARY KEY,
+                        timestamp TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        qty REAL DEFAULT 0,
+                        price REAL DEFAULT 0,
+                        pnl REAL DEFAULT 0,
+                        mode TEXT DEFAULT 'paper',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+    except Exception as e:
+        print(f"Paper trades table: {e}")
     
     # Start auto-learning background service
     asyncio.create_task(auto_learning_background())
@@ -2314,17 +2364,21 @@ async def get_learning_stats():
     """Get auto-learning statistics and strategies (PostgreSQL-backed)"""
     try:
         result = learning_store.get_learning_stats()
-        # Cross-reference: mark the strategy matching current_strategy as applied
+        # Cross-reference: mark the strategy closest to current_strategy score as applied
         current = result.get("current_strategy")
         if current and "strategies" in result:
             current_score = current.get("score", -999)
-            found_applied = False
-            for strat in result["strategies"]:
-                if not found_applied and abs(strat.get("score", 0) - current_score) < 0.5:
-                    strat["applied"] = True
-                    found_applied = True
-                else:
-                    strat["applied"] = False
+            # Find the closest match
+            best_idx = -1
+            best_diff = 999
+            for i, strat in enumerate(result["strategies"]):
+                diff = abs(strat.get("score", 0) - current_score)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_idx = i
+            # Mark only the closest match as applied
+            for i, strat in enumerate(result["strategies"]):
+                strat["applied"] = (i == best_idx and best_diff < 1.0)
             # Ensure total_applied >= 1 if current strategy exists
             if result.get("stats"):
                 result["stats"]["total_applied"] = max(result["stats"].get("total_applied", 0), 1)
