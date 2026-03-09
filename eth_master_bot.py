@@ -609,18 +609,16 @@ def ml_online_update(df_feat: pd.DataFrame):
         if X.shape[0] < 60:
             return
         if not ml_warm:
-            clf.named_steps["sgd"].random_state = 42
-            clf.named_steps["sgd"].max_iter = 200
-            clf.named_steps["sgd"].tol = 1e-3
-            clf.named_steps["sgd"].alpha = 1e-4
-            clf.named_steps["sgd"].loss = "log_loss"
-            clf.named_steps["sgd"].fit(X[:min(200, len(X))], y[:min(200, len(y))])
+            # Use full Pipeline.fit() so StandardScaler gets fitted too!
+            clf.fit(X[:min(200, len(X))], y[:min(200, len(y))])
             if len(X) > 200:
                 clf.named_steps["sgd"].partial_fit(X[200:], y[200:], classes=ml_classes)
             ml_warm = True
             log(f"ML warm! Trained on {len(X)} samples")
         else:
-            clf.named_steps["sgd"].partial_fit(X[-200:], y[-200:])
+            # Online update: scaler already fitted, just update SGD
+            X_scaled = clf.named_steps["scaler"].transform(X[-200:])
+            clf.named_steps["sgd"].partial_fit(X_scaled, y[-200:])
         recent = y[-500:] if len(y) >= 500 else y
         ml_conf_boost = float(np.mean(recent))
         # Track real ML stats
@@ -1143,12 +1141,12 @@ def decide_and_trade():
         boost
     )
     
-    # PAPER MODE GUARANTEE: if no trades for 4h+, boost score so bot trades
+    # PAPER MODE GUARANTEE: if no trades for 1h+, boost score so bot trades
     hours_idle = (time.time() - _last_trade_ts) / 3600.0
-    if PAPER_MODE and today_trades == 0 and hours_idle >= 4.0:
+    if PAPER_MODE and today_trades == 0 and hours_idle >= 1.0:
         # Force a trade: any positive signal gets through
-        paper_boost = 0.30  # Guaranteed to exceed any threshold
-        if trend_ok or rsi_ok_band or p_ml > 0.48:
+        paper_boost = 0.40  # Guaranteed to exceed ENTRY_SCORE_MIN (0.25)
+        if trend_ok or rsi_ok_band or p_ml > 0.45 or oversold_ok:
             base_score += paper_boost
             log(f"PAPER-FORCE: boosting entry score by {paper_boost} (idle {hours_idle:.1f}h, 0 trades)")
     

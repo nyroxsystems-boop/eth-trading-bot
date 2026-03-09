@@ -419,8 +419,9 @@ def crossover(parent_a: Dict, parent_b: Dict) -> Dict:
 def generate_evolved_params() -> Dict:
     """
     Evolutionary parameter generation:
-    - 70% chance: mutate or crossover from top strategies
-    - 30% chance: random exploration (discover new regions)
+    - 50% chance: mutate or crossover from top strategies (exploit)
+    - 50% chance: random exploration (discover new regions)
+    Higher exploration prevents convergence to a single strategy.
     """
     top = get_top_strategies(10)
     
@@ -428,31 +429,31 @@ def generate_evolved_params() -> Dict:
     if len(top) < 3:
         return generate_random_params()
     
-    if random.random() < 0.70:
+    if random.random() < 0.50:
         # EVOLUTION: build on what works
         roll = random.random()
-        if roll < 0.50:
-            # Mutate single parent (most common)
-            parent = random.choice(top[:5])  # Focus on top 5
-            child = mutate_strategy(parent)
-            logger.info(f"🧬 MUTATE from parent score={parent['score']:.1f}")
+        if roll < 0.40:
+            # Mutate single parent
+            parent = random.choice(top[:5])
+            child = mutate_strategy(parent, mutation_rate=0.30)  # Higher mutation
+            logger.info(f"MUTATE from parent score={parent['score']:.1f}")
             return child
-        elif roll < 0.80:
+        elif roll < 0.70:
             # Crossover two parents
             pa = random.choice(top[:5])
-            pb = random.choice(top[:10])
+            pb = random.choice(top)  # Any top 10, not just top 5
             child = crossover(pa, pb)
-            logger.info(f"🧬 CROSSOVER parents score={pa['score']:.1f} x {pb['score']:.1f}")
+            logger.info(f"CROSSOVER parents score={pa['score']:.1f} x {pb['score']:.1f}")
             return child
         else:
-            # Mutate with higher rate (explore around known good)
-            parent = random.choice(top[:3])  # Only top 3
-            child = mutate_strategy(parent, mutation_rate=0.35)
-            logger.info(f"🧬 BIG MUTATE from top parent score={parent['score']:.1f}")
+            # Big mutation (explore around known good)
+            parent = random.choice(top[:3])
+            child = mutate_strategy(parent, mutation_rate=0.50)  # 50% mutation
+            logger.info(f"BIG MUTATE from top parent score={parent['score']:.1f}")
             return child
     else:
         # EXPLORATION: try completely new combinations
-        logger.info("🔍 EXPLORE random params")
+        logger.info("EXPLORE random params")
         return generate_random_params()
 
 
