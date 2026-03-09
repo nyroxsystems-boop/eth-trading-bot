@@ -137,17 +137,32 @@ def get_evolution(days: int = 7) -> List[Dict]:
 
 
 def _pg_save_strategy(strategy: Dict):
-    """Save strategy to PostgreSQL."""
+    """Save strategy to PostgreSQL with deduplication."""
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            score = strategy.get("score", 0)
+            metrics = strategy.get("metrics", {})
+            
+            # DEDUP: Skip if a strategy with same score (within 0.5) and same win_rate already exists
+            cursor.execute("""
+                SELECT COUNT(*) FROM learning_strategies
+                WHERE ABS(score - %s) < 0.5
+                AND metrics::text LIKE %s
+            """, (
+                score,
+                f'%"win_rate": {metrics.get("win_rate", -1)}%'
+            ))
+            if cursor.fetchone()[0] > 0:
+                return  # Skip duplicate
+            
             cursor.execute("""
                 INSERT INTO learning_strategies (params, metrics, score, applied, data_source)
                 VALUES (%s, %s, %s, %s, %s)
             """, (
                 json.dumps(strategy.get("params", {})),
-                json.dumps(strategy.get("metrics", {})),
-                strategy.get("score", 0),
+                json.dumps(metrics),
+                score,
                 strategy.get("applied", False),
                 strategy.get("data_source", "historical_binance")
             ))

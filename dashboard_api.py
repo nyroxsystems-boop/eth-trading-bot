@@ -951,6 +951,16 @@ async def startup_event():
     # Initialize ML model store tables
     try:
         ml_model_store.ensure_model_tables()
+        # Also create kv_store for ML stats persistence
+        if USE_POSTGRES:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS kv_store (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL
+                    )
+                """)
     except Exception as e:
         print(f"⚠️ ML Model Store init error: {e}")
     
@@ -3195,6 +3205,20 @@ async def get_all_models_status():
         except Exception:
             pass
     
+    # Load from PostgreSQL if still empty (survives redeploys)
+    if not ml_stats and USE_POSTGRES:
+        try:
+            import json
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM kv_store WHERE key = 'ml_stats'")
+                row = cursor.fetchone()
+                if row:
+                    ml_stats = json.loads(row[0])
+                    _synced_ml_stats = ml_stats  # Cache in memory
+        except Exception:
+            pass
+    
     # Read strategy backtester stats from PostgreSQL (shared between containers)
     backtester_stats = {"total_tested": 0, "best_score": 0, "last_tested": None}
     try:
@@ -3330,9 +3354,21 @@ _synced_ml_stats = {}
 
 @app.post("/api/ml/stats-sync")
 async def sync_ml_stats(data: dict):
-    """Receive ML stats from Worker container"""
+    """Receive ML stats from Worker container — persist to PostgreSQL"""
     global _synced_ml_stats
     _synced_ml_stats = data
+    # Persist to PostgreSQL so stats survive redeploys
+    try:
+        if USE_POSTGRES:
+            import json
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO kv_store (key, value) VALUES ('ml_stats', %s)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                """, (json.dumps(data),))
+    except Exception as e:
+        print(f"ML stats persist: {e}")
     return {"ok": True}
 
 @app.post("/api/ml/training-sync")
