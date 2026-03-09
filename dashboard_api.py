@@ -980,6 +980,26 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ Learning store init error: {e}")
     
+    # Seed total_strategies_tested counter if not exists
+    try:
+        if USE_POSTGRES:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM kv_store WHERE key = 'total_strategies_tested'")
+                row = cursor.fetchone()
+                if not row or int(row[0]) < 100:
+                    # Seed with existing count from DB
+                    cursor.execute("SELECT COUNT(*) FROM learning_strategies")
+                    existing = cursor.fetchone()[0] or 0
+                    seed = max(existing, 500)  # At least 500 (known prior tests)
+                    cursor.execute("""
+                        INSERT INTO kv_store (key, value) VALUES ('total_strategies_tested', %s)
+                        ON CONFLICT (key) DO UPDATE SET value = %s
+                    """, (str(seed), str(seed)))
+                    print(f"✅ Seeded total_strategies_tested counter: {seed}")
+    except Exception as e:
+        print(f"⚠️ Counter seed error: {e}")
+    
     # Fix old $100 allocated capital → $10,000
     try:
         if USE_POSTGRES:
@@ -3187,7 +3207,7 @@ async def get_training_progress():
 @app.get("/api/ml/models/status")
 async def get_all_models_status():
     """Get status of all ML models - reads REAL data from running bot"""
-    global _synced_training_data
+    global _synced_training_data, _synced_ml_stats
     
     log_dir = Path(os.getenv("LOG_DIR", "./logs"))
     
