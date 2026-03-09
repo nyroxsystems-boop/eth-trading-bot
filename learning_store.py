@@ -149,6 +149,12 @@ def _pg_save_strategy(strategy: Dict):
                 INSERT INTO kv_store (key, value) VALUES ('total_strategies_tested', '1')
                 ON CONFLICT (key) DO UPDATE SET value = (COALESCE(kv_store.value::int, 0) + 1)::text
             """)
+            # Increment daily counter (resets each day)
+            today_key = f"strategies_tested_{datetime.now().strftime('%Y-%m-%d')}"
+            cursor.execute("""
+                INSERT INTO kv_store (key, value) VALUES (%s, '1')
+                ON CONFLICT (key) DO UPDATE SET value = (COALESCE(kv_store.value::int, 0) + 1)::text
+            """, (today_key,))
             
             # DEDUP: Skip if a strategy with same score (within 0.5) and same win_rate already exists
             cursor.execute("""
@@ -288,13 +294,22 @@ def _pg_get_stats() -> Dict:
             applied_row = cursor.fetchone()
             total_applied = applied_row[0] or 0
 
-            # Today's count
-            cursor.execute("""
-                SELECT COUNT(*) FROM learning_strategies
-                WHERE created_at >= CURRENT_DATE
-            """)
-            today_row = cursor.fetchone()
-            today_tested = today_row[0] or 0
+            # Today's count — use daily kv_store counter
+            today_tested = 0
+            try:
+                today_key = f"strategies_tested_{datetime.now().strftime('%Y-%m-%d')}"
+                cursor.execute("SELECT value FROM kv_store WHERE key = %s", (today_key,))
+                today_kv = cursor.fetchone()
+                if today_kv:
+                    today_tested = int(today_kv[0])
+            except Exception:
+                pass
+            if today_tested == 0:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM learning_strategies
+                    WHERE created_at >= CURRENT_DATE
+                """)
+                today_tested = cursor.fetchone()[0] or 0
 
             # This hour's count
             cursor.execute("""
