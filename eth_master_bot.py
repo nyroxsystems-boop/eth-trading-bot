@@ -137,6 +137,8 @@ except Exception:
 print("[Preflight] Hook aktiv – Orders werden vor dem Senden geprüft.")
 # === /Preflight Hook (auto) ===
 
+BOT_VERSION = "2.1.0-multiuser"  # Version marker for deploy verification
+
 
 # ------------------ CONFIG (via ENV) ------------------
 PAIR               = _os.getenv("PAIR", "ETHUSDT")
@@ -1356,9 +1358,9 @@ def rss_thread():
                 break
 
 def main_loop():
-    tg("Bot gestartet | DRY_RUN=%s | MaxTrades=%s" % (DRY_RUN, MAX_TRADES_PER_DAY))
-    log(f"START ETH Master Bot | DRY_RUN={DRY_RUN} | MaxTrades={MAX_TRADES_PER_DAY}")
-    if DRY_RUN:
+    tg("Bot gestartet | DRY_RUN=%s | PAPER_MODE=%s | MaxTrades=%s | Version=%s" % (DRY_RUN, PAPER_MODE, MAX_TRADES_PER_DAY, BOT_VERSION))
+    log(f"START ETH Master Bot | DRY_RUN={DRY_RUN} | PAPER_MODE={PAPER_MODE} | MaxTrades={MAX_TRADES_PER_DAY} | Version={BOT_VERSION}")
+    if DRY_RUN or PAPER_MODE:
         _load_paper_balance()  # Load persisted balance from PostgreSQL
         log(f"Paper USDT: {PAPER_BASE_USDT:.2f}")
     if not (TG_TOKEN and TG_CHAT):
