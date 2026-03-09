@@ -1191,14 +1191,17 @@ def decide_and_trade():
     
     base_score += conf_boost
     
-    # PAPER MODE GUARANTEE: if no trades for 1h+, boost score so bot trades
+    # PAPER MODE GUARANTEE: bot MUST trade to learn
     hours_idle = (time.time() - _last_trade_ts) / 3600.0
-    if PAPER_MODE and today_trades == 0 and hours_idle >= 1.0:
-        # Force a trade: any positive signal gets through
-        paper_boost = 0.40  # Guaranteed to exceed ENTRY_SCORE_MIN (0.25)
-        if trend_ok or rsi_ok_band or p_ml > 0.45 or oversold_ok:
-            base_score += paper_boost
-            log(f"PAPER-FORCE: boosting entry score by {paper_boost} (idle {hours_idle:.1f}h, 0 trades)")
+    if PAPER_MODE and today_trades == 0:
+        if hours_idle >= 2.0:
+            # UNCONDITIONAL: 2h+ with 0 trades — enter no matter what
+            base_score = max(base_score, ENTRY_SCORE_MIN + 0.20)
+            log(f"PAPER-FORCE UNCONDITIONAL: idle {hours_idle:.1f}h, 0 trades → forcing entry (score={base_score:.2f})")
+        elif hours_idle >= 1.0 and (trend_ok or rsi_ok_band or p_ml > 0.45 or oversold_ok):
+            # Conditional: 1h+ with a signal
+            base_score += 0.40
+            log(f"PAPER-FORCE: boosting entry score by 0.40 (idle {hours_idle:.1f}h, 0 trades)")
     
     entry_score = base_score
 
