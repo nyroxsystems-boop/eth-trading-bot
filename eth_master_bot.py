@@ -612,7 +612,8 @@ def ml_online_update(df_feat: pd.DataFrame):
             # Use full Pipeline.fit() so StandardScaler gets fitted too!
             clf.fit(X[:min(200, len(X))], y[:min(200, len(y))])
             if len(X) > 200:
-                clf.named_steps["sgd"].partial_fit(X[200:], y[200:], classes=ml_classes)
+                X_rest_scaled = clf.named_steps["scaler"].transform(X[200:])
+                clf.named_steps["sgd"].partial_fit(X_rest_scaled, y[200:], classes=ml_classes)
             ml_warm = True
             log(f"ML warm! Trained on {len(X)} samples")
         else:
@@ -702,9 +703,10 @@ def ml_feedback_trade(entry_row, outcome_win: bool):
             X = np.array([f for f, _ in _trade_feedback_buffer])
             y = np.array([l for _, l in _trade_feedback_buffer])
             
-            # Weight real trade outcomes 3x higher than price predictions
+            # Scale features before partial_fit (SGD expects scaled input)
+            X_scaled = clf.named_steps["scaler"].transform(X)
             sample_weight = np.ones(len(y)) * 3.0
-            clf.named_steps["sgd"].partial_fit(X, y, classes=ml_classes, sample_weight=sample_weight)
+            clf.named_steps["sgd"].partial_fit(X_scaled, y, classes=ml_classes, sample_weight=sample_weight)
             
             log(f"ML FEEDBACK: retrained on {len(_trade_feedback_buffer)} real trades "
                 f"(wins: {sum(y)}, losses: {len(y)-sum(y)})")
