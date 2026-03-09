@@ -20,6 +20,19 @@ from pathlib import Path
 import csv
 import sqlite3
 import aiosqlite
+import time as _time
+
+# Simple timed cache for slow endpoints
+_endpoint_cache = {}  # {key: (data, timestamp)}
+def _cached(key: str, ttl: int = 30):
+    """Return cached data if fresh, else None."""
+    if key in _endpoint_cache:
+        data, ts = _endpoint_cache[key]
+        if _time.time() - ts < ttl:
+            return data
+    return None
+def _set_cache(key: str, data):
+    _endpoint_cache[key] = (data, _time.time())
 
 # Import database adapter
 from db_adapter import get_db_connection, USE_POSTGRES
@@ -2361,14 +2374,16 @@ async def run_backtest(params: BacktestParams):
 
 @app.get("/api/learning/stats")
 async def get_learning_stats():
-    """Get auto-learning statistics and strategies (PostgreSQL-backed)"""
+    """Get auto-learning statistics and strategies (PostgreSQL-backed) — cached 30s"""
+    cached = _cached("learning_stats", ttl=30)
+    if cached:
+        return cached
     try:
         result = learning_store.get_learning_stats()
         # Cross-reference: mark the strategy closest to current_strategy score as applied
         current = result.get("current_strategy")
         if current and "strategies" in result:
             current_score = current.get("score", -999)
-            # Find the closest match
             best_idx = -1
             best_diff = 999
             for i, strat in enumerate(result["strategies"]):
@@ -2376,12 +2391,11 @@ async def get_learning_stats():
                 if diff < best_diff:
                     best_diff = diff
                     best_idx = i
-            # Mark only the closest match as applied
             for i, strat in enumerate(result["strategies"]):
                 strat["applied"] = (i == best_idx and best_diff < 1.0)
-            # Ensure total_applied >= 1 if current strategy exists
             if result.get("stats"):
                 result["stats"]["total_applied"] = max(result["stats"].get("total_applied", 0), 1)
+        _set_cache("learning_stats", result)
         return result
     except Exception as e:
         print(f"Error getting learning stats: {e}")
@@ -3413,7 +3427,10 @@ async def get_training_progress():
 
 @app.get("/api/ml/models/status")
 async def get_all_models_status():
-    """Get status of all ML models - reads REAL data from running bot"""
+    """Get status of all ML models - cached 30s"""
+    cached = _cached("models_status", ttl=30)
+    if cached:
+        return cached
     global _synced_training_data, _synced_ml_stats
     
     log_dir = Path(os.getenv("LOG_DIR", "./logs"))
@@ -3542,7 +3559,9 @@ async def get_all_models_status():
         except Exception:
             pass
     
-    return {"models": results, "total_stored": len([r for r in results if r.get("status") != "idle"])}
+    result = {"models": results, "total_stored": len([r for r in results if r.get("status") != "idle"])}
+    _set_cache("models_status", result)
+    return result
 
 
 @app.get("/api/ml/dqn/live")
