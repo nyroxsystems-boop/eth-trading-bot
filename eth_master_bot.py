@@ -818,8 +818,8 @@ def _load_paper_balance():
         pass  # Use default from env
 
 def usdt_balance() -> float:
-    if DRY_RUN:
-        # Subtract value locked in open positions
+    if PAPER_MODE or DRY_RUN:
+        # Paper mode: use paper balance
         available = PAPER_BASE_USDT - _paper_position_locked
         return max(0, available)
     if not (BINANCE_API_KEY and BINANCE_API_SECRET):
@@ -898,7 +898,7 @@ def place_buy(qty: float, price_hint: float) -> bool:
         return False
 
     # === DRY MODE ===
-    if DRY_RUN or not (BINANCE_API_KEY and BINANCE_API_SECRET):
+    if DRY_RUN or PAPER_MODE or not (BINANCE_API_KEY and BINANCE_API_SECRET):
         log(f"[DRY] BUY {qty:.5f} {BASE_ASSET} @ ~{price_hint:.2f}")
         
         # Trailing/TP State setzen
@@ -939,7 +939,7 @@ def place_buy(qty: float, price_hint: float) -> bool:
 
 def place_sell(qty: float) -> bool:
     px = last_price() or 0.0
-    if DRY_RUN or not (BINANCE_API_KEY and BINANCE_API_SECRET):
+    if DRY_RUN or PAPER_MODE or not (BINANCE_API_KEY and BINANCE_API_SECRET):
         log(f"[DRY] SELL {qty:.5f} {BASE_ASSET} @ ~{px:.2f}")
         return True
     try:
@@ -1211,7 +1211,7 @@ def decide_and_trade():
         sl_pct = max(STOP_FLOOR, STOP_ATR_MULT * (atr / max(px,1e-9)))
         eq = current_equity(px)
         qty = position_size_for_risk(px, sl_pct, eq)
-        if qty * px < 10 and DRY_RUN:
+        if qty * px < 10 and (PAPER_MODE or DRY_RUN):
             qty = max(qty, 50.0 / max(px, 1))  # Paper safety net
         if qty * px >= 10 and today_trades < MAX_TRADES_PER_DAY:
             if place_buy(qty, px):
@@ -1297,7 +1297,7 @@ def decide_and_trade():
         qty = position_size_for_risk(px, sl_pct, eq)
         log(f"DEBUG position: eq=${eq:.2f} risk_pct={RISK_PCT_PER_TRADE:.4f} sl={sl_pct:.4f} px={px:.2f} qty={qty:.6f} val=${qty*px:.2f} DRY_RUN={DRY_RUN}")
         if qty * px < 10:
-            if DRY_RUN:
+            if PAPER_MODE or DRY_RUN:
                 # Paper mode safety net: force minimum position
                 qty = max(qty, 50.0 / max(px, 1))  # At least $50
                 log(f"PAPER-FIX: forced min qty={qty:.6f} val=${qty*px:.2f}")

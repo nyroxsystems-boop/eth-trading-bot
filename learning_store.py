@@ -144,6 +144,12 @@ def _pg_save_strategy(strategy: Dict):
             score = strategy.get("score", 0)
             metrics = strategy.get("metrics", {})
             
+            # Increment lifetime counter (never pruned)
+            cursor.execute("""
+                INSERT INTO kv_store (key, value) VALUES ('total_strategies_tested', '1')
+                ON CONFLICT (key) DO UPDATE SET value = (COALESCE(kv_store.value::int, 0) + 1)::text
+            """)
+            
             # DEDUP: Skip if a strategy with same score (within 0.5) and same win_rate already exists
             cursor.execute("""
                 SELECT COUNT(*) FROM learning_strategies
@@ -185,6 +191,19 @@ def _pg_set_current(strategy: Dict):
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            # Clear old applied flags
+            cursor.execute("UPDATE learning_strategies SET applied = FALSE WHERE applied = TRUE")
+            # Mark the current strategy as applied (match by score)
+            score = strategy.get("score", 0)
+            cursor.execute("""
+                UPDATE learning_strategies SET applied = TRUE
+                WHERE id = (
+                    SELECT id FROM learning_strategies
+                    WHERE ABS(score - %s) < 0.5
+                    ORDER BY score DESC LIMIT 1
+                )
+            """, (score,))
+            # Upsert into current_strategy table
             cursor.execute("""
                 INSERT INTO learning_current_strategy (id, strategy, updated_at)
                 VALUES (1, %s, CURRENT_TIMESTAMP)
@@ -248,11 +267,21 @@ def _pg_get_stats() -> Dict:
         with get_db_connection() as conn:
             cursor = conn.cursor()
 
-            # Total & best
-            cursor.execute("SELECT COUNT(*), COALESCE(MAX(score), 0) FROM learning_strategies")
-            total_row = cursor.fetchone()
-            total_tested = total_row[0] or 0
-            best_score = min(total_row[1] or 0, 500)  # Cap insane scores
+            # Total — use lifetime counter from kv_store if available
+            total_tested = 0
+            try:
+                cursor.execute("SELECT value FROM kv_store WHERE key = 'total_strategies_tested'")
+                kv_row = cursor.fetchone()
+                if kv_row:
+                    total_tested = int(kv_row[0])
+            except Exception:
+                pass
+            if total_tested == 0:
+                cursor.execute("SELECT COUNT(*) FROM learning_strategies")
+                total_tested = cursor.fetchone()[0] or 0
+            
+            cursor.execute("SELECT COALESCE(MAX(score), 0) FROM learning_strategies")
+            best_score = min(cursor.fetchone()[0] or 0, 500)  # Cap insane scores
 
             # Applied count
             cursor.execute("SELECT COUNT(*) FROM learning_strategies WHERE applied = TRUE")
