@@ -2313,7 +2313,22 @@ async def run_backtest(params: BacktestParams):
 async def get_learning_stats():
     """Get auto-learning statistics and strategies (PostgreSQL-backed)"""
     try:
-        return learning_store.get_learning_stats()
+        result = learning_store.get_learning_stats()
+        # Cross-reference: mark the strategy matching current_strategy as applied
+        current = result.get("current_strategy")
+        if current and "strategies" in result:
+            current_score = current.get("score", -999)
+            found_applied = False
+            for strat in result["strategies"]:
+                if not found_applied and abs(strat.get("score", 0) - current_score) < 0.5:
+                    strat["applied"] = True
+                    found_applied = True
+                else:
+                    strat["applied"] = False
+            # Ensure total_applied >= 1 if current strategy exists
+            if result.get("stats"):
+                result["stats"]["total_applied"] = max(result["stats"].get("total_applied", 0), 1)
+        return result
     except Exception as e:
         print(f"Error getting learning stats: {e}")
         return {
