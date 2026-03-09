@@ -183,7 +183,7 @@ TRAIL_STATE = {
 }
 
 MAX_DRAWDOWN_DAY   = float(_os.getenv("MAX_DRAWDOWN_DAY", "0.03"))     # 3% Tages-MaxDD -> Pause
-LOSS_STREAK_COOL   = int(_os.getenv("LOSS_STREAK_COOL", "2"))          # n Verluste in Folge -> Cooldown
+LOSS_STREAK_COOL   = int(_os.getenv("LOSS_STREAK_COOL", "3"))          # n Verluste in Folge -> Cooldown
 COOLDOWN_MIN       = int(_os.getenv("COOLDOWN_MIN", "10"))             # Minuten Pause nach Loss-Streak
 
 BREAK_EVEN_TRIGGER = float(_os.getenv("BREAK_EVEN_TRIGGER", "0.006"))  # +0.6% -> SL auf BE
@@ -197,6 +197,8 @@ ADX_MIN_TREND      = float(_os.getenv("ADX_MIN_TREND", "15.0"))     # Lowered fo
 # --- Entry thresholds (tunable via ENV) ---
 ENTRY_SCORE_MIN    = float(_os.getenv("ENTRY_SCORE_MIN", "0.25"))   # Lowered — bot needs to actually trade
 BREAKOUT_PCT       = float(_os.getenv("BREAKOUT_PCT", "0.00005"))   # 0.005% über HH20 (easier)
+BREAKOUT_WEIGHT    = float(_os.getenv("BREAKOUT_WEIGHT", "0.32"))   # Dynamic from strategy
+TREND_WEIGHT       = float(_os.getenv("TREND_WEIGHT", "0.16"))      # Dynamic from strategy
 RSI_MIN            = float(_os.getenv("RSI_MIN", "35"))              # More opportunities
 RSI_MAX            = float(_os.getenv("RSI_MAX", "75"))              # Allow higher RSI entries
 SEC_PML_MIN        = float(_os.getenv("SEC_PML_MIN", "0.40"))       # Lower ML threshold
@@ -211,7 +213,6 @@ SLEEP_SECONDS      = int(_os.getenv("LOOP_SLEEP", "120"))  # 2min — optimized 
 # --- Confidence System ---
 win_streak     = 0       # Consecutive winning trades
 confidence_lvl = 0.0     # -1.0 (very cautious) to +1.0 (very aggressive)
-LOSS_STREAK_COOL = int(_os.getenv("LOSS_STREAK_COOL", "3"))
 
 TG_TOKEN           = _os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT            = _os.getenv("TELEGRAM_CHAT_ID", "")
@@ -283,6 +284,7 @@ def apply_best_strategy():
     global TP_MIN, TP_MAX, STOP_FLOOR, RISK_PCT_PER_TRADE, current_params
     global _last_strategy_load, SEC_PML_MIN
     global RSI_MIN, RSI_MAX, MAX_TRADES_PER_DAY, _ENTRY_CEILING
+    global BREAKOUT_WEIGHT, TREND_WEIGHT
     
     # Only reload every 5 minutes
     if time.time() - _last_strategy_load < _STRATEGY_RELOAD_INTERVAL:
@@ -323,6 +325,12 @@ def apply_best_strategy():
         if "entry_score_min" in p:
             _ENTRY_CEILING = max(0.15, min(0.50, float(p["entry_score_min"])))
         
+        # Entry weights from backtester
+        if "breakout_weight" in p:
+            BREAKOUT_WEIGHT = float(p["breakout_weight"])
+        if "trend_weight" in p:
+            TREND_WEIGHT = float(p["trend_weight"])
+        
         # Update current_params dict for tracking
         current_params['tp_min'] = TP_MIN
         current_params['tp_max'] = TP_MAX
@@ -340,7 +348,7 @@ def apply_best_strategy():
 _adaptive_entry_min = ENTRY_SCORE_MIN
 _last_trade_ts = time.time()
 _ENTRY_FLOOR = 0.05        # Absolute minimum — nearly any signal triggers trade
-_ENTRY_CEILING = 0.40      # Max threshold after winning streak
+# _ENTRY_CEILING is set by apply_best_strategy() from backtester results
 _NO_TRADE_DECAY_MIN = 30   # Start lowering after 30min of no trades (was 2h)
 _DECAY_STEP = 0.03         # Lower by 0.03 each check (was 0.02)
 _EMERGENCY_HOURS = 4       # After 4h with 0 trades: emergency mode
@@ -1152,11 +1160,11 @@ def decide_and_trade():
     boost = (p_ml - 0.5) * 0.4 + (sent_score * 0.1) + adx_bonus + vol_zone_boost
     effective_tp = compute_effective_tp(rsi14, regime, row)
 
-    # Oversold stärker gewichten
+    # Dynamic entry scoring (weights from backtester strategy)
     base_score = (
-        0.32*(1.0 if breakout_ok else 0.0) +
+        BREAKOUT_WEIGHT*(1.0 if breakout_ok else 0.0) +
         0.18*(1.0 if drawdown_ok else 0.0) +
-        0.16*(1.0 if trend_ok else 0.0) +
+        TREND_WEIGHT*(1.0 if trend_ok else 0.0) +
         0.06*(1.0 if rsi_ok_band else 0.0) +
         0.18*(1.0 if oversold_ok else 0.0) +
         0.05*(1.0 if secondary_ok else 0.0) +
@@ -1264,6 +1272,14 @@ def decide_and_trade():
             place_sell(open_position["qty"])
             open_position = None
             bars_in_position = 0
+            # Track win/loss on time exit too
+            if upnl_time > 0:
+                win_streak += 1
+                loss_streak = 0
+            else:
+                loss_streak += 1
+                win_streak = 0
+            log(f"CONFIDENCE: win_streak={win_streak} loss_streak={loss_streak} conf_lvl={confidence_lvl:.2f}")
             return
         return
 
