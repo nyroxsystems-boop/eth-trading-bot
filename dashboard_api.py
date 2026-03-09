@@ -1014,6 +1014,31 @@ async def startup_event():
     except Exception as e:
         print(f"Capital migration: {e}")
     
+    # Create trade_journal table for per-user trade logging
+    try:
+        if USE_POSTGRES:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS trade_journal (
+                        id SERIAL PRIMARY KEY,
+                        user_id INTEGER REFERENCES users(id),
+                        timestamp TEXT NOT NULL,
+                        action TEXT NOT NULL,
+                        qty REAL DEFAULT 0,
+                        price REAL DEFAULT 0,
+                        pnl REAL DEFAULT 0,
+                        mode TEXT DEFAULT 'paper',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_trade_journal_user 
+                    ON trade_journal (user_id, created_at DESC)
+                """)
+    except Exception as e:
+        print(f"Trade journal table: {e}")
+    
     # Start auto-learning background service
     asyncio.create_task(auto_learning_background())
     print("🧠 Auto-Learning Background Service started!")
@@ -1494,6 +1519,119 @@ async def save_user_api_keys(keys: UserApiKeysInput, current_user: Dict = Depend
     except Exception as e:
         print(f"❌ Error saving API keys: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ───────── MULTI-USER TRADE BROADCAST ─────────
+@app.post("/api/trades/broadcast")
+async def broadcast_trade(data: dict):
+    """
+    Bot calls this on every BUY/SELL signal.
+    Executes the trade on ALL users with trading_enabled=True.
+    Each user's position is sized proportionally to their balance.
+    """
+    action = data.get("action", "").upper()  # BUY or SELL
+    price = float(data.get("price", 0))
+    signal_qty = float(data.get("qty", 0))
+    pair = data.get("pair", "ETHUSDT")
+    risk_pct = float(data.get("risk_pct", 0.006))
+
+    if action not in ("BUY", "SELL") or price <= 0:
+        return {"status": "error", "message": "Invalid action or price"}
+
+    # Get all users with trading_enabled
+    results = []
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT user_id FROM user_api_keys WHERE trading_enabled = TRUE"
+                if USE_POSTGRES else
+                "SELECT user_id FROM user_api_keys WHERE trading_enabled = 1"
+            )
+            enabled_users = cursor.fetchall()
+    except Exception as e:
+        return {"status": "error", "message": f"DB error: {e}"}
+
+    for (uid,) in enabled_users:
+        try:
+            keys = user_mgr.get_api_keys(uid, decrypt=True)
+            if not keys or not keys.get("binance_api_key") or not keys.get("binance_api_secret"):
+                results.append({"user_id": uid, "status": "skip", "reason": "no_keys"})
+                continue
+
+            from binance.client import Client
+            cli = Client(keys["binance_api_key"], keys["binance_api_secret"])
+
+            if action == "BUY":
+                # Size position based on user's balance
+                try:
+                    balance_info = cli.get_asset_balance(asset="USDT")
+                    user_balance = float(balance_info["free"]) if balance_info else 0
+                except Exception:
+                    user_balance = 0
+
+                if user_balance < 10:
+                    results.append({"user_id": uid, "status": "skip", "reason": "low_balance", "balance": user_balance})
+                    continue
+
+                # Position: risk_pct of user's balance
+                risk_usd = user_balance * risk_pct
+                user_qty = risk_usd / max(price * 0.005, 0.001)  # ~0.5% SL
+                quote_value = round(user_qty * price, 2)
+                quote_value = min(quote_value, user_balance * 0.95)  # Max 95% of balance
+
+                if quote_value < 10:
+                    results.append({"user_id": uid, "status": "skip", "reason": "position_too_small"})
+                    continue
+
+                try:
+                    cli.order_market_buy(symbol=pair, quoteOrderQty=quote_value)
+                    results.append({"user_id": uid, "status": "filled", "action": "BUY", "value": quote_value})
+                except Exception as e:
+                    results.append({"user_id": uid, "status": "error", "error": str(e)})
+
+            elif action == "SELL":
+                # Sell all ETH the user holds
+                try:
+                    eth_info = cli.get_asset_balance(asset="ETH")
+                    eth_balance = float(eth_info["free"]) if eth_info else 0
+                except Exception:
+                    eth_balance = 0
+
+                if eth_balance < 0.001:
+                    results.append({"user_id": uid, "status": "skip", "reason": "no_eth"})
+                    continue
+
+                try:
+                    cli.order_market_sell(symbol=pair, quantity=round(eth_balance, 5))
+                    results.append({"user_id": uid, "status": "filled", "action": "SELL", "qty": eth_balance})
+                except Exception as e:
+                    results.append({"user_id": uid, "status": "error", "error": str(e)})
+
+            # Log per-user trade
+            try:
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO trade_journal (user_id, timestamp, action, qty, price, pnl, mode)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """ if USE_POSTGRES else """
+                        INSERT INTO trade_journal (user_id, timestamp, action, qty, price, pnl, mode) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (uid, datetime.now().isoformat(), action,
+                          results[-1].get("qty", results[-1].get("value", 0) / max(price, 1)),
+                          price, 0, "live"))
+            except Exception:
+                pass
+
+        except Exception as e:
+            results.append({"user_id": uid, "status": "error", "error": str(e)})
+
+    return {
+        "status": "broadcast_complete",
+        "total_users": len(enabled_users),
+        "results": results
+    }
 
 @app.get("/api/settings/user-telegram")
 async def get_user_telegram_settings(current_user: Dict = Depends(get_current_user)):

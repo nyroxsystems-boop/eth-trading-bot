@@ -910,6 +910,22 @@ def place_buy(qty: float, price_hint: float) -> bool:
         TRAIL_STATE['trail_pct'] = float(TRAIL_PCT)
         import time as _t
         TRAIL_STATE['opened_at'] = _t.time()
+        
+        # Broadcast to all connected users (multi-user live trading)
+        try:
+            api_url = _os.getenv("RAILWAY_URL", _os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
+            if not api_url:
+                api_url = "https://web-production-d57ac.up.railway.app"
+            if api_url and not api_url.startswith("http"):
+                api_url = f"https://{api_url}"
+            resp = requests.post(f"{api_url}/api/trades/broadcast", json={
+                "action": "BUY", "price": price_hint, "qty": qty,
+                "pair": PAIR, "risk_pct": float(RISK_PCT_PER_TRADE)
+            }, timeout=15)
+            log(f"BROADCAST BUY: {resp.json()}")
+        except Exception as e:
+            log(f"WARN broadcast failed: {e}")
+        
         return True
 
     # === LIVE ORDER ===
@@ -941,6 +957,21 @@ def place_sell(qty: float) -> bool:
     px = last_price() or 0.0
     if DRY_RUN or PAPER_MODE or not (BINANCE_API_KEY and BINANCE_API_SECRET):
         log(f"[DRY] SELL {qty:.5f} {BASE_ASSET} @ ~{px:.2f}")
+        
+        # Broadcast SELL to all connected users
+        try:
+            api_url = _os.getenv("RAILWAY_URL", _os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
+            if not api_url:
+                api_url = "https://web-production-d57ac.up.railway.app"
+            if api_url and not api_url.startswith("http"):
+                api_url = f"https://{api_url}"
+            resp = requests.post(f"{api_url}/api/trades/broadcast", json={
+                "action": "SELL", "price": px, "qty": qty, "pair": PAIR
+            }, timeout=15)
+            log(f"BROADCAST SELL: {resp.json()}")
+        except Exception as e:
+            log(f"WARN broadcast sell failed: {e}")
+        
         return True
     try:
         from binance.client import Client
