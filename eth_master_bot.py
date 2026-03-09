@@ -205,7 +205,13 @@ SEC_PML_MIN        = float(_os.getenv("SEC_PML_MIN", "0.40"))       # Lower ML t
 PAPER_BASE_USDT    = float(_os.getenv("PAPER_BASE_USDT", "100000"))
 PAPER_MODE         = _os.getenv("PAPER_MODE", "true").lower() in ("true", "1", "yes")
 _paper_position_locked = 0.0  # Value locked in open positions
+_ENTRY_CEILING     = ENTRY_SCORE_MIN  # Strategy-set ceiling for adaptive threshold
 SLEEP_SECONDS      = int(_os.getenv("LOOP_SLEEP", "120"))  # 2min — optimized for 100k ScraperAPI/month
+
+# --- Confidence System ---
+win_streak     = 0       # Consecutive winning trades
+confidence_lvl = 0.0     # -1.0 (very cautious) to +1.0 (very aggressive)
+LOSS_STREAK_COOL = int(_os.getenv("LOSS_STREAK_COOL", "3"))
 
 TG_TOKEN           = _os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT            = _os.getenv("TELEGRAM_CHAT_ID", "")
@@ -1066,6 +1072,7 @@ def decide_and_trade():
     global today_trades, last_trade_day, open_position
     global day_start_equity, loss_streak, cooldown_until_ts, bars_in_position
     global _last_trade_ts, _paper_position_locked, PAPER_BASE_USDT
+    global win_streak, confidence_lvl
 
 
     if now_date() != last_trade_day:
@@ -1157,6 +1164,25 @@ def decide_and_trade():
         boost
     )
     
+    # CONFIDENCE BOOST: winning streak → lower entry barrier
+    conf_boost = 0.0
+    if win_streak >= 5:
+        conf_boost = 0.15  # Hot streak: very aggressive
+        confidence_lvl = min(1.0, confidence_lvl + 0.1)
+    elif win_streak >= 3:
+        conf_boost = 0.10  # Good run: more aggressive
+        confidence_lvl = min(1.0, confidence_lvl + 0.05)
+    elif win_streak >= 1:
+        conf_boost = 0.03  # Recent win: slight boost
+    
+    if loss_streak >= 3:
+        conf_boost = -0.10  # Bad streak: more cautious
+        confidence_lvl = max(-1.0, confidence_lvl - 0.1)
+    elif loss_streak >= 2:
+        conf_boost = -0.05
+    
+    base_score += conf_boost
+    
     # PAPER MODE GUARANTEE: if no trades for 1h+, boost score so bot trades
     hours_idle = (time.time() - _last_trade_ts) / 3600.0
     if PAPER_MODE and today_trades == 0 and hours_idle >= 1.0:
@@ -1203,6 +1229,8 @@ def decide_and_trade():
             open_position = None
             bars_in_position = 0
             loss_streak = 0
+            win_streak += 1
+            log(f"CONFIDENCE: win_streak={win_streak} conf_lvl={confidence_lvl:.2f}")
             return
         elif decision == "SL":
             pnl_val = (px - open_position['entry']) * open_position['qty']
@@ -1217,6 +1245,8 @@ def decide_and_trade():
             open_position = None
             bars_in_position = 0
             loss_streak += 1
+            win_streak = 0  # Reset wins on loss
+            log(f"CONFIDENCE: loss_streak={loss_streak} conf_lvl={confidence_lvl:.2f}")
             if loss_streak >= LOSS_STREAK_COOL:
                 cooldown_until_ts = time.time() + COOLDOWN_MIN*60
                 log(f"COOLDOWN {COOLDOWN_MIN}m after loss streak ({loss_streak})")
