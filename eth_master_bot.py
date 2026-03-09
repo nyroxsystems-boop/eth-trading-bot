@@ -1211,6 +1211,8 @@ def decide_and_trade():
         sl_pct = max(STOP_FLOOR, STOP_ATR_MULT * (atr / max(px,1e-9)))
         eq = current_equity(px)
         qty = position_size_for_risk(px, sl_pct, eq)
+        if qty * px < 10 and DRY_RUN:
+            qty = max(qty, 50.0 / max(px, 1))  # Paper safety net
         if qty * px >= 10 and today_trades < MAX_TRADES_PER_DAY:
             if place_buy(qty, px):
                 open_position = __add_open_bar_time({"entry": px, "qty": qty, "atr": atr, "entry_row": dict(row)}, row)
@@ -1293,9 +1295,15 @@ def decide_and_trade():
         sl_pct = max(STOP_FLOOR, STOP_ATR_MULT * (atr / max(px,1e-9)))
         eq = current_equity(px)
         qty = position_size_for_risk(px, sl_pct, eq)
+        log(f"DEBUG position: eq=${eq:.2f} risk_pct={RISK_PCT_PER_TRADE:.4f} sl={sl_pct:.4f} px={px:.2f} qty={qty:.6f} val=${qty*px:.2f} DRY_RUN={DRY_RUN}")
         if qty * px < 10:
-            log("WARN position too small (<10 USDT) – skip")
-            return
+            if DRY_RUN:
+                # Paper mode safety net: force minimum position
+                qty = max(qty, 50.0 / max(px, 1))  # At least $50
+                log(f"PAPER-FIX: forced min qty={qty:.6f} val=${qty*px:.2f}")
+            else:
+                log("WARN position too small (<10 USDT) – skip")
+                return
         if place_buy(qty, px):
             open_position = __add_open_bar_time({"entry": px, "qty": qty, "atr": atr, "entry_row": dict(row)}, row)
             _paper_position_locked = qty * px  # Lock capital
