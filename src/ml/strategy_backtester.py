@@ -220,13 +220,17 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
             entry = position["entry"]
             pnl_pct = (price - entry) / entry
             
-            # Fixed take-profit at tp_max (not random)
+            # Position size = risk_capital / stop_loss_pct
+            # This is how the real bot sizes positions too
+            pos_size = equity * risk_pct / max(stop_floor, 0.001)
+            
+            # Fixed take-profit at tp_max
             if pnl_pct >= tp_max:
                 position["exit"] = price
                 position["pnl"] = pnl_pct
                 position["win"] = True
                 trades.append(position)
-                equity += equity * risk_pct * pnl_pct * 0.95  # 5% fee
+                equity += pos_size * pnl_pct * 0.999  # 0.1% fee
                 position = None
             # Partial take-profit at tp_min if RSI overbought
             elif pnl_pct >= tp_min and rsi > rsi_overbought:
@@ -234,7 +238,7 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
                 position["pnl"] = pnl_pct
                 position["win"] = True
                 trades.append(position)
-                equity += equity * risk_pct * pnl_pct * 0.95
+                equity += pos_size * pnl_pct * 0.999
                 position = None
             # Stop loss
             elif pnl_pct <= -stop_floor:
@@ -242,7 +246,7 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
                 position["pnl"] = pnl_pct
                 position["win"] = False
                 trades.append(position)
-                equity += equity * risk_pct * pnl_pct
+                equity += pos_size * pnl_pct  # Full loss, no fee
                 position = None
             
             # Update max drawdown
