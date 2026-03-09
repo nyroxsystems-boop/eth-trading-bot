@@ -970,6 +970,20 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ Learning store init error: {e}")
     
+    # Fix old $100 allocated capital → $10,000
+    try:
+        if USE_POSTGRES:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE user_trading_pairs SET allocated_capital = 10000
+                    WHERE allocated_capital <= 100
+                """)
+                if cursor.rowcount > 0:
+                    print(f"Migrated {cursor.rowcount} portfolio pairs: $100 -> $10,000")
+    except Exception as e:
+        print(f"Capital migration: {e}")
+    
     # Start auto-learning background service
     asyncio.create_task(auto_learning_background())
     print("🧠 Auto-Learning Background Service started!")
