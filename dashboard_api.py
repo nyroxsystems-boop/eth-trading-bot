@@ -85,7 +85,7 @@ class PortfolioPairCreate(BaseModel):
     trading_pair: str
     pair_name: Optional[str] = None
     pair_icon: Optional[str] = "💰"
-    allocated_capital: float = 100.0
+    allocated_capital: float = 10000.0
     risk_per_trade: float = 1.0
     max_trades_per_day: int = 10
     take_profit_pct: float = 1.5
@@ -1658,7 +1658,7 @@ async def get_user_portfolio_pairs(current_user: Dict = Depends(get_current_user
                     "trading_pair": row[1],
                     "pair_name": row[2] or row[1].replace("USDT", ""),
                     "pair_icon": row[3] or "💰",
-                    "allocated_capital": float(row[4] or 100),
+                    "allocated_capital": float(row[4] or 10000),
                     "risk_per_trade": float(row[5] or 0.01) * 100,  # Convert to %
                     "max_trades_per_day": row[6] or 10,
                     "take_profit_pct": float(row[7] or 0.015) * 100,
