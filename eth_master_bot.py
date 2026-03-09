@@ -269,13 +269,14 @@ _STRATEGY_RELOAD_INTERVAL = 300  # Check for better strategy every 5 minutes
 
 def apply_best_strategy():
     """
-    Load the best strategy from PostgreSQL and apply its params.
+    Load the best strategy from PostgreSQL and apply ALL params.
     Called every trading loop — picks up improvements from the backtester in real-time.
     Only reloads every 5 minutes to avoid DB spam.
-    NOTE: Does NOT set ENTRY_SCORE_MIN — that's controlled by adapt_entry_threshold().
+    Applies ALL 11 backtested parameters to live trading.
     """
     global TP_MIN, TP_MAX, STOP_FLOOR, RISK_PCT_PER_TRADE, current_params
     global _last_strategy_load, SEC_PML_MIN
+    global RSI_MIN, RSI_MAX, MAX_TRADES_PER_DAY, _ENTRY_CEILING
     
     # Only reload every 5 minutes
     if time.time() - _last_strategy_load < _STRATEGY_RELOAD_INTERVAL:
@@ -292,7 +293,7 @@ def apply_best_strategy():
         old_tp = TP_MAX
         old_stop = STOP_FLOOR
         
-        # Apply strategy params to live trading (TP/SL/Risk only)
+        # === Core Risk Parameters ===
         if "tp_min" in p:
             TP_MIN = float(p["tp_min"])
         if "tp_max" in p:
@@ -304,14 +305,27 @@ def apply_best_strategy():
         if "ml_threshold" in p:
             SEC_PML_MIN = max(0.30, float(p["ml_threshold"]))
         
+        # === Entry Parameters (NEW — were not applied before!) ===
+        if "rsi_oversold" in p:
+            RSI_MIN = float(p["rsi_oversold"])
+        if "rsi_overbought" in p:
+            RSI_MAX = float(p["rsi_overbought"])
+        if "max_trades_per_day" in p:
+            MAX_TRADES_PER_DAY = int(p["max_trades_per_day"])
+        
+        # Entry threshold: strategy sets the CEILING, adaptive controls the floor
+        if "entry_score_min" in p:
+            _ENTRY_CEILING = max(0.15, min(0.50, float(p["entry_score_min"])))
+        
         # Update current_params dict for tracking
         current_params['tp_min'] = TP_MIN
         current_params['tp_max'] = TP_MAX
         current_params['risk_pct'] = RISK_PCT_PER_TRADE
+        current_params['ml_threshold'] = SEC_PML_MIN
         
         if old_tp != TP_MAX or old_stop != STOP_FLOOR:
             score = best.get("score", 0)
-            log(f"AUTO-APPLY strategy (score={score:.1f}): TP={TP_MIN*100:.2f}-{TP_MAX*100:.2f}% Stop={STOP_FLOOR*100:.2f}% Risk={RISK_PCT_PER_TRADE*100:.2f}% ML_th={SEC_PML_MIN:.2f}")
+            log(f"AUTO-APPLY strategy (score={score:.1f}): TP={TP_MIN*100:.2f}-{TP_MAX*100:.2f}% Stop={STOP_FLOOR*100:.2f}% Risk={RISK_PCT_PER_TRADE*100:.2f}% ML={SEC_PML_MIN:.2f} RSI={RSI_MIN:.0f}-{RSI_MAX:.0f} MaxTrades={MAX_TRADES_PER_DAY}")
     except Exception as e:
         pass  # Silently fail — don't break trading loop
 
