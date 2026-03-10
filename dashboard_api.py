@@ -643,6 +643,55 @@ async def get_paper_balance():
     except Exception as e:
         return {"balance": 100000, "updated_at": None}
 
+# --- ML Model Persistence (survives Railway deploys) ---
+@app.post("/api/ml/model-state")
+async def save_ml_model_state(request: Request):
+    """Save ML model weights to PostgreSQL kv_store (called by Worker after training)."""
+    try:
+        data = await request.json()
+        import json as _json
+        model_json = _json.dumps(data)
+        
+        if USE_POSTGRES:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO kv_store (key, value) VALUES ('sgd_model_state', %s)
+                    ON CONFLICT (key) DO UPDATE SET value = %s
+                """, (model_json, model_json))
+            return {"status": "saved", "size": len(model_json)}
+        else:
+            # Fallback: save to file
+            model_file = LOG_DIR / "ml_model_state.json"
+            model_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(model_file, 'w') as f:
+                f.write(model_json)
+            return {"status": "saved_file", "size": len(model_json)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/ml/model-state")
+async def get_ml_model_state():
+    """Get persisted ML model weights (called by Worker on startup)."""
+    try:
+        if USE_POSTGRES:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM kv_store WHERE key = 'sgd_model_state'")
+                row = cursor.fetchone()
+                if row:
+                    import json as _json
+                    return _json.loads(row[0])
+        else:
+            model_file = LOG_DIR / "ml_model_state.json"
+            if model_file.exists():
+                import json as _json
+                with open(model_file, 'r') as f:
+                    return _json.loads(f.read())
+        return {"status": "empty"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @app.get("/api/performance", response_model=PerformanceMetrics)
 async def get_performance():
     """Get performance metrics"""

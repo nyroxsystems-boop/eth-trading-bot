@@ -685,6 +685,8 @@ def ml_online_update(df_feat: pd.DataFrame):
                         log(f"WARN ml stats-sync failed after 2 attempts (url={api_url})")
         except Exception:
             pass
+        # Persist model weights to survive deploys
+        save_ml_model()
     except Exception as e:
         log(f"WARN ml update failed: {e}")
 
@@ -749,8 +751,107 @@ def ml_feedback_trade(entry_row, outcome_win: bool):
             log(f"ML FEEDBACK: retrained on {len(_trade_feedback_buffer)} real trades "
                 f"(wins: {sum(y)}, losses: {len(y)-sum(y)})")
             _trade_feedback_buffer.clear()
+            # Persist model after trade feedback (most valuable learning)
+            save_ml_model()
     except Exception as e:
         log(f"WARN ml feedback failed: {e}")
+
+# --- ML Model Persistence (survive Railway deploys) ---
+_last_model_save = 0.0  # Throttle: save at most every 60s
+
+def save_ml_model():
+    """Serialize SGD pipeline weights and sync to web API for persistence."""
+    global _last_model_save
+    if not ml_warm:
+        return
+    
+    # Throttle saves to avoid API spam
+    if time.time() - _last_model_save < 60:
+        return
+    _last_model_save = time.time()
+    
+    try:
+        sgd = clf.named_steps["sgd"]
+        scaler = clf.named_steps["scaler"]
+        
+        state = {
+            "sgd_coef": sgd.coef_.tolist(),
+            "sgd_intercept": sgd.intercept_.tolist(),
+            "sgd_classes": sgd.classes_.tolist(),
+            "scaler_mean": scaler.mean_.tolist(),
+            "scaler_scale": scaler.scale_.tolist(),
+            "scaler_var": scaler.var_.tolist(),
+            "scaler_n_samples": int(scaler.n_samples_seen_) if hasattr(scaler, 'n_samples_seen_') else 200,
+            "ml_stats": ml_stats,
+            "ml_conf_boost": ml_conf_boost,
+            "saved_at": datetime.now().isoformat()
+        }
+        
+        api_url = os.getenv("RAILWAY_URL", os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
+        if not api_url:
+            api_url = "https://web-production-d57ac.up.railway.app"
+        if api_url and not api_url.startswith("http"):
+            api_url = f"https://{api_url}"
+        
+        resp = requests.post(f"{api_url}/api/ml/model-state", json=state, timeout=10)
+        if resp.status_code == 200:
+            log(f"ML MODEL SAVED: {len(str(state))} bytes, acc={ml_stats.get('accuracy', 0):.1f}%")
+        else:
+            log(f"WARN ml model save failed: HTTP {resp.status_code}")
+    except Exception as e:
+        log(f"WARN ml model save failed: {e}")
+
+def load_ml_model():
+    """Load persisted ML model weights from web API on startup."""
+    global ml_warm, ml_conf_boost, ml_stats
+    
+    try:
+        api_url = os.getenv("RAILWAY_URL", os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
+        if not api_url:
+            api_url = "https://web-production-d57ac.up.railway.app"
+        if api_url and not api_url.startswith("http"):
+            api_url = f"https://{api_url}"
+        
+        resp = requests.get(f"{api_url}/api/ml/model-state", timeout=10)
+        if resp.status_code != 200:
+            log("ML MODEL: no saved state found (fresh start)")
+            return False
+        
+        state = resp.json()
+        if state.get("status") in ("empty", "error"):
+            log("ML MODEL: no saved state found (fresh start)")
+            return False
+        
+        # Restore scaler
+        scaler = clf.named_steps["scaler"]
+        scaler.mean_ = np.array(state["scaler_mean"])
+        scaler.scale_ = np.array(state["scaler_scale"])
+        scaler.var_ = np.array(state["scaler_var"])
+        scaler.n_features_in_ = len(state["scaler_mean"])
+        scaler.n_samples_seen_ = np.float64(state.get("scaler_n_samples", 200))
+        
+        # Restore SGD
+        sgd = clf.named_steps["sgd"]
+        sgd.coef_ = np.array(state["sgd_coef"])
+        sgd.intercept_ = np.array(state["sgd_intercept"])
+        sgd.classes_ = np.array(state["sgd_classes"])
+        sgd.t_ = 1.0  # Required internal state
+        
+        # Restore stats
+        if state.get("ml_stats"):
+            ml_stats.update(state["ml_stats"])
+        ml_conf_boost = state.get("ml_conf_boost", 0.0)
+        ml_warm = True
+        
+        saved_at = state.get("saved_at", "unknown")
+        acc = ml_stats.get("accuracy", 0)
+        samples = ml_stats.get("samples", 0)
+        log(f"✅ ML MODEL LOADED: acc={acc:.1f}% samples={samples} saved_at={saved_at}")
+        return True
+        
+    except Exception as e:
+        log(f"WARN ml model load failed: {e} (will train from scratch)")
+        return False
 
 # ------------------ SENTIMENT ------------------
 def ensure_vader():
@@ -1551,6 +1652,11 @@ def main():
     # harden re import in scope
     import re  # noqa: F401
     init_env()
+    
+    # Restore ML model from last session (survives Railway deploys)
+    load_ml_model()
+    _load_paper_balance()
+    
     args = parse_args()
     if args.backtest:
         backtest(days=args.days, interval=args.interval)
