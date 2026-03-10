@@ -7,18 +7,19 @@ except Exception:
 
 
 def _safe_adx(df_feat, window):
+    """Calculate ADX safely. Needs at least 4*window rows for valid output."""
     try:
         import pandas as pd
         from ta.trend import ADXIndicator
-        sub = df_feat.tail(max(window, 14)).copy()
-        for c in ("high","low","close"):
-    # px heartbeat
-    
+        # ADX needs ~2*window rows for smoothing. Take 4*window for safety.
+        need = max(window * 4, 60)
+        sub = df_feat.tail(need).copy()
+        for c in ("high", "low", "close"):
             sub[c] = pd.to_numeric(sub[c], errors="coerce")
         sub = sub.dropna()
-        if len(sub) < 14:
+        if len(sub) < window * 2:
             return 0.0
-        w = min(window, max(14, len(sub)//2))
+        w = min(window, max(14, len(sub) // 3))
         adx = ADXIndicator(sub["high"], sub["low"], sub["close"], window=w).adx()
         v = float(adx.iloc[-1])
         if v != v:  # NaN
@@ -1303,6 +1304,8 @@ def decide_and_trade():
     effective_tp = compute_effective_tp(rsi14, regime, row)
 
     # Dynamic entry scoring (weights from backtester strategy)
+    # ML direct component: when ML is confident, it contributes up to 0.15
+    ml_direct = max(0.0, min(0.15, (p_ml - 0.5) * 0.3)) if p_ml > 0.55 else 0.0
     base_score = (
         BREAKOUT_WEIGHT*(1.0 if breakout_ok else 0.0) +
         0.18*(1.0 if drawdown_ok else 0.0) +
@@ -1311,6 +1314,7 @@ def decide_and_trade():
         0.18*(1.0 if oversold_ok else 0.0) +
         0.05*(1.0 if secondary_ok else 0.0) +
         0.05*(1.0 if regime["vol_ok"] else 0.0) +
+        ml_direct +
         boost
     )
     

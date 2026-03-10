@@ -3526,11 +3526,21 @@ async def get_all_models_status():
             import json
             with get_db_connection() as conn:
                 cursor = conn.cursor()
+                # Try ml_stats key first
                 cursor.execute("SELECT value FROM kv_store WHERE key = 'ml_stats'")
                 row = cursor.fetchone()
                 if row:
                     ml_stats = json.loads(row[0])
                     _synced_ml_stats = ml_stats  # Cache in memory
+                else:
+                    # Fallback: read from persisted model-state (has nested ml_stats)
+                    cursor.execute("SELECT value FROM kv_store WHERE key = 'sgd_model_state'")
+                    row = cursor.fetchone()
+                    if row:
+                        model_state = json.loads(row[0])
+                        if model_state.get("ml_stats"):
+                            ml_stats = model_state["ml_stats"]
+                            _synced_ml_stats = ml_stats
         except Exception:
             pass
     
