@@ -164,7 +164,7 @@ export default function BotsView() {
                                             padding: '10px 12px', fontSize: '13px', textAlign: 'right', fontWeight: 600,
                                             color: (trade.pnl || 0) >= 0 ? '#22c55e' : '#ef4444'
                                         }}>
-                                            {trade.pnl ? `${trade.pnl > 0 ? '+' : ''}${parseFloat(trade.pnl).toFixed(2)}%` : '-'}
+                                            {trade.pnl ? `${parseFloat(trade.pnl) >= 0 ? '+' : '-'}$${Math.abs(parseFloat(trade.pnl)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
                                         </td>
                                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                                             <span style={{

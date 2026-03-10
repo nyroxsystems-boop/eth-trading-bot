@@ -32,20 +32,22 @@ def ensure_db():
     logger.info("✅ Strategy Backtester: using PostgreSQL via learning_store")
 
 
-# Strategy parameter ranges for grid search
-PARAM_GRID = {
-    "ml_threshold": [0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65],
-    "risk_per_trade": [0.004, 0.006, 0.008, 0.010, 0.012],
-    "tp_min": [0.008, 0.010, 0.012, 0.015],
-    "tp_max": [0.015, 0.018, 0.020, 0.025],
-    "stop_floor": [0.004, 0.005, 0.006, 0.008],
-    "rsi_oversold": [25, 30, 35],
-    "rsi_overbought": [65, 70, 75],
-    "max_trades_per_day": [8, 10, 15, 20],
-    "entry_score_min": [0.15, 0.20, 0.25, 0.30, 0.35],
-    "breakout_weight": [0.20, 0.25, 0.30, 0.35, 0.40],
-    "trend_weight": [0.10, 0.15, 0.20, 0.25, 0.30],
+# Strategy parameter CONTINUOUS RANGES (wider than old discrete grid!)
+PARAM_RANGES = {
+    "ml_threshold":       (0.20, 0.75),   # was [0.35-0.65]
+    "risk_per_trade":     (0.002, 0.020),  # was [0.004-0.012]
+    "tp_min":             (0.004, 0.025),  # was [0.008-0.015]
+    "tp_max":             (0.010, 0.050),  # was [0.015-0.025] — now up to 5%!
+    "stop_floor":         (0.002, 0.015),  # was [0.004-0.008]
+    "rsi_oversold":       (15, 40),        # was [25-35]
+    "rsi_overbought":     (60, 85),        # was [65-75]
+    "max_trades_per_day": (3, 30),         # was [8-20]
+    "entry_score_min":    (0.10, 0.50),    # was [0.15-0.35]
+    "breakout_weight":    (0.10, 0.50),    # was [0.20-0.40]
+    "trend_weight":       (0.05, 0.40),    # was [0.10-0.30]
 }
+# Backwards compat
+PARAM_GRID = {k: list(v) for k, v in PARAM_RANGES.items()}
 
 # Global state for live progress
 BACKTEST_STATE = {
@@ -334,20 +336,19 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
 
 
 def generate_random_params() -> Dict:
-    """Generate completely random parameter set (exploration)"""
-    return {
-        "ml_threshold": random.choice(PARAM_GRID["ml_threshold"]),
-        "risk_per_trade": random.choice(PARAM_GRID["risk_per_trade"]),
-        "tp_min": random.choice(PARAM_GRID["tp_min"]),
-        "tp_max": random.choice(PARAM_GRID["tp_max"]),
-        "stop_floor": random.choice(PARAM_GRID["stop_floor"]),
-        "rsi_oversold": random.choice(PARAM_GRID["rsi_oversold"]),
-        "rsi_overbought": random.choice(PARAM_GRID["rsi_overbought"]),
-        "max_trades_per_day": random.choice(PARAM_GRID["max_trades_per_day"]),
-        "entry_score_min": random.choice(PARAM_GRID["entry_score_min"]),
-        "breakout_weight": random.choice(PARAM_GRID["breakout_weight"]),
-        "trend_weight": random.choice(PARAM_GRID["trend_weight"]),
-    }
+    """Generate random params from CONTINUOUS ranges (infinite unique combos)"""
+    p = {}
+    for key, (lo, hi) in PARAM_RANGES.items():
+        if key in ("rsi_oversold", "rsi_overbought", "max_trades_per_day"):
+            p[key] = random.randint(int(lo), int(hi))
+        else:
+            p[key] = round(random.uniform(lo, hi), 6)
+    # Enforce tp_min < tp_max
+    if p["tp_min"] >= p["tp_max"]:
+        p["tp_min"], p["tp_max"] = p["tp_max"], p["tp_min"]
+        if p["tp_min"] == p["tp_max"]:
+            p["tp_max"] += 0.005
+    return p
 
 
 def get_top_strategies(n: int = 10) -> List[Dict]:
@@ -368,96 +369,95 @@ def get_top_strategies(n: int = 10) -> List[Dict]:
 
 def mutate_strategy(parent: Dict, mutation_rate: float = 0.20) -> Dict:
     """
-    Mutate a parent strategy's params by ±mutation_rate.
-    Also randomly picks entry_score_min/breakout_weight/trend_weight
-    from grid since they're not in the DB schema.
+    Gaussian mutation: each param shifted by N(0, range_width * mutation_rate).
+    Clamps to PARAM_RANGES. Smaller rate = fine-tuning, larger = exploration.
     """
-    def mutate_float(val, grid_key=None):
-        """Mutate a float value by ±mutation_rate, clamp to grid range"""
-        delta = val * mutation_rate * random.uniform(-1, 1)
-        new_val = val + delta
-        if grid_key and grid_key in PARAM_GRID:
-            grid = PARAM_GRID[grid_key]
-            new_val = max(min(grid), min(max(grid), new_val))
-        return round(new_val, 6)
-    
-    def mutate_int(val, grid_key=None):
-        """Mutate an int value by ±1-2 steps"""
-        delta = random.choice([-2, -1, 0, 0, 1, 2])
-        new_val = val + delta
-        if grid_key and grid_key in PARAM_GRID:
-            grid = PARAM_GRID[grid_key]
-            new_val = max(min(grid), min(max(grid), new_val))
-        return int(new_val)
-    
-    return {
-        "ml_threshold": mutate_float(parent.get("ml_threshold", 0.5), "ml_threshold"),
-        "risk_per_trade": mutate_float(parent.get("risk_per_trade", 0.008), "risk_per_trade"),
-        "tp_min": mutate_float(parent.get("tp_min", 0.01), "tp_min"),
-        "tp_max": mutate_float(parent.get("tp_max", 0.02), "tp_max"),
-        "stop_floor": mutate_float(parent.get("stop_floor", 0.005), "stop_floor"),
-        "rsi_oversold": mutate_int(parent.get("rsi_oversold", 30), "rsi_oversold"),
-        "rsi_overbought": mutate_int(parent.get("rsi_overbought", 70), "rsi_overbought"),
-        "max_trades_per_day": mutate_int(parent.get("max_trades_per_day", 10), "max_trades_per_day"),
-        # NOW EVOLVED from parent instead of random!
-        "entry_score_min": mutate_float(parent.get("entry_score_min", 0.25), "entry_score_min"),
-        "breakout_weight": mutate_float(parent.get("breakout_weight", 0.30), "breakout_weight"),
-        "trend_weight": mutate_float(parent.get("trend_weight", 0.20), "trend_weight"),
-    }
+    child = {}
+    for key, (lo, hi) in PARAM_RANGES.items():
+        val = parent.get(key, (lo + hi) / 2)
+        spread = (hi - lo) * mutation_rate
+        new_val = val + random.gauss(0, spread)
+        new_val = max(lo, min(hi, new_val))
+        if key in ("rsi_oversold", "rsi_overbought", "max_trades_per_day"):
+            child[key] = int(round(new_val))
+        else:
+            child[key] = round(new_val, 6)
+    # Enforce tp_min < tp_max
+    if child["tp_min"] >= child["tp_max"]:
+        child["tp_min"], child["tp_max"] = child["tp_max"], child["tp_min"]
+    return child
 
 
 def crossover(parent_a: Dict, parent_b: Dict) -> Dict:
-    """Combine two parents: randomly pick each param from either parent"""
+    """Blend crossover: weighted average of two parents with random alpha"""
     child = {}
-    for key in parent_a:
-        if key == "score":
-            continue
-        child[key] = parent_a[key] if random.random() > 0.5 else parent_b[key]
-    # Ensure entry weights are included
-    for key in ["entry_score_min", "breakout_weight", "trend_weight"]:
-        if key not in child:
-            child[key] = random.choice(PARAM_GRID[key])
+    for key, (lo, hi) in PARAM_RANGES.items():
+        a_val = parent_a.get(key, (lo + hi) / 2)
+        b_val = parent_b.get(key, (lo + hi) / 2)
+        alpha = random.uniform(0.2, 0.8)
+        new_val = a_val * alpha + b_val * (1 - alpha)
+        new_val = max(lo, min(hi, new_val))
+        if key in ("rsi_oversold", "rsi_overbought", "max_trades_per_day"):
+            child[key] = int(round(new_val))
+        else:
+            child[key] = round(new_val, 6)
     return child
 
 
 def generate_evolved_params() -> Dict:
     """
-    Evolutionary parameter generation:
-    - 50% chance: mutate or crossover from top strategies (exploit)
-    - 50% chance: random exploration (discover new regions)
-    Higher exploration prevents convergence to a single strategy.
+    Bayesian-inspired evolutionary optimization:
+    - 35% Fine-tune: small Gaussian mutation of top parent (intensification)
+    - 25% Crossover + mutate: blend two parents, then tiny polish
+    - 15% Big mutation: large perturbation to escape local minimum
+    - 25% Pure exploration: random from continuous ranges
+    
+    Score-proportional parent selection (roulette wheel).
     """
     top = get_top_strategies(10)
     
-    # If no top strategies yet, explore randomly
     if len(top) < 3:
         return generate_random_params()
     
-    if random.random() < 0.50:
-        # EVOLUTION: build on what works
-        roll = random.random()
-        if roll < 0.40:
-            # Mutate single parent
-            parent = random.choice(top[:5])
-            child = mutate_strategy(parent, mutation_rate=0.30)  # Higher mutation
-            logger.info(f"MUTATE from parent score={parent['score']:.1f}")
-            return child
-        elif roll < 0.70:
-            # Crossover two parents
-            pa = random.choice(top[:5])
-            pb = random.choice(top)  # Any top 10, not just top 5
-            child = crossover(pa, pb)
-            logger.info(f"CROSSOVER parents score={pa['score']:.1f} x {pb['score']:.1f}")
-            return child
-        else:
-            # Big mutation (explore around known good)
-            parent = random.choice(top[:3])
-            child = mutate_strategy(parent, mutation_rate=0.50)  # 50% mutation
-            logger.info(f"BIG MUTATE from top parent score={parent['score']:.1f}")
-            return child
+    # Score-proportional selection (roulette wheel)
+    scores = [max(s.get("score", 0), 0.1) for s in top]
+    total = sum(scores)
+    probs = [s / total for s in scores]
+    
+    def pick_parent():
+        r = random.random()
+        cumsum = 0
+        for i, p in enumerate(probs):
+            cumsum += p
+            if r <= cumsum:
+                return top[i]
+        return top[0]
+    
+    roll = random.random()
+    
+    if roll < 0.35:
+        # FINE-TUNE: small Gaussian mutation
+        parent = pick_parent()
+        child = mutate_strategy(parent, mutation_rate=0.10)
+        logger.info(f"FINE-TUNE parent score={parent.get('score',0):.1f}")
+        return child
+    elif roll < 0.60:
+        # CROSSOVER + MUTATE: blend two parents, then small perturbation
+        pa = pick_parent()
+        pb = pick_parent()
+        child = crossover(pa, pb)
+        child = mutate_strategy(child, mutation_rate=0.05)
+        logger.info(f"CROSSOVER+MUTATE {pa.get('score',0):.1f} x {pb.get('score',0):.1f}")
+        return child
+    elif roll < 0.75:
+        # BIG MUTATION: jump out of local minimum
+        parent = pick_parent()
+        child = mutate_strategy(parent, mutation_rate=0.40)
+        logger.info(f"BIG MUTATE from score={parent.get('score',0):.1f}")
+        return child
     else:
-        # EXPLORATION: try completely new combinations
-        logger.info("EXPLORE random params")
+        # PURE EXPLORATION: continuous random from wider ranges
+        logger.info("EXPLORE random continuous params")
         return generate_random_params()
 
 
