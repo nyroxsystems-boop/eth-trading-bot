@@ -200,17 +200,43 @@ class MultiAssetAnalyzer:
             self.fetch_prices(asset2)
         )
         
+        # Normalize indexes to date-only (Binance returns timestamps, synthetic uses midnight)
+        df1 = df1.copy()
+        df2 = df2.copy()
+        df1.index = pd.to_datetime(df1.index).normalize()
+        df2.index = pd.to_datetime(df2.index).normalize()
+        
+        # Remove duplicates (keep last)
+        df1 = df1[~df1.index.duplicated(keep='last')]
+        df2 = df2[~df2.index.duplicated(keep='last')]
+        
         # Align on common dates
         common_dates = df1.index.intersection(df2.index)
+        
+        if len(common_dates) < 5:
+            # Not enough overlap — return zero correlation
+            return CorrelationResult(
+                asset_pair=f"{asset1}/{asset2}",
+                correlation=0.0,
+                rolling_correlation=0.0,
+                regime="low_corr",
+                divergence=0.0,
+                z_score=0.0
+            )
+        
         returns1 = df1.loc[common_dates, "returns"]
         returns2 = df2.loc[common_dates, "returns"]
         
         # Full-period correlation
         full_corr = returns1.corr(returns2)
+        if np.isnan(full_corr):
+            full_corr = 0.0
         
         # Rolling correlation
         rolling = returns1.rolling(window).corr(returns2)
         rolling_corr = rolling.iloc[-1] if len(rolling) > 0 else full_corr
+        if np.isnan(rolling_corr):
+            rolling_corr = full_corr
         
         # Determine regime
         if abs(rolling_corr) > 0.7:
@@ -224,7 +250,8 @@ class MultiAssetAnalyzer:
             regime = "negative"
         
         # Calculate divergence (z-score of spread)
-        spread = (df1["close"] / df1["close"].iloc[0]) - (df2["close"] / df2["close"].iloc[0])
+        spread = (df1.loc[common_dates, "close"] / df1.loc[common_dates, "close"].iloc[0]) - \
+                 (df2.loc[common_dates, "close"] / df2.loc[common_dates, "close"].iloc[0])
         spread_mean = spread.rolling(window).mean()
         spread_std = spread.rolling(window).std()
         
