@@ -674,7 +674,15 @@ def ml_online_update(df_feat: pd.DataFrame):
                 api_url = "https://web-production-d57ac.up.railway.app"
             if api_url and not api_url.startswith("http"):
                 api_url = f"https://{api_url}"
-            requests.post(f"{api_url}/api/ml/stats-sync", json=ml_stats, timeout=5)
+            # Retry up to 2 times for reliability
+            for _attempt in range(2):
+                try:
+                    resp = requests.post(f"{api_url}/api/ml/stats-sync", json=ml_stats, timeout=5)
+                    if resp.status_code == 200:
+                        break
+                except Exception:
+                    if _attempt == 1:
+                        log(f"WARN ml stats-sync failed after 2 attempts (url={api_url})")
         except Exception:
             pass
     except Exception as e:

@@ -3518,6 +3518,10 @@ async def get_all_models_status():
             return "Unknown"
     
     # Build models list with REAL data
+    sgd_last_trained = format_age(ml_stats.get("last_trained"))
+    if sgd_last_trained == "Not trained" and backtester_stats["total_tested"] > 0:
+        sgd_last_trained = "Awaiting data..."
+    
     results = [
         {
             "name": "SGD Classifier",
@@ -3525,7 +3529,7 @@ async def get_all_models_status():
             "version": "v3.1.0",
             "accuracy": ml_stats.get("accuracy", 0),
             "samples": ml_stats.get("samples", 0),
-            "lastTrained": format_age(ml_stats.get("last_trained")),
+            "lastTrained": sgd_last_trained,
             "predictions": ml_stats.get("predictions_made", 0),
             "status": "active" if ml_stats.get("warm") else "warming_up"
         },
