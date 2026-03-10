@@ -21,6 +21,15 @@ interface Trade {
     notes?: string
 }
 
+interface RawTrade {
+    timestamp: string
+    action: string
+    qty: number
+    price: number
+    pnl: number
+    mode?: string
+}
+
 interface DaySummary {
     date: string
     trades: number
@@ -51,46 +60,72 @@ const TradingJournalView = () => {
             })
 
             if (response.ok) {
-                const data = await response.json()
-                setTrades(data.trades || [])
-                calculateSummaries(data.trades || [])
+                const rawData: RawTrade[] = await response.json()
+                // API returns flat array [{timestamp,action,qty,price,pnl}]
+                // Transform: pair BUY+SELL into Trade objects
+                const data = Array.isArray(rawData) ? rawData : (rawData as any).trades || []
+                const paired = pairTrades(data)
+                setTrades(paired)
+                calculateSummaries(paired)
             } else {
-                const mockTrades = generateMockTrades()
-                setTrades(mockTrades)
-                calculateSummaries(mockTrades)
+                setTrades([])
+                calculateSummaries([])
             }
         } catch (err) {
             console.error('Failed to fetch trades:', err)
-            const mockTrades = generateMockTrades()
-            setTrades(mockTrades)
-            calculateSummaries(mockTrades)
+            setTrades([])
+            calculateSummaries([])
         } finally {
             setLoading(false)
         }
     }
 
-    const generateMockTrades = (): Trade[] => {
+    const pairTrades = (rawTrades: RawTrade[]): Trade[] => {
         const result: Trade[] = []
-        const now = new Date()
+        let lastBuy: RawTrade | null = null
+        let id = 1
 
-        for (let i = 0; i < 25; i++) {
-            const isWin = Math.random() > 0.35
-            const pnl = isWin ? Math.random() * 150 + 20 : -(Math.random() * 80 + 10)
-            const entryPrice = 3200 + Math.random() * 100
+        for (const t of rawTrades) {
+            if (t.action === 'BUY') {
+                lastBuy = t
+            } else if (t.action === 'SELL' && lastBuy) {
+                const buyTime = new Date(lastBuy.timestamp).getTime()
+                const sellTime = new Date(t.timestamp).getTime()
+                const durationMin = Math.round((sellTime - buyTime) / 60000)
+                const pnl = t.pnl || ((t.price - lastBuy.price) * t.qty)
+                result.push({
+                    id: id++,
+                    timestamp: lastBuy.timestamp,
+                    symbol: 'ETHUSDT',
+                    side: 'SELL',  // Completed pair
+                    entry_price: lastBuy.price,
+                    exit_price: t.price,
+                    quantity: t.qty,
+                    pnl: pnl,
+                    pnl_pct: lastBuy.price > 0 ? ((t.price - lastBuy.price) / lastBuy.price) * 100 : 0,
+                    duration_minutes: Math.max(durationMin, 1),
+                    signals_used: ['RSI', 'MACD', 'ML'],
+                    ml_confidence: 0.7
+                })
+                lastBuy = null
+            }
+        }
 
+        // If there's an open BUY without SELL, show as open position
+        if (lastBuy) {
             result.push({
-                id: i + 1,
-                timestamp: new Date(now.getTime() - i * 3600000 * 4).toISOString(),
+                id: id++,
+                timestamp: lastBuy.timestamp,
                 symbol: 'ETHUSDT',
-                side: Math.random() > 0.5 ? 'BUY' : 'SELL',
-                entry_price: entryPrice,
-                exit_price: entryPrice * (1 + pnl / 1000),
-                quantity: Math.random() * 0.5 + 0.1,
-                pnl: pnl,
-                pnl_pct: pnl / 100,
-                duration_minutes: Math.floor(Math.random() * 120 + 15),
-                signals_used: ['RSI', 'MACD', 'ML'].slice(0, Math.floor(Math.random() * 3) + 1),
-                ml_confidence: Math.random() * 0.4 + 0.6
+                side: 'BUY',
+                entry_price: lastBuy.price,
+                exit_price: 0,
+                quantity: lastBuy.qty,
+                pnl: 0,
+                pnl_pct: 0,
+                duration_minutes: 0,
+                signals_used: ['RSI', 'MACD', 'ML'],
+                ml_confidence: 0.7
             })
         }
 

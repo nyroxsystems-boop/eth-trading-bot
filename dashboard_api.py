@@ -650,43 +650,65 @@ async def get_performance():
 
 @app.get("/api/performance/history")
 async def get_performance_history(days: int = 7):
-    """Get P&L history for chart"""
-    trades = await read_trades_csv()
+    """Get P&L history for chart — reads from PostgreSQL first, CSV fallback"""
+    trades_raw = []
     
-    # Group trades by date and calculate daily P&L from BUY/SELL pairs
+    # Try PostgreSQL first (survives deploys)
+    if USE_POSTGRES:
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT timestamp, action, qty, price, pnl 
+                    FROM paper_trades ORDER BY created_at ASC
+                """)
+                for row in cursor.fetchall():
+                    trades_raw.append({
+                        "timestamp": row[0], "action": row[1], 
+                        "qty": float(row[2] or 0), "price": float(row[3] or 0), 
+                        "pnl": float(row[4] or 0)
+                    })
+        except Exception as e:
+            print(f"PG performance read error: {e}")
+
+    # Fallback to CSV
+    if not trades_raw:
+        csv_trades = await read_trades_csv()
+        trades_raw = [{"timestamp": t.timestamp, "action": t.action, "qty": t.qty, "price": t.price, "pnl": t.pnl} for t in csv_trades]
+
     daily_pnl = {}
     last_buy = None
-    
-    for trade in trades:
+
+    for trade in trades_raw:
         try:
             # Parse timestamp
-            ts = trade.timestamp
+            ts = trade["timestamp"]
             if 'T' in ts:
                 date = ts.split('T')[0]
             else:
                 date = ts.split(' ')[0]
-            
+
             if date not in daily_pnl:
                 daily_pnl[date] = {"date": date, "pnl": 0, "trades": 0}
-            
+
             # Calculate P&L from trade pairs
-            if trade.action == "BUY":
+            if trade["action"] == "BUY":
                 last_buy = trade
-            elif trade.action == "SELL" and last_buy:
+            elif trade["action"] == "SELL" and last_buy:
                 # Calculate PnL: (sell_price - buy_price) * qty
-                pnl = (trade.price - last_buy.price) * trade.qty
+                pnl = (trade["price"] - last_buy["price"]) * trade["qty"]
                 daily_pnl[date]["pnl"] += pnl
                 daily_pnl[date]["trades"] += 1
                 last_buy = None
             else:
                 # Use pnl from trade if available
-                if hasattr(trade, 'pnl') and trade.pnl != 0:
-                    daily_pnl[date]["pnl"] += trade.pnl
+                if trade.get("pnl", 0) != 0:
+                    daily_pnl[date]["pnl"] += trade["pnl"]
                     daily_pnl[date]["trades"] += 1
         except Exception as e:
             print(f"Error processing trade: {e}")
             continue
-    
+
     # Convert to sorted list with cumulative P&L
     history = []
     cumulative_pnl = 0
