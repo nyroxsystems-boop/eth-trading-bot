@@ -326,13 +326,10 @@ def apply_best_strategy():
         
         # Entry threshold: strategy sets the CEILING, adaptive controls the floor
         if "entry_score_min" in p:
-            _ENTRY_CEILING = max(0.15, min(0.50, float(p["entry_score_min"])))
+            _ENTRY_CEILING = max(0.15, min(0.30, float(p["entry_score_min"])))  # Cap at 0.30!
         
-        # Entry weights from backtester
-        if "breakout_weight" in p:
-            BREAKOUT_WEIGHT = float(p["breakout_weight"])
-        if "trend_weight" in p:
-            TREND_WEIGHT = float(p["trend_weight"])
+        # NOTE: BREAKOUT_WEIGHT and TREND_WEIGHT are NOT overridden by backtester
+        # Our rebalanced weights (0.20/0.12) are core to sideways-market trading
         
         # Update current_params dict for tracking
         current_params['tp_min'] = TP_MIN
@@ -391,8 +388,8 @@ def adapt_entry_threshold():
             SEC_PML_MIN = 0.25
             log(f"🚨 EMERGENCY MODE: 0 trades in {hours_since_trade:.1f}h! Threshold={_ENTRY_FLOOR}, ml_min=0.25 — MUST TRADE")
     elif today_trades > 0 and loss_streak == 0:
-        # Winning = gently raise threshold
-        _adaptive_entry_min = min(_ENTRY_CEILING, _adaptive_entry_min + 0.01)
+        # Winning = gently raise threshold (but cap at 0.30)
+        _adaptive_entry_min = min(min(_ENTRY_CEILING, 0.30), _adaptive_entry_min + 0.01)
         ENTRY_SCORE_MIN = _adaptive_entry_min
 
 # --- Volatility Zone Awareness ---
