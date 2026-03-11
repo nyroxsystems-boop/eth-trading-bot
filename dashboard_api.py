@@ -350,7 +350,7 @@ async def calculate_pnl(trades: List[Trade]) -> float:
     return realized
 
 async def get_performance_metrics() -> PerformanceMetrics:
-    """Calculate comprehensive performance metrics"""
+    """Calculate comprehensive performance metrics using FIFO pairing"""
     trades = await read_trades_csv()
     
     if not trades:
@@ -361,41 +361,83 @@ async def get_performance_metrics() -> PerformanceMetrics:
             max_drawdown=0, roi=0
         )
     
-    # Calculate PnL
-    total_pnl = await calculate_pnl(trades)
-    
-    # Today's trades
+    # Build per-trade P&L via FIFO pairing (CSV has NO pnl column)
+    from collections import deque
+    fifo_all = deque()
+    fifo_today = deque()
+    trade_pnls = []           # All completed trades
+    today_trade_pnls = []     # Today's completed trades
     today = datetime.now().date().isoformat()
-    today_trades = [t for t in trades if t.timestamp.startswith(today)]
-    daily_pnl = await calculate_pnl(today_trades)
     
-    # Win/Loss stats (only count SELL trades as completed trades)
-    sell_trades = [t for t in trades if t.action.upper() == "SELL"]
-    wins = [t for t in sell_trades if t.pnl and t.pnl > 0]
-    losses = [t for t in sell_trades if t.pnl and t.pnl < 0]
+    for trade in trades:
+        is_today = trade.timestamp.startswith(today)
+        
+        if trade.action.upper() == "BUY":
+            fifo_all.append([trade.qty, trade.price])
+            if is_today:
+                fifo_today.append([trade.qty, trade.price])
+        elif trade.action.upper() == "SELL" and trade.price > 0:
+            # Calculate realized P&L for this SELL via FIFO
+            remaining = trade.qty
+            sell_pnl = 0.0
+            while remaining > 1e-12 and fifo_all:
+                buy_qty, buy_price = fifo_all[0]
+                take = min(buy_qty, remaining)
+                sell_pnl += (trade.price - buy_price) * take
+                buy_qty -= take
+                remaining -= take
+                if buy_qty <= 1e-12:
+                    fifo_all.popleft()
+                else:
+                    fifo_all[0] = [buy_qty, buy_price]
+            trade_pnls.append(sell_pnl)
+            
+            # Same for today's FIFO
+            if is_today:
+                remaining2 = trade.qty
+                sell_pnl2 = 0.0
+                while remaining2 > 1e-12 and fifo_today:
+                    bq, bp = fifo_today[0]
+                    take2 = min(bq, remaining2)
+                    sell_pnl2 += (trade.price - bp) * take2
+                    bq -= take2
+                    remaining2 -= take2
+                    if bq <= 1e-12:
+                        fifo_today.popleft()
+                    else:
+                        fifo_today[0] = [bq, bp]
+                today_trade_pnls.append(sell_pnl2)
     
-    win_rate = len(wins) / len(sell_trades) * 100 if sell_trades else 0
-    avg_win = sum(t.pnl for t in wins) / len(wins) if wins else 0
-    avg_loss = sum(t.pnl for t in losses) / len(losses) if losses else 0
+    # Compute stats from per-trade P&L
+    total_pnl = sum(trade_pnls)
+    daily_pnl = sum(today_trade_pnls)
     
-    # Sharpe Ratio (simplified)
-    returns = [t.pnl for t in sell_trades if t.pnl]
-    if returns:
+    win_pnls = [p for p in trade_pnls if p > 0]
+    loss_pnls = [p for p in trade_pnls if p <= 0]
+    
+    winning_trades = len(win_pnls)
+    losing_trades = len(loss_pnls)
+    total_trades = len(trade_pnls)
+    
+    win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
+    avg_win = sum(win_pnls) / winning_trades if winning_trades > 0 else 0
+    avg_loss = sum(loss_pnls) / losing_trades if losing_trades > 0 else 0
+    
+    # Sharpe Ratio
+    if trade_pnls:
         import numpy as np
-        sharpe = np.mean(returns) / np.std(returns) if np.std(returns) > 0 else 0
+        sharpe = np.mean(trade_pnls) / np.std(trade_pnls) if np.std(trade_pnls) > 0 else 0
     else:
         sharpe = 0
     
     # Max Drawdown
-    equity_curve = []
-    running_pnl = 0
-    for trade in trades:
-        if trade.pnl:
-            running_pnl += trade.pnl
-            equity_curve.append(running_pnl)
-    
     max_dd = 0
-    if equity_curve:
+    if trade_pnls:
+        equity_curve = []
+        running = 0
+        for pnl in trade_pnls:
+            running += pnl
+            equity_curve.append(running)
         peak = equity_curve[0]
         for val in equity_curve:
             if val > peak:
@@ -408,9 +450,9 @@ async def get_performance_metrics() -> PerformanceMetrics:
     roi = (total_pnl / initial_capital) * 100 if initial_capital > 0 else 0
     
     return PerformanceMetrics(
-        total_trades=len(sell_trades),  # Only count completed trades (SELL orders)
-        winning_trades=len(wins),
-        losing_trades=len(losses),
+        total_trades=total_trades,
+        winning_trades=winning_trades,
+        losing_trades=losing_trades,
         win_rate=win_rate,
         total_pnl=total_pnl,
         daily_pnl=daily_pnl,
