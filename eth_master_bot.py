@@ -243,6 +243,12 @@ loss_streak = 0
 cooldown_until_ts = 0.0
 bars_in_position = 0
 
+# === DAILY LOSS CIRCUIT BREAKER ===
+daily_realized_pnl = 0.0           # Total realized P&L today (in USD)
+daily_trade_results = []            # List of trade P&Ls today
+circuit_breaker_active = False      # True = NO MORE TRADING until midnight
+circuit_breaker_reason = ""
+
 # ML
 clf = Pipeline([
     ("scaler", StandardScaler(with_mean=True)),
@@ -1413,6 +1419,7 @@ def decide_and_trade():
     global day_start_equity, loss_streak, cooldown_until_ts, bars_in_position
     global _last_trade_ts, _paper_position_locked, PAPER_BASE_USDT
     global win_streak, confidence_lvl
+    global daily_realized_pnl, daily_trade_results, circuit_breaker_active, circuit_breaker_reason
 
 
     if now_date() != last_trade_day:
@@ -1422,6 +1429,14 @@ def decide_and_trade():
         # loss_streak = 0  # BUG FIX: was resetting streak, allowing immediate aggressive trading after midnight
         cooldown_until_ts = 0.0
         day_start_equity = current_equity()
+        # Reset circuit breaker at midnight
+        daily_realized_pnl = 0.0
+        daily_trade_results = []
+        if circuit_breaker_active:
+            log(f"🔄 CIRCUIT BREAKER RESET — new day, trading resumed")
+            tg("🔄 Circuit Breaker zurückgesetzt — neuer Tag, Trading wieder aktiv")
+        circuit_breaker_active = False
+        circuit_breaker_reason = ""
         log(f"INFO new UTC day → reset trade counter | day_start_equity={day_start_equity:.2f}")
 
     if day_start_equity is None:
@@ -1430,8 +1445,20 @@ def decide_and_trade():
     eq_now = current_equity()
     dd = (eq_now / max(day_start_equity, 1e-9)) - 1.0
     if dd <= -MAX_DRAWDOWN_DAY:
-        log(f"GUARD daily max drawdown reached ({dd*100:.2f}%) → pause")
+        if not circuit_breaker_active:
+            circuit_breaker_active = True
+            circuit_breaker_reason = f"Daily drawdown {dd*100:.2f}% exceeded -{MAX_DRAWDOWN_DAY*100:.0f}% limit"
+            log(f"🛑 CIRCUIT BREAKER: {circuit_breaker_reason}")
+            tg(f"🛑 CIRCUIT BREAKER AKTIV — {circuit_breaker_reason}. Kein Trading bis morgen.")
         return
+    
+    # === CIRCUIT BREAKER CHECK ===
+    if circuit_breaker_active:
+        # Only allow managing existing positions, no new entries
+        if open_position:
+            pass  # Let position management continue below
+        else:
+            return  # No new trades
 
     if time.time() < cooldown_until_ts:
         return
@@ -1637,7 +1664,9 @@ def decide_and_trade():
                 bars_in_position = 0
                 loss_streak = 0
                 win_streak += 1
-                log(f"CONFIDENCE: win_streak={win_streak} conf_lvl={confidence_lvl:.2f}")
+                daily_realized_pnl += pnl_val  # Track daily PnL on TP
+                daily_trade_results.append(pnl_val)
+                log(f"CONFIDENCE: win_streak={win_streak} conf_lvl={confidence_lvl:.2f} | daily_pnl=${daily_realized_pnl:.2f}")
                 # Reset ML threshold after winning trade (was permanently decaying)
                 SEC_PML_MIN = _SEC_PML_DEFAULT
                 return
@@ -1655,19 +1684,16 @@ def decide_and_trade():
             bars_in_position = 0
             loss_streak += 1
             win_streak = 0
-            log(f"CONFIDENCE: loss_streak={loss_streak} conf_lvl={confidence_lvl:.2f}")
+            # Track daily realized PnL
+            daily_realized_pnl += pnl_val
+            daily_trade_results.append(pnl_val)
+            log(f"CONFIDENCE: loss_streak={loss_streak} conf_lvl={confidence_lvl:.2f} | daily_pnl=${daily_realized_pnl:.2f}")
             if loss_streak >= LOSS_STREAK_COOL:
-                # SMART COOLDOWN: varies by market state
-                if rsi14 < 30:
-                    cooldown_mins = max(5, COOLDOWN_MIN // 2)
-                    log(f"SMART COOLDOWN: {cooldown_mins}m (RSI={rsi14:.0f} oversold → shorter)")
-                elif rsi14 > 70:
-                    cooldown_mins = COOLDOWN_MIN * 2
-                    log(f"SMART COOLDOWN: {cooldown_mins}m (RSI={rsi14:.0f} overbought → longer)")
-                else:
-                    cooldown_mins = COOLDOWN_MIN
-                    log(f"COOLDOWN {cooldown_mins}m after loss streak ({loss_streak})")
-                cooldown_until_ts = time.time() + cooldown_mins * 60
+                # === CIRCUIT BREAKER: stop trading for REST OF DAY ===
+                circuit_breaker_active = True
+                circuit_breaker_reason = f"{loss_streak} consecutive losses (daily PnL: ${daily_realized_pnl:.2f})"
+                log(f"🛑 CIRCUIT BREAKER: {circuit_breaker_reason} — no more trading today")
+                tg(f"🛑 CIRCUIT BREAKER — {loss_streak}x Verlust in Folge. Tages-PnL: ${daily_realized_pnl:.2f}. Kein Trading bis morgen.")
             return
         elif decision == "TIME":
             pnl_val = (px - open_position['entry']) * open_position['qty']
@@ -1689,7 +1715,15 @@ def decide_and_trade():
             else:
                 loss_streak += 1
                 win_streak = 0
-            log(f"CONFIDENCE: win_streak={win_streak} loss_streak={loss_streak} conf_lvl={confidence_lvl:.2f}")
+            daily_realized_pnl += pnl_val  # Track daily PnL on time exit
+            daily_trade_results.append(pnl_val)
+            log(f"CONFIDENCE: win_streak={win_streak} loss_streak={loss_streak} conf_lvl={confidence_lvl:.2f} | daily_pnl=${daily_realized_pnl:.2f}")
+            # Check if time-exit losses trigger circuit breaker
+            if loss_streak >= LOSS_STREAK_COOL:
+                circuit_breaker_active = True
+                circuit_breaker_reason = f"{loss_streak} consecutive losses (daily PnL: ${daily_realized_pnl:.2f})"
+                log(f"🛑 CIRCUIT BREAKER: {circuit_breaker_reason} — no more trading today")
+                tg(f"🛑 CIRCUIT BREAKER — {loss_streak}x Verlust in Folge. Tages-PnL: ${daily_realized_pnl:.2f}. Kein Trading bis morgen.")
             return
         return
 
