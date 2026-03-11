@@ -200,8 +200,8 @@ ADX_MIN_TREND      = float(_os.getenv("ADX_MIN_TREND", "15.0"))     # Lowered fo
 # --- Entry thresholds (tunable via ENV) ---
 ENTRY_SCORE_MIN    = float(_os.getenv("ENTRY_SCORE_MIN", "0.25"))   # Lowered — bot needs to actually trade
 BREAKOUT_PCT       = float(_os.getenv("BREAKOUT_PCT", "0.00005"))   # 0.005% über HH20 (easier)
-BREAKOUT_WEIGHT    = float(_os.getenv("BREAKOUT_WEIGHT", "0.32"))   # Dynamic from strategy
-TREND_WEIGHT       = float(_os.getenv("TREND_WEIGHT", "0.16"))      # Dynamic from strategy
+BREAKOUT_WEIGHT    = 0.20   # FIXED — rebalanced for sideways trading (was 0.32)
+TREND_WEIGHT       = 0.12   # FIXED — rebalanced for sideways trading (was 0.16)
 RSI_MIN            = float(_os.getenv("RSI_MIN", "35"))              # More opportunities
 RSI_MAX            = float(_os.getenv("RSI_MAX", "75"))              # Allow higher RSI entries
 SEC_PML_MIN        = float(_os.getenv("SEC_PML_MIN", "0.40"))       # Lower ML threshold
@@ -391,6 +391,11 @@ def adapt_entry_threshold():
         # Winning = gently raise threshold (but cap at 0.30)
         _adaptive_entry_min = min(min(_ENTRY_CEILING, 0.30), _adaptive_entry_min + 0.01)
         ENTRY_SCORE_MIN = _adaptive_entry_min
+    
+    # HARD CAP: never let threshold rise above 0.25 regardless of strategy/adaptive logic
+    if ENTRY_SCORE_MIN > 0.25:
+        ENTRY_SCORE_MIN = 0.25
+        _adaptive_entry_min = 0.25
 
 # --- Volatility Zone Awareness ---
 def get_volatility_boost() -> float:
