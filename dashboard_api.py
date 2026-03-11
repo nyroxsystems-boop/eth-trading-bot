@@ -869,30 +869,20 @@ async def logout(current_user: Dict = Depends(get_current_user)):
 
 @app.get("/api/auth/me")
 async def get_current_user_info(authorization: Optional[str] = Header(None)):
-    """Get current user information - returns guest if not logged in"""
-    # If no auth header, return guest user (prevents 401 spam)
+    """Get current user information - requires valid token"""
+    # No token = not authenticated
     if not authorization or not authorization.startswith("Bearer "):
-        return {
-            "id": "guest",
-            "username": "Admin",
-            "email": "admin@ethbot.local",
-            "role": "admin",
-            "active": True,
-            "created_at": datetime.now().isoformat(),
-            "last_login": datetime.now().isoformat()
-        }
+        raise HTTPException(status_code=401, detail="Not authenticated")
     
     try:
         token = authorization.replace("Bearer ", "")
         payload = user_mgr.verify_jwt(token)
         if not payload:
-            return {"id": "guest", "username": "Admin", "email": "admin@ethbot.local",
-                    "role": "admin", "active": True, "created_at": datetime.now().isoformat()}
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
         
         user = user_mgr.get_user(payload['user_id'])
         if not user:
-            return {"id": "guest", "username": "Admin", "email": "admin@ethbot.local",
-                    "role": "admin", "active": True, "created_at": datetime.now().isoformat()}
+            raise HTTPException(status_code=401, detail="User not found")
         
         user_data = dict(user)
         if hasattr(user_data.get('created_at'), 'isoformat'):
@@ -904,10 +894,11 @@ async def get_current_user_info(authorization: Optional[str] = Header(None)):
             user_data['last_login'] = str(user_data['last_login'])
         
         return user_data
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as-is
     except Exception as e:
-        print(f"Auth/me info: {e}")
-        return {"id": "guest", "username": "Admin", "email": "admin@ethbot.local",
-                "role": "admin", "active": True, "created_at": datetime.now().isoformat()}
+        print(f"Auth/me error: {e}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 @app.get("/api/users", response_model=List[UserResponse])
 async def list_users(current_user: Dict = Depends(get_current_user)):
