@@ -163,13 +163,13 @@ INTERVAL           = _os.getenv("INTERVAL", "5m")
 LOOKBACK           = int(_os.getenv("LOOKBACK", "400"))
 TRADE_CAPITAL_PCT  = float(_os.getenv("TRADE_CAPITAL_PCT", "1.0"))
 
-TP_MIN             = float(_os.getenv("TARGET_PCT", "0.010"))      # 1.0% (faster exits)
-TP_MAX             = float(_os.getenv("TARGET_PCT_MAX", "0.015"))  # 1.5% (optimized)
-STOP_ATR_MULT      = float(_os.getenv("STOP_ATR_MULT", "1.5"))
-STOP_FLOOR         = float(_os.getenv("STOP_FLOOR", "0.005"))      # 0.5% (tighter SL)
+TP_MIN             = float(_os.getenv("TARGET_PCT", "0.015"))      # 1.5% — better R:R ratio
+TP_MAX             = float(_os.getenv("TARGET_PCT_MAX", "0.025"))  # 2.5% — gives room for gains
+STOP_ATR_MULT      = float(_os.getenv("STOP_ATR_MULT", "2.0"))    # 2.0x ATR for wider stops
+STOP_FLOOR         = float(_os.getenv("STOP_FLOOR", "0.015"))      # 1.5% — stops noise exits
 
 # --- Risk/Engine tuning ---
-RISK_PCT_PER_TRADE = float(_os.getenv("RISK_PCT_PER_TRADE", "0.006"))  # 0.6% vom Equity (optimized for 1% target)
+RISK_PCT_PER_TRADE = float(_os.getenv("RISK_PCT_PER_TRADE", "0.01"))   # 1% vom Equity, but wider SL = smaller position
 
 TRAIL_PCT       = float(_os.getenv("TRAIL_PCT", "0.008"))   # fallback 0.8%
 TAKE_PROFIT_PCT = float(_os.getenv("TAKE_PROFIT_PCT", "0.015"))  # fallback 1.5%
@@ -189,9 +189,9 @@ MAX_DRAWDOWN_DAY   = float(_os.getenv("MAX_DRAWDOWN_DAY", "0.03"))     # 3% Tage
 LOSS_STREAK_COOL   = int(_os.getenv("LOSS_STREAK_COOL", "3"))          # n Verluste in Folge -> Cooldown
 COOLDOWN_MIN       = int(_os.getenv("COOLDOWN_MIN", "10"))             # Minuten Pause nach Loss-Streak
 
-BREAK_EVEN_TRIGGER = float(_os.getenv("BREAK_EVEN_TRIGGER", "0.006"))  # +0.6% -> SL auf BE
-TRAIL_ATR_MULT     = float(_os.getenv("TRAIL_ATR_MULT", "1.0"))        # ATR * x als Trailing
-MAX_HOLD_BARS      = int(_os.getenv("MAX_HOLD_BARS", "48"))            # Zeit-Exit (z. B. 48 x 5m = 4h)
+BREAK_EVEN_TRIGGER = float(_os.getenv("BREAK_EVEN_TRIGGER", "0.012"))  # +1.2% -> SL auf BE (was 0.6% — too early)
+TRAIL_ATR_MULT     = float(_os.getenv("TRAIL_ATR_MULT", "1.5"))        # ATR * x als Trailing
+MAX_HOLD_BARS      = int(_os.getenv("MAX_HOLD_BARS", "90"))            # ~7.5h — gives trades time to develop
 
 # Regime-Filter
 USE_ADX_FILTER     = _os.getenv("USE_ADX_FILTER", "true").lower()=="true"
@@ -305,14 +305,17 @@ def apply_best_strategy():
         old_stop = STOP_FLOOR
         
         # === Core Risk Parameters ===
+        # TP can be adjusted by backtester (within safe limits)
         if "tp_min" in p:
-            TP_MIN = float(p["tp_min"])
+            TP_MIN = max(0.012, min(0.04, float(p["tp_min"])))  # Clamp 1.2-4%
         if "tp_max" in p:
-            TP_MAX = float(p["tp_max"])
-        if "stop_floor" in p:
-            STOP_FLOOR = float(p["stop_floor"])
-        if "risk_per_trade" in p:
-            RISK_PCT_PER_TRADE = float(p["risk_per_trade"])
+            TP_MAX = max(0.015, min(0.05, float(p["tp_max"])))  # Clamp 1.5-5%
+        # STOP_FLOOR and RISK_PCT_PER_TRADE are LOCKED — backtester cannot override!
+        # Reason: backtester doesn't account for slippage/spread, sets SL too tight
+        # if "stop_floor" in p:  # DISABLED — was setting SL to 0.4%!
+        #     STOP_FLOOR = float(p["stop_floor"])
+        # if "risk_per_trade" in p:  # DISABLED — was setting risk to 1.2%!
+        #     RISK_PCT_PER_TRADE = float(p["risk_per_trade"])
         if "ml_threshold" in p:
             SEC_PML_MIN = max(0.30, float(p["ml_threshold"]))
         
