@@ -301,27 +301,50 @@ def generate_demo_trades() -> List[Trade]:
     return trades
 
 async def read_trades_csv() -> List[Trade]:
-    """Read trades from CSV file or return demo data"""
+    """Read trades from CSV file, falling back to PostgreSQL if CSV is empty/missing"""
     if DEMO_MODE:
         return generate_demo_trades()
     
     trades = []
+    
+    # Try CSV first
     try:
-        if not TRADES_CSV.exists():
-            return trades
-        
-        with open(TRADES_CSV, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                trades.append(Trade(
-                    timestamp=row['timestamp'],
-                    action=row['action'],
-                    qty=float(row['qty']),
-                    price=float(row['price']),
-                    pnl=float(row.get('pnl', 0))
-                ))
+        if TRADES_CSV.exists():
+            with open(TRADES_CSV, 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    trades.append(Trade(
+                        timestamp=row['timestamp'],
+                        action=row['action'],
+                        qty=float(row['qty']),
+                        price=float(row['price']),
+                        pnl=float(row.get('pnl', 0))
+                    ))
     except Exception as e:
-        print(f"Error reading trades: {e}")
+        print(f"Error reading trades CSV: {e}")
+    
+    # If CSV empty/missing, fall back to PostgreSQL (survives deploys)
+    if not trades and USE_POSTGRES:
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT timestamp, action, qty, price, pnl 
+                    FROM paper_trades ORDER BY created_at ASC
+                """)
+                rows = cursor.fetchall()
+                for r in rows:
+                    trades.append(Trade(
+                        timestamp=r[0],
+                        action=r[1],
+                        qty=float(r[2]),
+                        price=float(r[3]),
+                        pnl=float(r[4] or 0)
+                    ))
+                if trades:
+                    print(f"📊 Loaded {len(trades)} trades from PostgreSQL (CSV was empty)")
+        except Exception as e:
+            print(f"⚠️ PG trades fallback error: {e}")
     
     return trades
 
