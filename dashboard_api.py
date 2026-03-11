@@ -1969,13 +1969,21 @@ async def get_user_portfolio_pairs(current_user: Dict = Depends(get_current_user
                     "risk_per_trade": float(row[5] or 0.01) * 100,  # Convert to %
                     "max_trades_per_day": row[6] or 10,
                     "take_profit_pct": float(row[7] or 0.015) * 100,
-                    "stop_loss_pct": float(row[8] or 0.01) * 100,
+                    "stop_loss_pct": float(row[8] or 0.015) * 100,
                     "enabled": bool(row[9]),
                     "total_pnl": float(row[10] or 0),
                     "total_trades": row[11] or 0,
                     "win_rate": float(row[12] or 0),
                     "pnl_percent": (float(row[10] or 0) / float(row[4] or 100)) * 100 if float(row[4] or 100) > 0 else 0
                 }
+                # Override with actual bot parameters (hardcoded in bot, not from DB)
+                try:
+                    from eth_master_bot import TP_MIN, TP_MAX, STOP_FLOOR, RISK_PCT_PER_TRADE
+                    pair_data["take_profit_pct"] = round(TP_MAX * 100, 1)
+                    pair_data["stop_loss_pct"] = round(STOP_FLOOR * 100, 1)
+                    pair_data["risk_per_trade"] = round(RISK_PCT_PER_TRADE * 100, 1)
+                except ImportError:
+                    pass  # Fallback to DB values
                 pairs.append(pair_data)
                 total_capital += pair_data["allocated_capital"]
                 total_pnl += pair_data["total_pnl"]

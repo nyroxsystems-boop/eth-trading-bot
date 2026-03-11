@@ -59,8 +59,8 @@ const MultiPairPortfolio = () => {
         allocated_capital: 100,
         risk_per_trade: 1,
         max_trades_per_day: 10,
-        take_profit_pct: 1.5,
-        stop_loss_pct: 1
+        take_profit_pct: 2.5,
+        stop_loss_pct: 1.5
     })
 
     useEffect(() => {
@@ -116,8 +116,8 @@ const MultiPairPortfolio = () => {
                     allocated_capital: 100,
                     risk_per_trade: 1,
                     max_trades_per_day: 10,
-                    take_profit_pct: 1.5,
-                    stop_loss_pct: 1
+                    take_profit_pct: 2.5,
+                    stop_loss_pct: 1.5
                 })
                 fetchPortfolio()
             } else {
