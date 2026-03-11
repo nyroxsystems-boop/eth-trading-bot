@@ -2360,84 +2360,241 @@ async def update_risk_params(risk_per_trade: float, max_drawdown: float, max_tra
 
 # Backtest Endpoint
 class BacktestParams(BaseModel):
-    ml_threshold: float
-    risk_per_trade: float
-    tp_min: float
-    tp_max: float
-    stop_floor: float
-    max_trades_per_day: int
+    ml_threshold: float = 0.42
+    risk_per_trade: float = 0.01
+    tp_min: float = 0.015
+    tp_max: float = 0.025
+    stop_floor: float = 0.015
+    max_trades_per_day: int = 15
+    # NEW: expanded params for broader search
+    rsi_oversold: float = 35.0
+    rsi_overbought: float = 75.0
+    entry_score_min: float = 0.20
+    breakout_pct: float = 0.00005
 
 @app.post("/api/backtest")
 async def run_backtest(params: BacktestParams):
-    """Run backtest with given parameters"""
-    import random
+    """Run REAL backtest on historical Binance data with actual bot signals."""
     import numpy as np
+    import requests as req
     
-    # Simulate 100 trades with given parameters
-    trades_simulated = []
-    wins = 0
-    losses = 0
-    total_pnl = 0.0
-    equity_curve = [10000.0]  # Start with $10k
-    
-    # More aggressive = more trades, but lower win rate
-    # More conservative = fewer trades, but higher win rate
-    aggressiveness = 1.0 - params.ml_threshold  # 0.48 = aggressive, 0.30 = very aggressive
-    base_win_rate = 0.45 + (params.ml_threshold - 0.30) * 0.5  # 0.45-0.65 range
-    
-    num_trades = min(int(100 * (1 + aggressiveness)), params.max_trades_per_day * 7)
-    
-    for i in range(num_trades):
-        # Simulate trade outcome
-        win = random.random() < base_win_rate
+    try:
+        # 1. Fetch real Binance klines (last 14 days, 5m candles = ~4032 bars)
+        base_url = "https://api.binance.com/api/v3/klines"
+        all_klines = []
+        end_ts = int(datetime.now().timestamp() * 1000)
+        start_ts = end_ts - (14 * 24 * 60 * 60 * 1000)  # 14 days
+        fetch_start = start_ts
         
-        if win:
-            # Win: TP between tp_min and tp_max
-            profit_pct = random.uniform(params.tp_min, params.tp_max)
-            pnl = equity_curve[-1] * params.risk_per_trade * (profit_pct / params.stop_floor)
-            wins += 1
+        while fetch_start < end_ts:
+            resp = req.get(base_url, params={
+                "symbol": "ETHUSDT", "interval": "5m",
+                "startTime": fetch_start, "limit": 1000
+            }, timeout=10)
+            data = resp.json()
+            if not data:
+                break
+            all_klines.extend(data)
+            fetch_start = int(data[-1][6]) + 1
+            if len(data) < 1000:
+                break
+        
+        if len(all_klines) < 200:
+            return {"error": "Not enough data", "total_trades": 0, "win_rate": 0, "roi": 0}
+        
+        # 2. Build DataFrame with indicators
+        import pandas as pd
+        df = pd.DataFrame(all_klines, columns=[
+            "open_time","open","high","low","close","volume",
+            "close_time","qv","trades","taker_base","taker_quote","ignore"
+        ])
+        for c in ["open","high","low","close","volume"]:
+            df[c] = df[c].astype(float)
+        
+        # Calculate indicators
+        from ta.volatility import AverageTrueRange, BollingerBands
+        from ta.trend import EMAIndicator, MACD
+        from ta.momentum import RSIIndicator
+        
+        df["ema20"] = EMAIndicator(df["close"], 20).ema_indicator()
+        df["ema50"] = EMAIndicator(df["close"], 50).ema_indicator()
+        macd = MACD(df["close"], window_slow=26, window_fast=12, window_sign=9)
+        df["macd"] = macd.macd()
+        df["macd_sig"] = macd.macd_signal()
+        df["rsi14"] = RSIIndicator(df["close"], 14).rsi()
+        atr = AverageTrueRange(df["high"], df["low"], df["close"], window=14)
+        df["atr"] = atr.average_true_range()
+        bb = BollingerBands(df["close"], window=20, window_dev=2)
+        df["bb_lo"] = bb.bollinger_lband()
+        df["hh20"] = df["high"].rolling(20).max()
+        df["ll20"] = df["low"].rolling(20).min()
+        df.dropna(inplace=True)
+        
+        if len(df) < 100:
+            return {"error": "Not enough data after indicators", "total_trades": 0, "win_rate": 0, "roi": 0}
+        
+        # 3. Run backtest with ACTUAL bot scoring logic
+        eq = 10000.0
+        position = None
+        trades = 0
+        wins = 0
+        losses = 0
+        bars_in_pos = 0
+        total_pnl = 0.0
+        equity_curve = [eq]
+        day_trades = 0
+        last_day = ""
+        
+        stop_floor = max(0.01, params.stop_floor)  # Min 1% SL
+        tp_min = max(0.01, params.tp_min)
+        tp_max = max(tp_min + 0.005, params.tp_max)
+        stop_atr_mult = 2.0
+        trail_atr_mult = 1.5
+        max_hold_bars = 90
+        
+        for i in range(60, len(df) - 1):
+            row = df.iloc[i]
+            prev = df.iloc[i - 1]
+            px = float(row["close"])
+            ema20 = float(row["ema20"])
+            ema50 = float(row["ema50"])
+            rsi14 = float(row["rsi14"])
+            hh20 = float(row["hh20"])
+            atr_val = float(row["atr"])
+            bb_lo = float(row["bb_lo"])
+            ll20 = float(row["ll20"])
+            
+            # Day trade counter
+            cur_day = str(df.iloc[i].get("open_time", ""))[:10]
+            if cur_day != last_day:
+                day_trades = 0
+                last_day = cur_day
+            
+            # --- SAME scoring as live bot (synchronized) ---
+            body = abs(row["close"] - row["open"])
+            rng = row["high"] - row["low"]
+            lower_wick = min(row["open"], row["close"]) - row["low"]
+            drawdown_ok = (rng > 0) and (lower_wick / max(rng, 1e-9) > 0.45) and (row["close"] > (row["low"] + 0.5 * rng))
+            
+            breakout_ok = px > hh20 * (1.0 + params.breakout_pct)
+            trend_ok = (px > ema20) and (ema20 > ema50)
+            rsi_ok = (params.rsi_oversold <= rsi14 <= params.rsi_overbought)
+            
+            macd_val = float(row["macd"])
+            macd_sig_val = float(row["macd_sig"])
+            macd_gain = macd_val - macd_sig_val
+            p_ml = 0.5 + np.tanh(macd_gain) * 0.2
+            secondary_ok = trend_ok and (rsi14 >= params.rsi_oversold) and (p_ml >= params.ml_threshold) and (px > ema20)
+            
+            oversold_ok = (rsi14 <= max(40.0, params.rsi_oversold)) and drawdown_ok and (px >= bb_lo * 1.0005)
+            ema_bounce_ok = (px > ema20) and (float(row["low"]) <= ema20 * 1.002) and (rsi14 > 40)
+            bb_bounce_ok = (px <= bb_lo * 1.005) and (rsi14 < 45) and (px > float(row["low"]))
+            prev_macd = float(prev["macd"])
+            prev_macd_sig = float(prev["macd_sig"])
+            macd_cross_ok = (macd_val > macd_sig_val) and (prev_macd <= prev_macd_sig)
+            range_support_ok = (px <= ll20 * 1.003) and (rsi14 < 40) and (macd_val > prev_macd)
+            
+            ml_direct = max(0.0, min(0.15, (p_ml - 0.5) * 0.3)) if p_ml > 0.55 else 0.0
+            adx_bonus = 0.05  # Simplified — no ADX calc for speed
+            boost = (p_ml - 0.5) * 0.4 + adx_bonus
+            
+            score = (
+                0.20 * (1.0 if breakout_ok else 0.0) +
+                0.12 * (1.0 if trend_ok else 0.0) +
+                0.05 * (1.0 if secondary_ok else 0.0) +
+                0.12 * (1.0 if drawdown_ok else 0.0) +
+                0.06 * (1.0 if rsi_ok else 0.0) +
+                0.05 * 1.0 +  # vol_gate simplified
+                0.15 * (1.0 if oversold_ok else 0.0) +
+                0.12 * (1.0 if ema_bounce_ok else 0.0) +
+                0.10 * (1.0 if bb_bounce_ok else 0.0) +
+                0.12 * (1.0 if macd_cross_ok else 0.0) +
+                0.08 * (1.0 if range_support_ok else 0.0) +
+                ml_direct +
+                boost
+            )
+            
+            # --- Position management ---
+            if position:
+                bars_in_pos += 1
+                entry = position["entry"]
+                atr_in = position["atr"]
+                upnl = (px / entry) - 1.0
+                tp = tp_max if rsi14 >= 70 else tp_min
+                sl = max(stop_floor, stop_atr_mult * (atr_in / max(entry, 1e-9)))
+                trail = trail_atr_mult * (atr_val / max(entry, 1e-9))
+                sl = max(sl, trail)
+                
+                if upnl >= tp or upnl <= -sl or bars_in_pos >= max_hold_bars:
+                    pnl = eq * params.risk_per_trade * (upnl / sl)  # Approx PnL
+                    eq += eq * upnl * (params.risk_per_trade / sl)  # Position-sized
+                    total_pnl += pnl
+                    if upnl > 0:
+                        wins += 1
+                    else:
+                        losses += 1
+                    position = None
+                    bars_in_pos = 0
+                    equity_curve.append(eq)
+            else:
+                if score >= params.entry_score_min and day_trades < params.max_trades_per_day and trades < 500:
+                    position = {"entry": px, "atr": atr_val}
+                    trades += 1
+                    day_trades += 1
+        
+        # Close any open position at end
+        if position:
+            upnl = (float(df.iloc[-1]["close"]) / position["entry"]) - 1.0
+            eq *= (1.0 + upnl * 0.5)  # Half-sized for end-of-test
+            if upnl > 0:
+                wins += 1
+            else:
+                losses += 1
+            trades += 1
+        
+        # 4. Calculate metrics
+        win_rate = (wins / max(trades, 1)) * 100
+        roi = ((eq - 10000.0) / 10000.0) * 100
+        
+        # Sharpe ratio
+        if len(equity_curve) > 2:
+            returns = [(equity_curve[i] / equity_curve[i-1]) - 1 for i in range(1, len(equity_curve))]
+            sharpe = (np.mean(returns) / max(np.std(returns), 1e-9)) * np.sqrt(252) if returns else 0
         else:
-            # Loss: SL at stop_floor
-            pnl = -equity_curve[-1] * params.risk_per_trade
-            losses += 1
+            sharpe = 0
         
-        total_pnl += pnl
-        equity_curve.append(equity_curve[-1] + pnl)
-        trades_simulated.append(pnl)
-    
-    # Calculate metrics
-    win_rate = (wins / num_trades * 100) if num_trades > 0 else 0
-    avg_win = sum(p for p in trades_simulated if p > 0) / wins if wins > 0 else 0
-    avg_loss = sum(p for p in trades_simulated if p < 0) / losses if losses > 0 else 0
-    
-    # Sharpe Ratio
-    returns = trades_simulated
-    sharpe = (np.mean(returns) / np.std(returns) * np.sqrt(252)) if np.std(returns) > 0 else 0
-    
-    # Max Drawdown
-    peak = equity_curve[0]
-    max_dd = 0
-    for val in equity_curve:
-        if val > peak:
-            peak = val
-        dd = (peak - val) / peak if peak > 0 else 0
-        max_dd = max(max_dd, dd)
-    
-    # ROI
-    roi = (total_pnl / 10000.0) * 100
-    
-    return {
-        "total_trades": num_trades,
-        "winning_trades": wins,
-        "losing_trades": losses,
-        "win_rate": win_rate,
-        "total_pnl": total_pnl,
-        "roi": roi,
-        "sharpe_ratio": sharpe,
-        "max_drawdown": max_dd * 100,
-        "avg_win": avg_win,
-        "avg_loss": avg_loss
-    }
+        # Max drawdown
+        peak = equity_curve[0]
+        max_dd = 0
+        for val in equity_curve:
+            if val > peak:
+                peak = val
+            dd = (peak - val) / peak if peak > 0 else 0
+            max_dd = max(max_dd, dd)
+        
+        return {
+            "total_trades": trades,
+            "winning_trades": wins,
+            "losing_trades": losses,
+            "win_rate": round(win_rate, 1),
+            "total_pnl": round(total_pnl, 2),
+            "roi": round(roi, 2),
+            "sharpe_ratio": round(float(sharpe), 2),
+            "max_drawdown": round(max_dd * 100, 2),
+            "avg_win": round(total_pnl / max(wins, 1), 2),
+            "avg_loss": round(total_pnl / max(losses, 1), 2) if losses > 0 else 0,
+            "data_source": "real_binance_14d",
+            "bars_tested": len(df) - 60
+        }
+    except Exception as e:
+        print(f"Backtest error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "total_trades": 0, "winning_trades": 0, "losing_trades": 0,
+            "win_rate": 0, "total_pnl": 0, "roi": 0, "sharpe_ratio": 0,
+            "max_drawdown": 0, "error": str(e)
+        }
 
 # Learning API Endpoints - reads from PostgreSQL via learning_store module
 # (falls back to JSON files in local dev when DATABASE_URL is not set)

@@ -14,11 +14,16 @@ class StrategyGenerator:
         self.db_path = Path(learning_db_path)
         self.parameter_ranges = {
             'ml_threshold': (0.30, 0.70),
-            'risk_per_trade': (0.003, 0.020),
-            'tp_min': (0.005, 0.020),
-            'tp_max': (0.010, 0.030),
-            'stop_floor': (0.003, 0.015),
-            'max_trades_per_day': (5, 30)
+            'risk_per_trade': (0.005, 0.020),
+            'tp_min': (0.010, 0.030),
+            'tp_max': (0.015, 0.050),
+            'stop_floor': (0.010, 0.025),  # Min 1% SL (was 0.3% — deadly)
+            'max_trades_per_day': (5, 25),
+            # NEW: expanded params for broader search
+            'rsi_oversold': (25, 45),
+            'rsi_overbought': (60, 85),
+            'entry_score_min': (0.10, 0.30),
+            'breakout_pct': (0.00001, 0.001)
         }
     
     def generate_random_strategy(self) -> Dict[str, Any]:
@@ -29,7 +34,11 @@ class StrategyGenerator:
             'tp_min': random.uniform(*self.parameter_ranges['tp_min']),
             'tp_max': random.uniform(*self.parameter_ranges['tp_max']),
             'stop_floor': random.uniform(*self.parameter_ranges['stop_floor']),
-            'max_trades_per_day': random.randint(*self.parameter_ranges['max_trades_per_day'])
+            'max_trades_per_day': random.randint(*self.parameter_ranges['max_trades_per_day']),
+            'rsi_oversold': random.uniform(*self.parameter_ranges['rsi_oversold']),
+            'rsi_overbought': random.uniform(*self.parameter_ranges['rsi_overbought']),
+            'entry_score_min': random.uniform(*self.parameter_ranges['entry_score_min']),
+            'breakout_pct': random.uniform(*self.parameter_ranges['breakout_pct'])
         }
     
     def mutate_strategy(self, strategy: Dict[str, Any], mutation_rate: float = 0.1) -> Dict[str, Any]:

@@ -156,10 +156,11 @@ def _pg_save_strategy(strategy: Dict):
                 ON CONFLICT (key) DO UPDATE SET value = (COALESCE(kv_store.value::int, 0) + 1)::text
             """, (today_key,))
             
-            # DEDUP: Skip if a strategy with same score (within 0.5) and same win_rate already exists
+            # DEDUP: Skip if a strategy with very similar score AND same win_rate already exists
+            # Widened from 0.5 to 5.0 — real backtests cluster tighter than random sims
             cursor.execute("""
                 SELECT COUNT(*) FROM learning_strategies
-                WHERE ABS(score - %s) < 0.5
+                WHERE ABS(score - %s) < 5.0
                 AND metrics::text LIKE %s
             """, (
                 score,
