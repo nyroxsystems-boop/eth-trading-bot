@@ -1330,7 +1330,8 @@ async def auto_learning_background():
                 else:
                     strategy = None
             else:
-                strategy = generate_mock_strategy()
+                # No historical data available — skip instead of faking
+                strategy = None
             
             if strategy:
                 # Skip duplicates (same score as last saved)
@@ -1397,48 +1398,7 @@ async def auto_learning_background():
             await asyncio.sleep(60)
 
 
-def generate_mock_strategy():
-    """Generate mock strategy when real backtest not available"""
-    import random
-    strategy = {
-        "params": {
-            "ml_threshold": round(random.uniform(0.35, 0.65), 3),
-            "risk_per_trade": round(random.uniform(0.004, 0.012), 4),
-            "tp_min": round(random.uniform(0.008, 0.015), 4),
-            "tp_max": round(random.uniform(0.015, 0.025), 4),
-            "stop_floor": round(random.uniform(0.004, 0.008), 4),
-            "max_trades_per_day": random.randint(8, 15)
-        },
-        "timestamp": datetime.now().isoformat()
-    }
-    
-    # Calculate metrics
-    ml = strategy["params"]["ml_threshold"]
-    risk = strategy["params"]["risk_per_trade"]
-    win_rate = 50 + (ml - 0.5) * 40 + random.uniform(-8, 8)
-    roi = (win_rate - 50) * 0.5 + random.uniform(-5, 10)
-    sharpe = 1.0 + (win_rate - 50) / 25 + random.uniform(-0.3, 0.5)
-    drawdown = 5 + risk * 300 + random.uniform(-2, 5)
-    
-    strategy["metrics"] = {
-        "total_trades": random.randint(40, 150),
-        "win_rate": round(max(40, min(80, win_rate)), 1),
-        "roi": round(roi, 2),
-        "sharpe_ratio": round(max(0.5, sharpe), 2),
-        "max_drawdown": round(max(2, min(20, drawdown)), 1)
-    }
-    
-    strategy["score"] = round(
-        strategy["metrics"]["win_rate"] * 0.3 +
-        strategy["metrics"]["roi"] * 2.0 +
-        strategy["metrics"]["sharpe_ratio"] * 10 -
-        strategy["metrics"]["max_drawdown"] * 0.5,
-        2
-    )
-    strategy["applied"] = False
-    strategy["data_source"] = "simulated"
-    
-    return strategy
+# generate_mock_strategy REMOVED — no more fake data generation
 
 async def monitor_trades():
     """Monitor trades.csv for new entries and broadcast"""
@@ -4864,39 +4824,171 @@ async def save_strategy_parameters(data: dict, current_user: Optional[Dict] = De
 
 @app.post("/api/strategy/backtest")
 async def run_strategy_backtest(data: dict, current_user: Optional[Dict] = Depends(get_current_user_optional)):
-    """Run backtest with given strategy parameters"""
-    import random
+    """Run REAL backtest with given strategy parameters against Binance historical data"""
+    import numpy as np
     
     params = data.get("params", DEFAULT_STRATEGY_PARAMS)
-    days = data.get("days", 30)
+    days = data.get("days", 14)
     
-    # Calculate simulated backtest results based on parameters
-    risk_factor = params.get("riskPerTrade", 1.0)
-    ml_threshold = params.get("mlThreshold", 0.6)
-    
-    # Base performance influenced by parameters
-    base_return = 15 + (risk_factor * 5) - ((ml_threshold - 0.5) * 10)
-    win_rate = 55 + (ml_threshold * 20) - (risk_factor * 3)
-    
-    # Add randomness
-    total_return = base_return + random.uniform(-5, 10)
-    win_rate = min(80, max(40, win_rate + random.uniform(-5, 5)))
-    max_drawdown = 3 + risk_factor * 4 + random.uniform(0, 3)
-    sharpe = 1.0 + (win_rate - 50) / 30 + random.uniform(-0.2, 0.3)
-    profit_factor = 1.2 + (win_rate - 50) / 40 + random.uniform(-0.1, 0.2)
-    
-    total_trades = int(days * params.get("maxTradesPerDay", 10) * 0.7)
-    
-    result = {
-        "totalReturn": round(total_return * (days / 30), 2),
-        "winRate": round(win_rate, 1),
-        "totalTrades": total_trades,
-        "maxDrawdown": round(max_drawdown, 1),
-        "sharpeRatio": round(sharpe, 2),
-        "profitFactor": round(profit_factor, 2)
+    # Map frontend camelCase params to bot params
+    backtest_params = {
+        "ml_threshold": params.get("mlThreshold", 0.55),
+        "risk_per_trade": params.get("riskPerTrade", 0.01),
+        "tp_min": params.get("tpMin", 0.015),
+        "tp_max": params.get("tpMax", 0.025),
+        "stop_floor": params.get("stopFloor", 0.015),
+        "max_trades_per_day": params.get("maxTradesPerDay", 10),
+        "rsi_oversold": params.get("rsiOversold", 35),
+        "rsi_overbought": params.get("rsiOverbought", 70),
+        "entry_score_min": params.get("entryScoreMin", 4),
+        "breakout_pct": params.get("breakoutPct", 0.003)
     }
     
-    return {"status": "success", "result": result}
+    try:
+        # Fetch real Binance klines
+        import requests as req
+        limit = min(days * 288, 4032)  # 288 candles per day (5m), max 4032
+        url = f"https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=5m&limit={limit}"
+        resp = req.get(url, timeout=15)
+        if resp.status_code != 200:
+            raise Exception(f"Binance API error: {resp.status_code}")
+        raw = resp.json()
+        
+        import pandas as pd
+        df = pd.DataFrame(raw, columns=['ts','o','h','l','c','v','ct','qv','nt','tbv','tqv','ig'])
+        for col in ['o','h','l','c','v']:
+            df[col] = df[col].astype(float)
+        
+        if len(df) < 100:
+            raise Exception("Not enough data")
+        
+        # Calculate indicators
+        import ta
+        df['ema_fast'] = ta.trend.ema_indicator(df['c'], window=9)
+        df['ema_slow'] = ta.trend.ema_indicator(df['c'], window=21)
+        macd = ta.trend.MACD(df['c'])
+        df['macd'] = macd.macd()
+        df['macd_signal'] = macd.macd_signal()
+        df['rsi'] = ta.momentum.rsi(df['c'], window=14)
+        df['atr'] = ta.volatility.average_true_range(df['h'], df['l'], df['c'], window=14)
+        bb = ta.volatility.BollingerBands(df['c'], window=20)
+        df['bb_upper'] = bb.bollinger_hband()
+        df['bb_lower'] = bb.bollinger_lband()
+        df.dropna(inplace=True)
+        
+        if len(df) < 50:
+            raise Exception("Not enough data after indicators")
+        
+        # Run real backtest with scoring logic
+        capital = 10000.0
+        position = None
+        trades_list = []
+        daily_trades = {}
+        sl_pct = backtest_params["stop_floor"]
+        tp_pct = backtest_params["tp_max"]
+        
+        for i in range(1, len(df)):
+            row = df.iloc[i]
+            prev = df.iloc[i-1]
+            price = row['c']
+            date_key = str(row['ts'])[:10]
+            
+            if date_key not in daily_trades:
+                daily_trades[date_key] = 0
+            
+            if position is None:
+                # Score signals
+                score = 0
+                if row['ema_fast'] > row['ema_slow']: score += 1
+                if row['macd'] > row['macd_signal']: score += 1
+                if row['rsi'] < backtest_params['rsi_overbought']: score += 1
+                if row['rsi'] > backtest_params['rsi_oversold']: score += 0.5
+                if price > row['bb_lower']: score += 1
+                if row['c'] > prev['c']: score += 0.5
+                if row['v'] > df['v'].rolling(20).mean().iloc[i]: score += 1
+                pct_change = (row['c'] - prev['c']) / prev['c']
+                if pct_change > backtest_params['breakout_pct']: score += 1
+                
+                if (score >= backtest_params['entry_score_min'] and 
+                    daily_trades[date_key] < backtest_params['max_trades_per_day']):
+                    qty = (capital * backtest_params['risk_per_trade']) / price
+                    position = {'entry': price, 'qty': qty, 'index': i}
+            else:
+                # Check exit conditions
+                entry = position['entry']
+                pnl_pct = (price - entry) / entry
+                
+                exit_reason = None
+                if pnl_pct <= -sl_pct:
+                    exit_reason = 'stop_loss'
+                elif pnl_pct >= tp_pct:
+                    exit_reason = 'take_profit'
+                elif i - position['index'] > 60:  # 5h time exit
+                    exit_reason = 'time_exit'
+                
+                if exit_reason:
+                    pnl = (price - entry) * position['qty']
+                    trades_list.append(pnl)
+                    capital += pnl
+                    daily_trades[date_key] += 1
+                    position = None
+        
+        # Calculate results
+        total_trades = len(trades_list)
+        if total_trades == 0:
+            return {"status": "success", "result": {
+                "totalReturn": 0, "winRate": 0, "totalTrades": 0,
+                "maxDrawdown": 0, "sharpeRatio": 0, "profitFactor": 0
+            }}
+        
+        wins = [p for p in trades_list if p > 0]
+        losses = [p for p in trades_list if p <= 0]
+        win_rate = len(wins) / total_trades * 100
+        total_return = sum(trades_list)
+        roi = (total_return / 10000) * 100
+        
+        # Sharpe
+        sharpe = float(np.mean(trades_list) / np.std(trades_list)) if np.std(trades_list) > 0 else 0
+        
+        # Max drawdown
+        equity = []
+        running = 0
+        for pnl in trades_list:
+            running += pnl
+            equity.append(running)
+        peak = equity[0]
+        max_dd = 0
+        for val in equity:
+            if val > peak: peak = val
+            dd = (peak - val) / peak if peak > 0 else 0
+            max_dd = max(max_dd, dd)
+        
+        # Profit factor
+        gross_wins = sum(wins) if wins else 0
+        gross_losses = abs(sum(losses)) if losses else 1
+        profit_factor = gross_wins / gross_losses if gross_losses > 0 else 0
+        
+        result = {
+            "totalReturn": round(roi, 2),
+            "winRate": round(win_rate, 1),
+            "totalTrades": total_trades,
+            "maxDrawdown": round(max_dd * 100, 1),
+            "sharpeRatio": round(sharpe, 2),
+            "profitFactor": round(profit_factor, 2),
+            "dataSource": "historical_binance",
+            "candlesUsed": len(df),
+            "daysBacktested": days
+        }
+        
+        return {"status": "success", "result": result}
+    
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "error": str(e), "result": {
+            "totalReturn": 0, "winRate": 0, "totalTrades": 0,
+            "maxDrawdown": 0, "sharpeRatio": 0, "profitFactor": 0
+        }}
 
 
 # ============================================================================
