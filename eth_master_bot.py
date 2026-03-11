@@ -1085,20 +1085,47 @@ def place_buy(qty: float, price_hint: float) -> bool:
     try:
         from binance.client import Client
         cli = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
+        
+        # Pre-check: sufficient balance?
+        try:
+            bal_info = cli.get_asset_balance(asset=QUOTE_ASSET)
+            available = float(bal_info['free']) if bal_info else 0.0
+            needed = float(qty) * float(price_hint)
+            if available < needed * 0.95:  # 5% buffer for fees
+                log(f'[LIVE] BUY BLOCKED: insufficient balance ${available:.2f} < ${needed:.2f}')
+                return False
+        except Exception as e:
+            log(f'WARN balance pre-check failed: {e} — proceeding anyway')
+        
         quote = round(float(qty) * float(price_hint), 2)
         try:
-            cli.order_market_buy(symbol=PAIR, quoteOrderQty=quote)
+            resp = cli.order_market_buy(symbol=PAIR, quoteOrderQty=quote)
         except Exception:
             # Fallback auf Stückzahl
-            cli.order_market_buy(symbol=PAIR, quantity=round(float(qty), 5))
+            resp = cli.order_market_buy(symbol=PAIR, quantity=round(float(qty), 5))
         
-        log(f"[LIVE] BUY {qty:.5f} {BASE_ASSET} @ ~{price_hint:.2f}")
+        # Extract actual fill price from Binance response
+        fill_price = float(price_hint)
+        fill_qty = float(qty)
+        try:
+            fills = resp.get('fills', [])
+            if fills:
+                total_cost = sum(float(f['price']) * float(f['qty']) for f in fills)
+                total_qty = sum(float(f['qty']) for f in fills)
+                if total_qty > 0:
+                    fill_price = total_cost / total_qty
+                    fill_qty = total_qty
+                    log(f'[LIVE] Fill price: ${fill_price:.2f} (hint was ${price_hint:.2f})')
+        except Exception:
+            pass  # Use price_hint as fallback
         
-        # Trailing/TP State setzen
+        log(f"[LIVE] BUY {fill_qty:.5f} {BASE_ASSET} @ ~{fill_price:.2f}")
+        
+        # Trailing/TP State setzen (use actual fill price)
         TRAIL_STATE['active']    = True
-        TRAIL_STATE['entry']     = float(price_hint)
-        TRAIL_STATE['peak']      = float(price_hint)
-        TRAIL_STATE['qty']       = float(qty)
+        TRAIL_STATE['entry']     = float(fill_price)
+        TRAIL_STATE['peak']      = float(fill_price)
+        TRAIL_STATE['qty']       = float(fill_qty)
         import time as _t
         TRAIL_STATE['opened_at'] = _t.time()
         return True
@@ -1129,7 +1156,33 @@ def place_sell(qty: float) -> bool:
     try:
         from binance.client import Client
         cli = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
-        cli.order_market_sell(symbol=PAIR, quantity=round(qty,5))
+        
+        # Pre-check: sufficient ETH balance?
+        try:
+            bal_info = cli.get_asset_balance(asset=BASE_ASSET)
+            available = float(bal_info['free']) if bal_info else 0.0
+            if available < float(qty) * 0.95:
+                log(f'[LIVE] SELL BLOCKED: insufficient {BASE_ASSET} balance {available:.5f} < {qty:.5f}')
+                return False
+        except Exception as e:
+            log(f'WARN balance pre-check failed: {e} — proceeding anyway')
+        
+        resp = cli.order_market_sell(symbol=PAIR, quantity=round(qty, 5))
+        
+        # Extract actual fill price
+        fill_price = px
+        try:
+            fills = resp.get('fills', [])
+            if fills:
+                total_cost = sum(float(f['price']) * float(f['qty']) for f in fills)
+                total_qty = sum(float(f['qty']) for f in fills)
+                if total_qty > 0:
+                    fill_price = total_cost / total_qty
+                    log(f'[LIVE] Sell fill price: ${fill_price:.2f} (last was ${px:.2f})')
+        except Exception:
+            pass
+        
+        log(f"[LIVE] SELL {qty:.5f} {BASE_ASSET} @ ~{fill_price:.2f}")
         return True
     except Exception as e:
         log(f"WARN sell failed: {e}")
