@@ -649,6 +649,17 @@ def ml_online_update(df_feat: pd.DataFrame):
         X, y = ml_prepare(df_feat)
         if X.shape[0] < 60:
             return
+        
+        # Detect feature dimension mismatch (e.g., 9→11 feature upgrade)
+        if ml_warm:
+            try:
+                scaler_n = clf.named_steps["scaler"].n_features_in_
+                if scaler_n != X.shape[1]:
+                    log(f"ML COLD RESTART: scaler has {scaler_n} features, data has {X.shape[1]} → re-fitting")
+                    ml_warm = False  # Force re-fit below
+            except Exception:
+                pass
+        
         if not ml_warm:
             # Use full Pipeline.fit() so StandardScaler gets fitted too!
             clf.fit(X[:min(200, len(X))], y[:min(200, len(y))])
@@ -656,7 +667,7 @@ def ml_online_update(df_feat: pd.DataFrame):
                 X_rest_scaled = clf.named_steps["scaler"].transform(X[200:])
                 clf.named_steps["sgd"].partial_fit(X_rest_scaled, y[200:], classes=ml_classes)
             ml_warm = True
-            log(f"ML warm! Trained on {len(X)} samples")
+            log(f"ML warm! Trained on {len(X)} samples ({X.shape[1]} features)")
         else:
             # Online update: scaler already fitted, just update SGD
             X_scaled = clf.named_steps["scaler"].transform(X[-200:])
