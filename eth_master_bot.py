@@ -614,6 +614,13 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     out["bb_lo"] = bb.bollinger_lband()
     out["hh20"] = out["high"].rolling(20).max()
     out["ll20"] = out["low"].rolling(20).min()
+    # --- NEW: Volume ratio + ADX for ML ---
+    vol_med = out["volume"].rolling(20).median()
+    out["volume_ratio"] = out["volume"] / vol_med.clip(lower=1e-9)
+    try:
+        out["adx14"] = ADXIndicator(out["high"], out["low"], out["close"], window=14).adx()
+    except Exception:
+        out["adx14"] = 25.0  # Neutral fallback
     out.dropna(inplace=True)
     return out
 
@@ -624,9 +631,12 @@ def is_drawdown_candle(row):
     cond = (range_ > 0) and (lower_wick / max(range_, 1e-9) > 0.45) and (row["close"] > (row["low"] + 0.5*range_))
     return cond
 
+# --- ML Feature columns (11 features) ---
+ML_FEATURES = ["ret1","ema20","ema50","macd","macd_sig","rsi14","atr","bb_hi","bb_lo","volume_ratio","adx14"]
+
 # ------------------ ML ------------------
 def ml_prepare(df_feat: pd.DataFrame):
-    X = df_feat[["ret1","ema20","ema50","macd","macd_sig","rsi14","atr","bb_hi","bb_lo"]].values
+    X = df_feat[ML_FEATURES].values
     future = df_feat["close"].pct_change().shift(-1)
     thr = (df_feat["atr"] / df_feat["close"]) * 0.2
     y = (future > thr).astype(int).values
@@ -708,8 +718,7 @@ def ml_predict_row(row) -> float:
             return float(np.clip(p_ml, 0.3, 0.7))
         except Exception:
             return 0.5
-    v = np.array([[row["ret1"], row["ema20"], row["ema50"], row["macd"], row["macd_sig"],
-                   row["rsi14"], row["atr"], row["bb_hi"], row["bb_lo"]]])
+    v = np.array([[row.get(f, 0.0) for f in ML_FEATURES]])
     try:
         p = clf.predict_proba(v)[0,1]
         ml_stats["predictions_made"] = ml_stats.get("predictions_made", 0) + 1
@@ -717,42 +726,54 @@ def ml_predict_row(row) -> float:
     except Exception:
         return 0.5
 
-# --- Trade Outcome Feedback ---
-# Buffer of (features, outcome) from real trades for ML retraining
+# --- Trade Outcome Feedback + Experience Replay ---
 _trade_feedback_buffer = []
+_experience_replay = deque(maxlen=100)  # Persistent memory of last 100 trades
+_replay_counter = 0
 
 def ml_feedback_trade(entry_row, outcome_win: bool):
     """
     Feed trade outcome back into ML model.
-    Called after every trade close (TP/SL/TIME).
-    outcome_win: True if trade was profitable, False otherwise.
+    Uses Experience Replay: stores last 100 trades and replays every 10 trades.
     """
-    global _trade_feedback_buffer
+    global _trade_feedback_buffer, _replay_counter
     
     if not ml_warm:
         return
     
     try:
-        features = [entry_row["ret1"], entry_row["ema20"], entry_row["ema50"],
-                     entry_row["macd"], entry_row["macd_sig"], entry_row["rsi14"],
-                     entry_row["atr"], entry_row["bb_hi"], entry_row["bb_lo"]]
+        features = [entry_row.get(f, 0.0) for f in ML_FEATURES]
         label = 1 if outcome_win else 0
         _trade_feedback_buffer.append((features, label))
+        _experience_replay.append((features, label))  # Never forget
+        _replay_counter += 1
         
         # Retrain every 5 trade outcomes (small batch for responsiveness)
         if len(_trade_feedback_buffer) >= 5:
             X = np.array([f for f, _ in _trade_feedback_buffer])
             y = np.array([l for _, l in _trade_feedback_buffer])
             
-            # Scale features before partial_fit (SGD expects scaled input)
             X_scaled = clf.named_steps["scaler"].transform(X)
-            sample_weight = np.ones(len(y)) * 3.0
+            sample_weight = np.ones(len(y)) * 3.0  # Real trades worth 3x
             clf.named_steps["sgd"].partial_fit(X_scaled, y, classes=ml_classes, sample_weight=sample_weight)
             
             log(f"ML FEEDBACK: retrained on {len(_trade_feedback_buffer)} real trades "
                 f"(wins: {sum(y)}, losses: {len(y)-sum(y)})")
             _trade_feedback_buffer.clear()
-            # Persist model after trade feedback (most valuable learning)
+            save_ml_model()
+        
+        # EXPERIENCE REPLAY: every 10 trades, replay ALL stored outcomes
+        if _replay_counter >= 10 and len(_experience_replay) >= 10:
+            X_replay = np.array([f for f, _ in _experience_replay])
+            y_replay = np.array([l for _, l in _experience_replay])
+            X_scaled = clf.named_steps["scaler"].transform(X_replay)
+            # Replay with lower weight (1.5x) — reinforcement, not override
+            weight = np.ones(len(y_replay)) * 1.5
+            clf.named_steps["sgd"].partial_fit(X_scaled, y_replay, classes=ml_classes, sample_weight=weight)
+            _replay_counter = 0
+            wins = sum(y_replay)
+            log(f"EXPERIENCE REPLAY: {len(_experience_replay)} trades replayed "
+                f"(win_rate={wins/len(y_replay)*100:.0f}%)")
             save_ml_model()
     except Exception as e:
         log(f"WARN ml feedback failed: {e}")
@@ -1484,39 +1505,71 @@ def decide_and_trade():
         bars_in_position += 1
         decision = update_position_management(px, row, effective_tp)
         if decision == "TP":
-            pnl_val = (px - open_position['entry']) * open_position['qty']
-            msg = f"✅ TP hit | +{(px/open_position['entry']-1.0)*100:.2f}% | close @{px:.2f}"
-            log("INFO "+msg); tg(msg)
-            ml_feedback_trade(open_position.get("entry_row", row), outcome_win=True)
-            sync_paper_trade("SELL", open_position["qty"], px, pnl_val)
-            PAPER_BASE_USDT += pnl_val  # Track paper PnL
-            _paper_position_locked = 0.0  # Release locked capital
-            _save_paper_balance()  # Persist across deploys
-            place_sell(open_position["qty"])
-            open_position = None
-            bars_in_position = 0
-            loss_streak = 0
-            win_streak += 1
-            log(f"CONFIDENCE: win_streak={win_streak} conf_lvl={confidence_lvl:.2f}")
-            return
+            orig_qty = open_position['qty']
+            # PARTIAL EXIT: sell 50% at TP, let rest trail for bigger gains
+            if not open_position.get("partial_taken") and orig_qty > 0.001:
+                sell_qty = orig_qty * 0.5
+                keep_qty = orig_qty - sell_qty
+                pnl_partial = (px - open_position['entry']) * sell_qty
+                msg = f"✅ PARTIAL TP | +{(px/open_position['entry']-1.0)*100:.2f}% | sold 50% @{px:.2f} | keeping {keep_qty:.4f}"
+                log("INFO "+msg); tg(msg)
+                ml_feedback_trade(open_position.get("entry_row", row), outcome_win=True)
+                sync_paper_trade("SELL", sell_qty, px, pnl_partial)
+                PAPER_BASE_USDT += pnl_partial
+                _save_paper_balance()
+                place_sell(sell_qty)
+                open_position["qty"] = keep_qty
+                open_position["partial_taken"] = True
+                open_position["trailing_active"] = True
+                open_position["peak_pnl"] = (px/open_position['entry']) - 1.0
+                _paper_position_locked = keep_qty * px
+                win_streak += 1
+                loss_streak = 0
+                log(f"TRAILING REMAINDER: {keep_qty:.4f} units, waiting for bigger move")
+                return
+            else:
+                pnl_val = (px - open_position['entry']) * orig_qty
+                msg = f"✅ TP hit | +{(px/open_position['entry']-1.0)*100:.2f}% | close @{px:.2f}"
+                log("INFO "+msg); tg(msg)
+                ml_feedback_trade(open_position.get("entry_row", row), outcome_win=True)
+                sync_paper_trade("SELL", orig_qty, px, pnl_val)
+                PAPER_BASE_USDT += pnl_val
+                _paper_position_locked = 0.0
+                _save_paper_balance()
+                place_sell(orig_qty)
+                open_position = None
+                bars_in_position = 0
+                loss_streak = 0
+                win_streak += 1
+                log(f"CONFIDENCE: win_streak={win_streak} conf_lvl={confidence_lvl:.2f}")
+                return
         elif decision == "SL":
             pnl_val = (px - open_position['entry']) * open_position['qty']
             msg = f"⚠️ SL hit | {(px/open_position['entry']-1.0)*100:.2f}% | close @{px:.2f}"
             log("INFO "+msg); tg(msg)
             ml_feedback_trade(open_position.get("entry_row", row), outcome_win=False)
             sync_paper_trade("SELL", open_position["qty"], px, pnl_val)
-            PAPER_BASE_USDT += pnl_val  # Track paper PnL
+            PAPER_BASE_USDT += pnl_val
             _paper_position_locked = 0.0
             _save_paper_balance()
             place_sell(open_position["qty"])
             open_position = None
             bars_in_position = 0
             loss_streak += 1
-            win_streak = 0  # Reset wins on loss
+            win_streak = 0
             log(f"CONFIDENCE: loss_streak={loss_streak} conf_lvl={confidence_lvl:.2f}")
             if loss_streak >= LOSS_STREAK_COOL:
-                cooldown_until_ts = time.time() + COOLDOWN_MIN*60
-                log(f"COOLDOWN {COOLDOWN_MIN}m after loss streak ({loss_streak})")
+                # SMART COOLDOWN: varies by market state
+                if rsi14 < 30:
+                    cooldown_mins = max(5, COOLDOWN_MIN // 2)
+                    log(f"SMART COOLDOWN: {cooldown_mins}m (RSI={rsi14:.0f} oversold → shorter)")
+                elif rsi14 > 70:
+                    cooldown_mins = COOLDOWN_MIN * 2
+                    log(f"SMART COOLDOWN: {cooldown_mins}m (RSI={rsi14:.0f} overbought → longer)")
+                else:
+                    cooldown_mins = COOLDOWN_MIN
+                    log(f"COOLDOWN {cooldown_mins}m after loss streak ({loss_streak})")
+                cooldown_until_ts = time.time() + cooldown_mins * 60
             return
         elif decision == "TIME":
             pnl_val = (px - open_position['entry']) * open_position['qty']
