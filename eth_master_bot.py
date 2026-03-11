@@ -1135,21 +1135,71 @@ def compute_regime(df_feat):
     vol_ok = atr_now >= atr_med if atr_med > 0 else True
     trend_ok = (adx_now >= ADX_MIN_TREND) if USE_ADX_FILTER else True
     return {"adx": adx_now, "trend_ok": trend_ok, "vol_ok": vol_ok}
-def position_size_for_risk(px, sl_pct, eq):
+
+# --- VOLUME FILTER: reject low-liquidity entries ---
+def check_volume_filter(df_feat):
+    """Only trade when current volume is above 80% of 20-bar median."""
+    try:
+        vol_now = float(df_feat["volume"].iloc[-1])
+        vol_median = float(df_feat["volume"].iloc[-20:].median())
+        return vol_now >= vol_median * 0.80
+    except Exception:
+        return True  # Don't block on error
+
+# --- MULTI-TIMEFRAME: 15m trend confirmation (cached) ---
+_15m_cache = {"trend_ok": True, "ts": 0}
+def check_15m_trend():
+    """Check 15m timeframe for trend confirmation. Cached for 10 min."""
+    global _15m_cache
+    if time.time() - _15m_cache["ts"] < 600:  # 10 min cache
+        return _15m_cache["trend_ok"]
+    try:
+        df_15m = fetch_klines(interval="15m", lookback=50)
+        if len(df_15m) < 20:
+            _15m_cache = {"trend_ok": True, "ts": time.time()}
+            return True
+        ema20_15m = df_15m["close"].ewm(span=20).mean().iloc[-1]
+        ema50_15m = df_15m["close"].ewm(span=50).mean().iloc[-1]
+        px_15m = float(df_15m["close"].iloc[-1])
+        
+        # 15m trend is bullish if price > EMA20 and EMA20 > EMA50
+        ok = (px_15m > ema20_15m) and (ema20_15m > ema50_15m * 0.998)
+        _15m_cache = {"trend_ok": ok, "ts": time.time()}
+        return ok
+    except Exception as e:
+        log(f"WARN 15m trend check failed: {e}")
+        _15m_cache = {"trend_ok": True, "ts": time.time()}
+        return True  # Don't block on error
+
+# --- DYNAMIC RISK: scale position size by ML confidence ---
+def dynamic_risk_factor(p_ml):
+    """Scale risk from 0.7x to 1.8x based on ML confidence."""
+    if p_ml >= 0.85:
+        return 1.8  # Very high confidence → almost double risk
+    elif p_ml >= 0.75:
+        return 1.4  # High confidence
+    elif p_ml >= 0.65:
+        return 1.1  # Moderate confidence
+    elif p_ml >= 0.50:
+        return 1.0  # Neutral
+    else:
+        return 0.7  # ML bearish → reduce risk
+
+def position_size_for_risk(px, sl_pct, eq, risk_factor=1.0):
     """
-    Risiko pro Trade = eq * RISK_PCT_PER_TRADE
+    Risiko pro Trade = eq * RISK_PCT_PER_TRADE * risk_factor
     Größe (qty) = (RiskUSD) / (sl_pct * px)
     """
-    risk_usd = max(0.0, float(eq) * float(RISK_PCT_PER_TRADE))
+    risk_usd = max(0.0, float(eq) * float(RISK_PCT_PER_TRADE) * risk_factor)
     denom = max(sl_pct * px, 1e-9)
     qty = risk_usd / denom
     return max(0.0001, qty)
 
 def update_position_management(px, row, effective_tp):
     """
-    Break-even, Trailing & Time-based Exit.
-    Nutzt global open_position.
-    Time-Exit: echte Kerzenanzahl seit Entry (nicht Loops!)
+    Break-even, Trailing TP & Time-based Exit.
+    When price hits TP → don't exit, activate trailing mode instead.
+    Trailing SL follows at 40% of peak gains.
     """
     global open_position, loss_streak
     entry = open_position["entry"]; qty = open_position["qty"]; atr_in = open_position.get("atr", row["atr"])
@@ -1157,14 +1207,6 @@ def update_position_management(px, row, effective_tp):
 
     # Dynamischer SL: Start = max(Floor, ATR-Mult)
     sl_pct = max(STOP_FLOOR, STOP_ATR_MULT * (atr_in / max(entry,1e-9)))
-
-    # Break-even nach kleinem Gewinn
-    if upnl >= BREAK_EVEN_TRIGGER:
-        sl_pct = max(sl_pct, 0.0)  # BE = 0%
-
-    # Trailing über ATR
-    trail = (TRAIL_ATR_MULT * (row["atr"] / max(entry,1e-9)))
-    sl_pct = max(sl_pct, trail)
 
     # ==== Time-based Exit (safe & clean) ====
     elapsed_bars = 0
@@ -1188,11 +1230,63 @@ def update_position_management(px, row, effective_tp):
 
     if elapsed_bars >= MAX_HOLD_BARS:
         return "TIME"
-    # ========================================
-    # Regel-Exit
 
-    if upnl >= effective_tp:
-        return "TP"
+    # ==== Trailing Take-Profit System ====
+    peak_pnl = open_position.get("peak_pnl", 0.0)
+    trailing_active = open_position.get("trailing_active", False)
+    
+    # Track peak PnL
+    if upnl > peak_pnl:
+        open_position["peak_pnl"] = upnl
+        peak_pnl = upnl
+    
+    # Phase 1: Break-even after small gain
+    if upnl >= BREAK_EVEN_TRIGGER:
+        sl_pct = 0.001  # BE + tiny buffer (0.1%)
+    
+    # Phase 2: Price hits TP level → activate trailing mode (DON'T exit)
+    if peak_pnl >= effective_tp and not trailing_active:
+        open_position["trailing_active"] = True
+        trailing_active = True
+        log(f"TRAILING ACTIVATED: peak={peak_pnl*100:.2f}% tp={effective_tp*100:.2f}%")
+    
+    # Phase 3: Trailing mode — SL follows at 40% of peak gains
+    if trailing_active:
+        # Trail distance: keep 60% of peak gains locked in
+        trail_floor = peak_pnl * 0.60  # Lock in 60% of peak
+        trail_sl = max(trail_floor, effective_tp * 0.50)  # At minimum, lock in 50% of TP
+        
+        if upnl <= trail_sl and peak_pnl > effective_tp * 0.8:
+            # Price dropped from peak but still in profit → take the gain
+            log(f"TRAILING TP: exit at +{upnl*100:.2f}% (peak was +{peak_pnl*100:.2f}%)")
+            return "TP"
+        
+        # Hard cap: if we've hit 3x the original TP, take profits regardless
+        if upnl >= effective_tp * 3.0:
+            log(f"TRAILING CAP: exit at +{upnl*100:.2f}% (3x TP reached)")
+            return "TP"
+    else:
+        # Not in trailing mode yet — use standard TP for safety
+        # But only exit on standard TP if price is actively falling
+        if upnl >= effective_tp:
+            # Check momentum: is price pulling back or still pushing?
+            try:
+                macd_val = float(row.get("macd", 0))
+                macd_sig_val = float(row.get("macd_sig", 0))
+                rsi_val = float(row.get("rsi14", 50))
+                
+                # Strong momentum → let it run (activate trailing)
+                if macd_val > macd_sig_val and rsi_val < 75:
+                    open_position["trailing_active"] = True
+                    log(f"TRAILING ACTIVATED (momentum): +{upnl*100:.2f}% MACD bullish, RSI={rsi_val:.0f}")
+                    return None  # Hold — don't exit
+                else:
+                    # Weak momentum → take the TP
+                    return "TP"
+            except Exception:
+                return "TP"
+    
+    # Standard SL (only if not in trailing mode or trailing hasn't locked gains yet)
     if upnl <= -sl_pct:
         return "SL"
     return None
@@ -1351,12 +1445,26 @@ def decide_and_trade():
     
     entry_score = base_score
 
+    # --- QUALITY FILTERS: volume + 15m trend ---
+    vol_ok = check_volume_filter(df_feat)
+    trend_15m_ok = check_15m_trend()
+    
+    # Add filter bonuses to score (don't block, but reward quality setups)
+    if vol_ok:
+        entry_score += 0.03  # Volume confirms
+    if trend_15m_ok:
+        entry_score += 0.05  # 15m trend aligns
+    elif not trend_15m_ok and not oversold_ok:
+        entry_score -= 0.08  # Against 15m trend (except oversold reversals)
+    
+    r_factor = dynamic_risk_factor(p_ml)
+
     # ---------------- Oversold-Fast-Lane ----------------
     os_min = float(_os.getenv("OS_ENTRY_SCORE_MIN", "0.20"))
     if not open_position and oversold_ok and entry_score >= os_min:
         sl_pct = max(STOP_FLOOR, STOP_ATR_MULT * (atr / max(px,1e-9)))
         eq = current_equity(px)
-        qty = position_size_for_risk(px, sl_pct, eq)
+        qty = position_size_for_risk(px, sl_pct, eq, risk_factor=r_factor)
         if qty * px < 10 and (PAPER_MODE or DRY_RUN):
             qty = max(qty, 50.0 / max(px, 1))  # Paper safety net
         if qty * px >= 10 and today_trades < MAX_TRADES_PER_DAY:
@@ -1367,7 +1475,7 @@ def decide_and_trade():
                 bars_in_position = 0
                 _last_trade_ts = time.time()  # Reset adaptive threshold timer
                 sync_paper_trade("BUY", qty, px)
-                tg(f"▶️ LONG {BASE_ASSET} (OS-FAST) @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | adx={regime['adx']:.1f} | rsi={rsi14:.1f}")
+                tg(f"▶️ LONG {BASE_ASSET} (OS-FAST) @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | adx={regime['adx']:.1f} | rsi={rsi14:.1f} | vol={vol_ok} 15m={trend_15m_ok}")
                 return
     # ----------------------------------------------------
 
@@ -1440,8 +1548,8 @@ def decide_and_trade():
     if entry_score >= ENTRY_SCORE_MIN:
         sl_pct = max(STOP_FLOOR, STOP_ATR_MULT * (atr / max(px,1e-9)))
         eq = current_equity(px)
-        qty = position_size_for_risk(px, sl_pct, eq)
-        log(f"DEBUG position: eq=${eq:.2f} risk_pct={RISK_PCT_PER_TRADE:.4f} sl={sl_pct:.4f} px={px:.2f} qty={qty:.6f} val=${qty*px:.2f} DRY_RUN={DRY_RUN}")
+        qty = position_size_for_risk(px, sl_pct, eq, risk_factor=r_factor)
+        log(f"DEBUG entry: eq=${eq:.2f} risk={RISK_PCT_PER_TRADE*r_factor:.4f} sl={sl_pct:.4f} px={px:.2f} qty={qty:.6f} val=${qty*px:.2f} vol={vol_ok} 15m={trend_15m_ok} r_factor={r_factor:.1f}")
         if qty * px < 10:
             if PAPER_MODE or DRY_RUN:
                 # Paper mode safety net: force minimum position
@@ -1457,9 +1565,9 @@ def decide_and_trade():
             bars_in_position = 0
             _last_trade_ts = time.time()  # Reset adaptive threshold timer
             sync_paper_trade("BUY", qty, px)
-            tg(f"▶️ LONG {BASE_ASSET} @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | p_ml={p_ml:.2f} | adx={regime['adx']:.1f} | oversold={oversold_ok} sec={secondary_ok}")
+            tg(f"▶️ LONG {BASE_ASSET} @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | p_ml={p_ml:.2f} | adx={regime['adx']:.1f} | vol={vol_ok} 15m={trend_15m_ok} risk={r_factor:.1f}x")
     else:
-        log(f"INFO no entry | score={entry_score:.2f} p_ml={p_ml:.2f} adx={regime['adx']:.1f} px={px:.2f} rsi={rsi14:.1f} brk={breakout_ok} sec={secondary_ok} tr={trend_ok} dd={drawdown_ok} os={oversold_ok}")
+        log(f"INFO no entry | score={entry_score:.2f} p_ml={p_ml:.2f} adx={regime['adx']:.1f} px={px:.2f} rsi={rsi14:.1f} brk={breakout_ok} sec={secondary_ok} tr={trend_ok} vol={vol_ok} 15m={trend_15m_ok}")
 def rss_thread():
     while not STOP.is_set():
         try:
