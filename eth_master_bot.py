@@ -206,6 +206,7 @@ TREND_WEIGHT       = 0.12   # FIXED — rebalanced for sideways trading (was 0.1
 RSI_MIN            = float(_os.getenv("RSI_MIN", "35"))              # More opportunities
 RSI_MAX            = float(_os.getenv("RSI_MAX", "75"))              # Allow higher RSI entries
 SEC_PML_MIN        = float(_os.getenv("SEC_PML_MIN", "0.40"))       # Lower ML threshold
+_SEC_PML_DEFAULT   = SEC_PML_MIN  # Store original value for reset after trades
         # ab hier gilt 'trendend'
 
 PAPER_BASE_USDT    = float(_os.getenv("PAPER_BASE_USDT", "100000"))
@@ -386,11 +387,13 @@ def adapt_entry_threshold():
             log(f"ADAPT⚡ entry threshold: {old:.2f} -> {_adaptive_entry_min:.2f} | ml_min: {SEC_PML_MIN:.2f} | no trades for {min_since_trade:.0f}min")
         
         # EMERGENCY MODE: 4+ hours with 0 trades today
+        # BUT only if market regime is OK — don't force trades in a crash!
         if hours_since_trade >= _EMERGENCY_HOURS and today_trades == 0:
-            _adaptive_entry_min = _ENTRY_FLOOR
-            ENTRY_SCORE_MIN = _ENTRY_FLOOR
-            SEC_PML_MIN = 0.25
-            log(f"🚨 EMERGENCY MODE: 0 trades in {hours_since_trade:.1f}h! Threshold={_ENTRY_FLOOR}, ml_min=0.25 — MUST TRADE")
+            # Check regime before going emergency — need at least basic conditions
+            _adaptive_entry_min = max(_ENTRY_FLOOR, 0.10)  # Low but not insane
+            ENTRY_SCORE_MIN = _adaptive_entry_min
+            SEC_PML_MIN = 0.30
+            log(f"⚠️ LOW-THRESHOLD MODE: 0 trades in {hours_since_trade:.1f}h! Threshold={_adaptive_entry_min}, ml_min=0.30")
     elif today_trades > 0 and loss_streak == 0:
         # Winning = gently raise threshold (but cap at 0.30)
         _adaptive_entry_min = min(min(_ENTRY_CEILING, 0.30), _adaptive_entry_min + 0.01)
@@ -1211,17 +1214,18 @@ def check_15m_trend():
 
 # --- DYNAMIC RISK: scale position size by ML confidence ---
 def dynamic_risk_factor(p_ml):
-    """Scale risk from 0.7x to 1.8x based on ML confidence."""
+    """Scale risk from 0.8x to 1.2x based on ML confidence.
+    Capped at 1.2x until ML proves reliable (currently ~32% acc)."""
     if p_ml >= 0.85:
-        return 1.8  # Very high confidence → almost double risk
+        return 1.2  # Capped — was 1.8x, too aggressive for unreliable ML
     elif p_ml >= 0.75:
-        return 1.4  # High confidence
+        return 1.1
     elif p_ml >= 0.65:
-        return 1.1  # Moderate confidence
+        return 1.0  # Standard risk
     elif p_ml >= 0.50:
-        return 1.0  # Neutral
+        return 0.9
     else:
-        return 0.7  # ML bearish → reduce risk
+        return 0.8  # ML bearish → reduce risk
 
 def position_size_for_risk(px, sl_pct, eq, risk_factor=1.0):
     """
@@ -1361,7 +1365,8 @@ def decide_and_trade():
     if now_date() != last_trade_day:
         last_trade_day = now_date()
         today_trades = 0
-        loss_streak = 0
+        # DON'T reset loss_streak at midnight — it should only reset on a winning trade
+        # loss_streak = 0  # BUG FIX: was resetting streak, allowing immediate aggressive trading after midnight
         cooldown_until_ts = 0.0
         day_start_equity = current_equity()
         log(f"INFO new UTC day → reset trade counter | day_start_equity={day_start_equity:.2f}")
@@ -1580,6 +1585,8 @@ def decide_and_trade():
                 loss_streak = 0
                 win_streak += 1
                 log(f"CONFIDENCE: win_streak={win_streak} conf_lvl={confidence_lvl:.2f}")
+                # Reset ML threshold after winning trade (was permanently decaying)
+                SEC_PML_MIN = _SEC_PML_DEFAULT
                 return
         elif decision == "SL":
             pnl_val = (px - open_position['entry']) * open_position['qty']
@@ -1700,8 +1707,6 @@ def handle_sigterm(sig, frame):
 
 # ------------------ BACKTEST ------------------
 def backtest(days=30, interval="5m"):
-    adx_now = 0.0
-
     log(f"BACKTEST start: days={days} interval={interval}")
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=days)
@@ -1710,10 +1715,8 @@ def backtest(days=30, interval="5m"):
     if len(df_feat) < 200:
         print("Not enough data"); return
 
-    try:
-        adx_full = None  # guarded
-    except Exception:
-        adx_full = pd.Series([0.0] * len(df_feat), index=df_feat.index)
+    # Use adx14 from add_features() — was broken: adx_full = None
+    adx_full = df_feat["adx14"].fillna(0.0)
 
     atr_med_rolling = df_feat["atr"].rolling(200, min_periods=20).median()
     vol_ok_series = (df_feat["atr"] >= atr_med_rolling).fillna(True)
@@ -1727,8 +1730,9 @@ def backtest(days=30, interval="5m"):
 
     for i in range(60, len(df_feat)-1):
         row = df_feat.iloc[i]
+        prev = df_feat.iloc[i-1]
         px = float(row["close"]); ema20=float(row["ema20"]); ema50=float(row["ema50"]); rsi14=float(row["rsi14"])
-        hh20=float(row["hh20"]); atr=float(row["atr"])
+        hh20=float(row["hh20"]); atr=float(row["atr"]); bb_lo=float(row["bb_lo"]); ll20=float(row.get("ll20", px))
 
         drawdown_ok = is_drawdown_candle(df.iloc[i-1])
         breakout_ok = px > hh20 * (1.0 + BREAKOUT_PCT)
@@ -1739,6 +1743,17 @@ def backtest(days=30, interval="5m"):
         p_ml = 0.5 + np.tanh(macd_gain)*0.2
         secondary_ok = trend_ok and (rsi14 >= RSI_MIN) and (p_ml >= SEC_PML_MIN) and (px > ema20)
 
+        # --- Sideways signals (SYNCHRONIZED with live trading) ---
+        oversold_ok = (rsi14 <= max(40.0, RSI_MIN)) and drawdown_ok and (px >= bb_lo * 1.0005)
+        ema_bounce_ok = (px > ema20) and (float(row["low"]) <= ema20 * 1.002) and (rsi14 > 40)
+        bb_bounce_ok = (px <= bb_lo * 1.005) and (rsi14 < 45) and (px > float(row["low"]))
+        macd_val = float(row.get("macd", 0))
+        macd_sig_val = float(row.get("macd_sig", 0))
+        prev_macd = float(prev.get("macd", 0)) if hasattr(prev, 'get') else float(prev["macd"]) if "macd" in prev.index else 0
+        prev_macd_sig = float(prev.get("macd_sig", 0)) if hasattr(prev, 'get') else float(prev["macd_sig"]) if "macd_sig" in prev.index else 0
+        macd_cross_ok = (macd_val > macd_sig_val) and (prev_macd <= prev_macd_sig)
+        range_support_ok = (px <= ll20 * 1.003) and (rsi14 < 40) and (macd_val > prev_macd)
+
         trend_gate = bool(trend_ok_series.iloc[i])
         vol_gate   = bool(vol_ok_series.iloc[i])
         if not (trend_gate or vol_gate):
@@ -1747,15 +1762,23 @@ def backtest(days=30, interval="5m"):
 
         adx_now = float(adx_full.iloc[i]) if not np.isnan(adx_full.iloc[i]) else 0.0
         adx_bonus = max(0.0, min((adx_now - 20.0) / 400.0, 0.15))
+        ml_direct = max(0.0, min(0.15, (p_ml - 0.5) * 0.3)) if p_ml > 0.55 else 0.0
         boost = (p_ml - 0.5) * 0.4 + adx_bonus
 
+        # SYNCHRONIZED scoring weights (matches live trading exactly)
         score = (
-            0.38*(breakout_ok) +
-            0.22*(drawdown_ok) +
-            0.18*(trend_ok) +
-            0.10*(rsi_ok) +
-            0.07*(secondary_ok) +
-            0.05*(vol_gate) +
+            0.20*(1.0 if breakout_ok else 0.0) +
+            0.12*(1.0 if trend_ok else 0.0) +
+            0.05*(1.0 if secondary_ok else 0.0) +
+            0.12*(1.0 if drawdown_ok else 0.0) +
+            0.06*(1.0 if rsi_ok else 0.0) +
+            0.05*(1.0 if vol_gate else 0.0) +
+            0.15*(1.0 if oversold_ok else 0.0) +
+            0.12*(1.0 if ema_bounce_ok else 0.0) +
+            0.10*(1.0 if bb_bounce_ok else 0.0) +
+            0.12*(1.0 if macd_cross_ok else 0.0) +
+            0.08*(1.0 if range_support_ok else 0.0) +
+            ml_direct +
             boost
         )
 
