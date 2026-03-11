@@ -1271,27 +1271,79 @@ def check_15m_trend():
         _15m_cache = {"trend_ok": True, "ts": time.time()}
         return True  # Don't block on error
 
-# --- DYNAMIC RISK: scale position size by ML confidence ---
-def dynamic_risk_factor(p_ml):
-    """Scale risk from 0.8x to 1.2x based on ML confidence.
-    Capped at 1.2x until ML proves reliable (currently ~32% acc)."""
-    if p_ml >= 0.85:
-        return 1.2  # Capped — was 1.8x, too aggressive for unreliable ML
-    elif p_ml >= 0.75:
-        return 1.1
-    elif p_ml >= 0.65:
-        return 1.0  # Standard risk
-    elif p_ml >= 0.50:
-        return 0.9
+# --- DYNAMIC RISK: scale position size 1%-5% based on market conditions ---
+RISK_MIN = 0.01   # 1% — conservative baseline
+RISK_MAX = 0.05   # 5% — maximum on high-conviction setups
+
+def dynamic_risk_factor(p_ml, entry_score=0.0, vol_ok=False, trend_15m_ok=False):
+    """Scale risk between 1x (1%) and 5x (5%) based on market conditions.
+    
+    Factors that INCREASE risk (toward 5%):
+      - High entry score (strong signal)
+      - ML confidence > 70%
+      - Volume confirms the move
+      - 15m trend aligns
+      - Win streak (bot is calibrated)
+    
+    Factors that DECREASE risk (toward 1%):
+      - Low entry score
+      - ML bearish or uncertain
+      - Against 15m trend
+      - Loss streak (bot is off-calibration)
+    """
+    # Start at 1x (= 1%)
+    factor = 1.0
+    
+    # Entry score strength: +0.0 to +2.0
+    if entry_score >= 0.7:
+        factor += 2.0    # Very strong setup
+    elif entry_score >= 0.55:
+        factor += 1.5    # Strong setup
+    elif entry_score >= 0.45:
+        factor += 1.0    # Decent setup
+    elif entry_score >= 0.35:
+        factor += 0.5    # Weak setup
+    # Below 0.35: no bonus (minimum quality)
+    
+    # ML confidence: +0.0 to +1.0
+    if p_ml >= 0.80:
+        factor += 1.0
+    elif p_ml >= 0.70:
+        factor += 0.5
+    elif p_ml < 0.45:
+        factor -= 0.5    # ML bearish → reduce
+    
+    # Volume confirmation: +0.5
+    if vol_ok:
+        factor += 0.5
+    
+    # 15m trend alignment: +0.5 or -0.5
+    if trend_15m_ok:
+        factor += 0.5
     else:
-        return 0.8  # ML bearish → reduce risk
+        factor -= 0.5
+    
+    # Win/loss streak adjustment
+    if win_streak >= 3:
+        factor += 0.5    # Hot hand → slightly more aggressive
+    elif loss_streak >= 2:
+        factor -= 1.0    # Losing → pull back hard
+    elif loss_streak >= 1:
+        factor -= 0.5    # Recent loss → cautious
+    
+    # Clamp to 1x-5x range (= 1%-5%)
+    factor = max(1.0, min(5.0, factor))
+    
+    return factor
 
 def position_size_for_risk(px, sl_pct, eq, risk_factor=1.0):
     """
-    Risiko pro Trade = eq * RISK_PCT_PER_TRADE * risk_factor
+    Risiko pro Trade = eq * RISK_MIN * risk_factor
+    risk_factor ranges from 1.0 (1%) to 5.0 (5%)
     Größe (qty) = (RiskUSD) / (sl_pct * px)
     """
-    risk_usd = max(0.0, float(eq) * float(RISK_PCT_PER_TRADE) * risk_factor)
+    effective_risk_pct = RISK_MIN * risk_factor  # 1% * 1..5 = 1%-5%
+    risk_usd = max(0.0, float(eq) * effective_risk_pct)
     denom = max(sl_pct * px, 1e-9)
     qty = risk_usd / denom
     return max(0.0001, qty)
@@ -1601,7 +1653,7 @@ def decide_and_trade():
     elif not trend_15m_ok and not oversold_ok:
         entry_score -= 0.08  # Against 15m trend (except oversold reversals)
     
-    r_factor = dynamic_risk_factor(p_ml)
+    r_factor = dynamic_risk_factor(p_ml, entry_score=entry_score, vol_ok=vol_ok, trend_15m_ok=trend_15m_ok)
 
     # ---------------- Oversold-Fast-Lane ----------------
     os_min = float(_os.getenv("OS_ENTRY_SCORE_MIN", "0.20"))
@@ -1734,7 +1786,7 @@ def decide_and_trade():
         sl_pct = max(STOP_FLOOR, STOP_ATR_MULT * (atr / max(px,1e-9)))
         eq = current_equity(px)
         qty = position_size_for_risk(px, sl_pct, eq, risk_factor=r_factor)
-        log(f"DEBUG entry: eq=${eq:.2f} risk={RISK_PCT_PER_TRADE*r_factor:.4f} sl={sl_pct:.4f} px={px:.2f} qty={qty:.6f} val=${qty*px:.2f} vol={vol_ok} 15m={trend_15m_ok} r_factor={r_factor:.1f}")
+        log(f"DEBUG entry: eq=${eq:.2f} risk={RISK_MIN*r_factor*100:.1f}% sl={sl_pct:.4f} px={px:.2f} qty={qty:.6f} val=${qty*px:.2f} vol={vol_ok} 15m={trend_15m_ok} r_factor={r_factor:.1f}")
         if qty * px < 10:
             if PAPER_MODE or DRY_RUN:
                 # Paper mode safety net: force minimum position
