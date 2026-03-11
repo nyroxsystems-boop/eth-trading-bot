@@ -1414,6 +1414,24 @@ def decide_and_trade():
     rsi_ok_band  = (RSI_MIN <= rsi14 <= RSI_MAX)
     oversold_ok  = (rsi14 <= max(40.0, RSI_MIN)) and drawdown_ok and (px >= bb_lo * 1.0005)
 
+    # --- NEW: Sideways-market signals (trigger when breakout/trend don't) ---
+    # EMA20 bounce: price dips near EMA20 and closes above it
+    ema_bounce_ok = (px > ema20) and (float(row["low"]) <= ema20 * 1.002) and (rsi14 > 40)
+    
+    # Bollinger band bounce: price near lower band and RSI not extreme
+    bb_bounce_ok = (px <= bb_lo * 1.005) and (rsi14 < 45) and (px > float(row["low"]))
+    
+    # MACD bullish crossover: MACD just crossed above signal
+    macd_val = float(row.get("macd", 0))
+    macd_sig_val = float(row.get("macd_sig", 0))
+    prev_macd = float(prev.get("macd", 0)) if hasattr(prev, 'get') else float(prev["macd"]) if "macd" in prev.index else 0
+    prev_macd_sig = float(prev.get("macd_sig", 0)) if hasattr(prev, 'get') else float(prev["macd_sig"]) if "macd_sig" in prev.index else 0
+    macd_cross_ok = (macd_val > macd_sig_val) and (prev_macd <= prev_macd_sig)
+    
+    # Range support: price near 20-bar low with momentum turning up
+    ll20 = float(row.get("ll20", px))
+    range_support_ok = (px <= ll20 * 1.003) and (rsi14 < 40) and (macd_val > prev_macd)
+
     p_ml         = ml_predict_row(row)
     # In paper mode or when adapting: relax secondary check
     if PAPER_MODE or ENTRY_SCORE_MIN <= 0.15:
@@ -1429,17 +1447,23 @@ def decide_and_trade():
     boost = (p_ml - 0.5) * 0.4 + (sent_score * 0.1) + adx_bonus + vol_zone_boost
     effective_tp = compute_effective_tp(rsi14, regime, row)
 
-    # Dynamic entry scoring (weights from backtester strategy)
-    # ML direct component: when ML is confident, it contributes up to 0.15
+    # --- REBALANCED scoring (works in trending AND sideways markets) ---
     ml_direct = max(0.0, min(0.15, (p_ml - 0.5) * 0.3)) if p_ml > 0.55 else 0.0
     base_score = (
-        BREAKOUT_WEIGHT*(1.0 if breakout_ok else 0.0) +
-        0.18*(1.0 if drawdown_ok else 0.0) +
-        TREND_WEIGHT*(1.0 if trend_ok else 0.0) +
-        0.06*(1.0 if rsi_ok_band else 0.0) +
-        0.18*(1.0 if oversold_ok else 0.0) +
+        # Trend signals (work in trending markets)
+        0.20*(1.0 if breakout_ok else 0.0) +      # Was 0.32 — reduced
+        0.12*(1.0 if trend_ok else 0.0) +          # Was 0.16 — reduced
         0.05*(1.0 if secondary_ok else 0.0) +
+        # Universal signals (work in any market)
+        0.12*(1.0 if drawdown_ok else 0.0) +       # Was 0.18
+        0.06*(1.0 if rsi_ok_band else 0.0) +
         0.05*(1.0 if regime["vol_ok"] else 0.0) +
+        # Sideways/reversal signals (NEW — work when trend doesn't)
+        0.15*(1.0 if oversold_ok else 0.0) +
+        0.12*(1.0 if ema_bounce_ok else 0.0) +     # NEW
+        0.10*(1.0 if bb_bounce_ok else 0.0) +      # NEW
+        0.12*(1.0 if macd_cross_ok else 0.0) +     # NEW
+        0.08*(1.0 if range_support_ok else 0.0) +  # NEW
         ml_direct +
         boost
     )
@@ -1463,17 +1487,14 @@ def decide_and_trade():
     
     base_score += conf_boost
     
-    # PAPER MODE GUARANTEE: bot MUST trade to learn
+    # GENTLE FALLBACK: instead of forcing trades, lower threshold over time
     hours_idle = (time.time() - _last_trade_ts) / 3600.0
-    if PAPER_MODE and today_trades == 0:
-        if hours_idle >= 2.0:
-            # UNCONDITIONAL: 2h+ with 0 trades — enter no matter what
-            base_score = max(base_score, ENTRY_SCORE_MIN + 0.20)
-            log(f"PAPER-FORCE UNCONDITIONAL: idle {hours_idle:.1f}h, 0 trades → forcing entry (score={base_score:.2f})")
-        elif hours_idle >= 1.0 and (trend_ok or rsi_ok_band or p_ml > 0.45 or oversold_ok):
-            # Conditional: 1h+ with a signal
-            base_score += 0.40
-            log(f"PAPER-FORCE: boosting entry score by 0.40 (idle {hours_idle:.1f}h, 0 trades)")
+    effective_entry_min = ENTRY_SCORE_MIN
+    if hours_idle >= 3.0 and today_trades == 0:
+        effective_entry_min = ENTRY_SCORE_MIN * 0.50  # 3h+ idle: accept 50% of normal quality
+        log(f"THRESHOLD REDUCED: idle {hours_idle:.1f}h → min={effective_entry_min:.2f} (was {ENTRY_SCORE_MIN:.2f})")
+    elif hours_idle >= 1.0 and today_trades == 0:
+        effective_entry_min = ENTRY_SCORE_MIN * 0.70  # 1h+ idle: accept 70% of normal quality
     
     entry_score = base_score
 
@@ -1609,7 +1630,7 @@ def decide_and_trade():
     if today_trades >= MAX_TRADES_PER_DAY:
         return
 
-    if entry_score >= ENTRY_SCORE_MIN:
+    if entry_score >= effective_entry_min:
         sl_pct = max(STOP_FLOOR, STOP_ATR_MULT * (atr / max(px,1e-9)))
         eq = current_equity(px)
         qty = position_size_for_risk(px, sl_pct, eq, risk_factor=r_factor)
@@ -1631,7 +1652,7 @@ def decide_and_trade():
             sync_paper_trade("BUY", qty, px)
             tg(f"▶️ LONG {BASE_ASSET} @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | p_ml={p_ml:.2f} | adx={regime['adx']:.1f} | vol={vol_ok} 15m={trend_15m_ok} risk={r_factor:.1f}x")
     else:
-        log(f"INFO no entry | score={entry_score:.2f} p_ml={p_ml:.2f} adx={regime['adx']:.1f} px={px:.2f} rsi={rsi14:.1f} brk={breakout_ok} sec={secondary_ok} tr={trend_ok} vol={vol_ok} 15m={trend_15m_ok}")
+        log(f"INFO no entry | score={entry_score:.2f}/{effective_entry_min:.2f} p_ml={p_ml:.2f} adx={regime['adx']:.1f} px={px:.2f} rsi={rsi14:.1f} brk={breakout_ok} ema_b={ema_bounce_ok} bb_b={bb_bounce_ok} macd_x={macd_cross_ok} vol={vol_ok} 15m={trend_15m_ok}")
 def rss_thread():
     while not STOP.is_set():
         try:
