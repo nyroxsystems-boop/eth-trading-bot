@@ -163,16 +163,17 @@ INTERVAL           = _os.getenv("INTERVAL", "5m")
 LOOKBACK           = int(_os.getenv("LOOKBACK", "400"))
 TRADE_CAPITAL_PCT  = float(_os.getenv("TRADE_CAPITAL_PCT", "1.0"))
 
-TP_MIN             = float(_os.getenv("TARGET_PCT", "0.015"))      # 1.5% — better R:R ratio
-TP_MAX             = float(_os.getenv("TARGET_PCT_MAX", "0.025"))  # 2.5% — gives room for gains
-STOP_ATR_MULT      = float(_os.getenv("STOP_ATR_MULT", "2.0"))    # 2.0x ATR for wider stops
-STOP_FLOOR         = float(_os.getenv("STOP_FLOOR", "0.015"))      # 1.5% — stops noise exits
+# CRITICAL: These are HARDCODED — Railway ENV vars were overriding with dangerous values!
+TP_MIN             = 0.015      # 1.5% — minimal acceptable profit target
+TP_MAX             = 0.025      # 2.5% — good risk/reward ratio
+STOP_ATR_MULT      = 2.0        # 2.0x ATR for stops that survive noise
+STOP_FLOOR         = 0.015      # 1.5% — MINIMUM stop distance (was 0.5% = death)
 
 # --- Risk/Engine tuning ---
-RISK_PCT_PER_TRADE = float(_os.getenv("RISK_PCT_PER_TRADE", "0.01"))   # 1% vom Equity, but wider SL = smaller position
+RISK_PCT_PER_TRADE = 0.01       # 1% risk per trade (with 1.5% SL = 67% position size)
 
 TRAIL_PCT       = float(_os.getenv("TRAIL_PCT", "0.008"))   # fallback 0.8%
-TAKE_PROFIT_PCT = float(_os.getenv("TAKE_PROFIT_PCT", "0.015"))  # fallback 1.5%
+TAKE_PROFIT_PCT = 0.015  # 1.5% fallback
 
 # Trailing/TP State
 TRAIL_STATE = {
@@ -189,9 +190,9 @@ MAX_DRAWDOWN_DAY   = float(_os.getenv("MAX_DRAWDOWN_DAY", "0.03"))     # 3% Tage
 LOSS_STREAK_COOL   = int(_os.getenv("LOSS_STREAK_COOL", "3"))          # n Verluste in Folge -> Cooldown
 COOLDOWN_MIN       = int(_os.getenv("COOLDOWN_MIN", "10"))             # Minuten Pause nach Loss-Streak
 
-BREAK_EVEN_TRIGGER = float(_os.getenv("BREAK_EVEN_TRIGGER", "0.012"))  # +1.2% -> SL auf BE (was 0.6% — too early)
-TRAIL_ATR_MULT     = float(_os.getenv("TRAIL_ATR_MULT", "1.5"))        # ATR * x als Trailing
-MAX_HOLD_BARS      = int(_os.getenv("MAX_HOLD_BARS", "90"))            # ~7.5h — gives trades time to develop
+BREAK_EVEN_TRIGGER = 0.012     # +1.2% before moving SL to break-even
+TRAIL_ATR_MULT     = 1.5       # ATR * 1.5 for trailing
+MAX_HOLD_BARS      = 90        # ~7.5h — gives trades time to develop
 
 # Regime-Filter
 USE_ADX_FILTER     = _os.getenv("USE_ADX_FILTER", "true").lower()=="true"
