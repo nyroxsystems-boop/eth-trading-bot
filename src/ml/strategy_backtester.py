@@ -264,6 +264,37 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
             brk_w = params.get("breakout_weight", 0.30)
             trn_w = params.get("trend_weight", 0.20)
             
+            # --- 1H CONTEXT SIMULATION (aggregate 12 x 5m candles) ---
+            hourly_bias = "NEUTRAL"
+            if i >= 168:  # Need 14 * 12 = 168 candles for 14h RSI
+                # Aggregate 5m to 1h: take every 12th candle's close
+                h1_closes = [candles[j]["close"] for j in range(i - 167, i + 1, 12)]
+                if len(h1_closes) >= 14:
+                    # Simple RSI on 1h closes
+                    h1_gains, h1_losses = [], []
+                    for k in range(1, len(h1_closes)):
+                        chg = h1_closes[k] - h1_closes[k-1]
+                        h1_gains.append(max(0, chg))
+                        h1_losses.append(max(0, -chg))
+                    ag = sum(h1_gains[-14:]) / 14
+                    al = sum(h1_losses[-14:]) / 14
+                    h1_rsi = 100 - 100 / (1 + ag / max(al, 1e-9)) if al > 0 else 100
+                    
+                    # 1h EMAs
+                    h1_ema20 = sum(h1_closes[-min(20, len(h1_closes)):]) / min(20, len(h1_closes))
+                    h1_ema50 = sum(h1_closes[-min(len(h1_closes), 14):]) / min(len(h1_closes), 14)
+                    
+                    if h1_rsi < 35 and price < h1_ema20:
+                        hourly_bias = "OVERSOLD_BOUNCE"
+                    elif price > h1_ema20 and h1_ema20 > h1_ema50:
+                        hourly_bias = "TREND_UP"
+                    elif price < h1_ema20 and h1_ema20 < h1_ema50:
+                        hourly_bias = "TREND_DOWN"
+            
+            # BLOCK entries during 1h downtrend
+            if hourly_bias == "TREND_DOWN":
+                continue  # Skip this candle entirely
+            
             # --- TA-based signal components (deterministic) ---
             # 1. Trend: price > SMA20 > SMA50
             trend_ok = price > sma20 and (sma50 is None or sma20 > sma50)
@@ -291,6 +322,13 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
                 0.10 * (1.0 if momentum else 0.0) +
                 0.10 * (1.0 if rsi_ok else 0.0)
             )
+            
+            # 1h bias bonuses (match live bot behavior)
+            if hourly_bias == "OVERSOLD_BOUNCE":
+                ta_score += 0.15
+                entry_min *= 0.60  # Lower bar for mean reversion
+            elif hourly_bias == "TREND_UP":
+                ta_score += 0.10
             
             # ML signal: TA score exceeds threshold (deterministic!)
             if ta_score >= entry_min and ta_score >= ml_threshold * 0.7:

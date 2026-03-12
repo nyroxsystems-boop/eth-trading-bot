@@ -1271,6 +1271,114 @@ def check_15m_trend():
         _15m_cache = {"trend_ok": True, "ts": time.time()}
         return True  # Don't block on error
 
+# --- MULTI-TIMEFRAME: 1h directional bias (the big picture) ---
+_1h_cache = {"bias": "NEUTRAL", "strength": 0.0, "rsi": 50.0, "ts": 0, "detail": ""}
+
+def get_1h_context() -> dict:
+    """
+    Fetch 1h candles and determine the big-picture directional bias.
+    
+    Returns dict with:
+      bias: OVERSOLD_BOUNCE | TREND_UP | TREND_DOWN | NEUTRAL
+      strength: 0.0-1.0 (how strong the signal is)
+      rsi: current 1h RSI
+    
+    Cached for 5 minutes.
+    """
+    global _1h_cache
+    if time.time() - _1h_cache["ts"] < 300:  # 5 min cache
+        return _1h_cache
+    
+    try:
+        df_1h = fetch_klines(interval="1h", lookback=100)
+        if len(df_1h) < 50:
+            _1h_cache = {"bias": "NEUTRAL", "strength": 0.0, "rsi": 50.0, "ts": time.time(), "detail": "not enough data"}
+            return _1h_cache
+        
+        close = df_1h["close"]
+        px = float(close.iloc[-1])
+        
+        # 1h RSI(14)
+        delta = close.diff()
+        gain = delta.where(delta > 0, 0.0).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0.0)).rolling(14).mean()
+        rs = gain / loss.replace(0, 1e-9)
+        rsi_1h = float((100 - 100 / (1 + rs)).iloc[-1])
+        
+        # 1h EMAs
+        ema20_1h = float(close.ewm(span=20).mean().iloc[-1])
+        ema50_1h = float(close.ewm(span=50).mean().iloc[-1])
+        
+        # 1h Bollinger Bands (20, 2)
+        sma20 = float(close.rolling(20).mean().iloc[-1])
+        std20 = float(close.rolling(20).std().iloc[-1])
+        bb_upper = sma20 + 2 * std20
+        bb_lower = sma20 - 2 * std20
+        bb_width = (bb_upper - bb_lower) / max(sma20, 1)
+        
+        # 1h ATR for volatility context
+        high = df_1h["high"]
+        low = df_1h["low"]
+        tr = pd.concat([high - low, abs(high - close.shift(1)), abs(low - close.shift(1))], axis=1).max(axis=1)
+        atr_1h = float(tr.rolling(14).mean().iloc[-1])
+        
+        # === DETERMINE BIAS ===
+        bias = "NEUTRAL"
+        strength = 0.0
+        detail = ""
+        
+        # OVERSOLD_BOUNCE: RSI < 30 AND price near/below lower BB
+        if rsi_1h < 30 and px <= bb_lower * 1.01:
+            bias = "OVERSOLD_BOUNCE"
+            strength = min(1.0, (30 - rsi_1h) / 15)  # Lower RSI = stronger signal
+            detail = f"RSI={rsi_1h:.0f} below BB({bb_lower:.0f})"
+        elif rsi_1h < 35 and px < sma20:
+            bias = "OVERSOLD_BOUNCE"
+            strength = min(0.7, (35 - rsi_1h) / 15)
+            detail = f"RSI={rsi_1h:.0f} below SMA20({sma20:.0f})"
+        
+        # TREND_UP: price > EMA20 > EMA50
+        elif px > ema20_1h and ema20_1h > ema50_1h:
+            bias = "TREND_UP"
+            # Strength based on how far above EMAs
+            spread = (ema20_1h - ema50_1h) / max(ema50_1h, 1) * 100
+            strength = min(1.0, spread / 2)  # 2% spread = max strength
+            detail = f"price>{ema20_1h:.0f}>{ema50_1h:.0f} spread={spread:.2f}%"
+        
+        # TREND_DOWN: price < EMA20 < EMA50
+        elif px < ema20_1h and ema20_1h < ema50_1h:
+            bias = "TREND_DOWN"
+            spread = (ema50_1h - ema20_1h) / max(ema50_1h, 1) * 100
+            strength = min(1.0, spread / 2)
+            detail = f"price<{ema20_1h:.0f}<{ema50_1h:.0f}"
+        
+        # NEUTRAL: no clear direction
+        else:
+            bias = "NEUTRAL"
+            strength = 0.3
+            detail = f"range px={px:.0f} ema20={ema20_1h:.0f} ema50={ema50_1h:.0f}"
+        
+        _1h_cache = {
+            "bias": bias,
+            "strength": round(strength, 2),
+            "rsi": round(rsi_1h, 1),
+            "ts": time.time(),
+            "detail": detail,
+            "bb_lower": round(bb_lower, 2),
+            "bb_upper": round(bb_upper, 2),
+            "ema20": round(ema20_1h, 2),
+            "ema50": round(ema50_1h, 2),
+            "atr": round(atr_1h, 2)
+        }
+        
+        log(f"1H CONTEXT: {bias} (strength={strength:.2f}) | {detail} | RSI={rsi_1h:.1f}")
+        return _1h_cache
+        
+    except Exception as e:
+        log(f"WARN 1h context failed: {e}")
+        _1h_cache = {"bias": "NEUTRAL", "strength": 0.0, "rsi": 50.0, "ts": time.time(), "detail": f"error: {e}"}
+        return _1h_cache
+
 # --- DYNAMIC RISK: scale position size 1%-5% based on market conditions ---
 RISK_MIN = 0.01   # 1% — conservative baseline
 RISK_MAX = 0.05   # 5% — maximum on high-conviction setups
@@ -1630,14 +1738,35 @@ def decide_and_trade():
     
     base_score += conf_boost
     
-    # GENTLE FALLBACK: instead of forcing trades, lower threshold over time
-    hours_idle = (time.time() - _last_trade_ts) / 3600.0
+    # --- 1H MULTI-TIMEFRAME CONTEXT ---
+    ctx_1h = get_1h_context()
+    hourly_bias = ctx_1h["bias"]
+    hourly_strength = ctx_1h["strength"]
+    
+    # HARD BLOCK: Never trade against the 1h downtrend
+    if hourly_bias == "TREND_DOWN" and not open_position:
+        if today_trades == 0 and (time.time() - _last_trade_ts) > 7200:
+            log(f"1H TREND_DOWN but 2h+ idle — allowing cautious entry")
+            # Don't return — allow with reduced score
+            base_score -= 0.10  # Penalty for trading against 1h
+        else:
+            return  # Skip — 1h says bearish
+    
+    # 1H SCORE BONUS: reward entries that align with 1h bias
+    if hourly_bias == "OVERSOLD_BOUNCE":
+        base_score += 0.15 * hourly_strength  # Big bonus for mean reversion
+    elif hourly_bias == "TREND_UP":
+        base_score += 0.10 * hourly_strength  # Trend alignment bonus
+    elif hourly_bias == "NEUTRAL":
+        base_score -= 0.03  # Small penalty for unclear direction
+    
+    # Entry threshold: use 1h context instead of idle-time reduction
     effective_entry_min = ENTRY_SCORE_MIN
-    if hours_idle >= 3.0 and today_trades == 0:
-        effective_entry_min = ENTRY_SCORE_MIN * 0.50  # 3h+ idle: accept 50% of normal quality
-        log(f"THRESHOLD REDUCED: idle {hours_idle:.1f}h → min={effective_entry_min:.2f} (was {ENTRY_SCORE_MIN:.2f})")
-    elif hours_idle >= 1.0 and today_trades == 0:
-        effective_entry_min = ENTRY_SCORE_MIN * 0.70  # 1h+ idle: accept 70% of normal quality
+    if hourly_bias == "OVERSOLD_BOUNCE":
+        effective_entry_min = ENTRY_SCORE_MIN * 0.60  # Lower bar for high-conviction 1h setups
+    elif hourly_bias == "TREND_UP" and hourly_strength > 0.5:
+        effective_entry_min = ENTRY_SCORE_MIN * 0.80  # Slightly lower for strong uptrend
+    # No more idle-time threshold reduction — that was forcing bad trades
     
     entry_score = base_score
 
