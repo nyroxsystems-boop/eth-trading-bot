@@ -2360,12 +2360,70 @@ async def toggle_portfolio_pair(
 
 @app.get("/api/capital")
 async def get_capital():
-    """Get current trading capital"""
-    settings = load_settings()
-    return {
-        "capital": settings.get("trading_capital", 10000),
-        "currency": "USDT"
-    }
+    """Get current trading capital — real paper balance or live Binance balance."""
+    import json as _json
+    
+    # Detect mode
+    paper_mode = os.getenv("PAPER_MODE", "true").lower() in ("true", "1", "yes")
+    
+    if paper_mode:
+        # Paper mode: read real simulated balance from bot
+        balance = 100000.0  # Default
+        updated_at = None
+        try:
+            if PAPER_BALANCE_FILE.exists():
+                with open(PAPER_BALANCE_FILE, 'r') as f:
+                    data = _json.load(f)
+                balance = float(data.get("balance", 100000))
+                updated_at = data.get("updated_at")
+        except Exception:
+            pass
+        
+        return {
+            "capital": round(balance, 2),
+            "currency": "USDT",
+            "mode": "paper",
+            "source": "paper_simulation",
+            "updated_at": updated_at
+        }
+    else:
+        # Live mode: get real Binance USDT balance
+        try:
+            api_key = os.getenv("BINANCE_API_KEY", "")
+            api_secret = os.getenv("BINANCE_API_SECRET", "")
+            if api_key and api_secret:
+                from binance.client import Client
+                client = Client(api_key, api_secret)
+                usdt_info = client.get_asset_balance(asset="USDT")
+                eth_info = client.get_asset_balance(asset="ETH")
+                
+                usdt_free = float(usdt_info["free"]) if usdt_info else 0
+                usdt_locked = float(usdt_info["locked"]) if usdt_info else 0
+                eth_free = float(eth_info["free"]) if eth_info else 0
+                eth_locked = float(eth_info["locked"]) if eth_info else 0
+                
+                # Get ETH price for total valuation
+                ticker = client.get_symbol_ticker(symbol="ETHUSDT")
+                eth_price = float(ticker["price"]) if ticker else 0
+                
+                total_usdt = usdt_free + usdt_locked + (eth_free + eth_locked) * eth_price
+                
+                return {
+                    "capital": round(total_usdt, 2),
+                    "currency": "USDT",
+                    "mode": "live",
+                    "source": "binance",
+                    "usdt_free": round(usdt_free, 2),
+                    "usdt_locked": round(usdt_locked, 2),
+                    "eth_free": round(eth_free, 6),
+                    "eth_locked": round(eth_locked, 6),
+                    "eth_price": round(eth_price, 2),
+                    "updated_at": datetime.now().isoformat()
+                }
+            else:
+                return {"capital": 0, "currency": "USDT", "mode": "live", "source": "no_api_keys"}
+        except Exception as e:
+            return {"capital": 0, "currency": "USDT", "mode": "live", "source": "error", "error": str(e)}
 
 @app.post("/api/capital")
 async def update_capital(capital: float):

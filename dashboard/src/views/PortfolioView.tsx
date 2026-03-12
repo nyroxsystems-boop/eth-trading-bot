@@ -16,6 +16,7 @@ interface TradeEntry {
 
 export default function PortfolioView() {
     const [capital, setCapital] = useState(0)
+    const [mode, setMode] = useState('paper')
     const [status, setStatus] = useState<any>(null)
     const [trades, setTrades] = useState<TradeEntry[]>([])
     const [ethPrice, setEthPrice] = useState(0)
@@ -38,6 +39,7 @@ export default function PortfolioView() {
             const tradesData = await tradesRes.json()
 
             setCapital(capitalData.capital || 0)
+            setMode(capitalData.mode || 'paper')
             setStatus(statusData)
             setEthPrice(statusData?.current_price || 0)
 
@@ -88,6 +90,20 @@ export default function PortfolioView() {
                         <p style={{ color: '#64748b', fontSize: '13px' }}>
                             Trading Capital Overview
                         </p>
+                    </div>
+                    {/* Mode Badge */}
+                    <div style={{
+                        marginLeft: 'auto',
+                        padding: '6px 14px',
+                        borderRadius: '20px',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        letterSpacing: '0.5px',
+                        background: mode === 'live' ? 'rgba(34,197,94,0.15)' : 'rgba(234,179,8,0.15)',
+                        color: mode === 'live' ? '#22c55e' : '#eab308',
+                        border: `1px solid ${mode === 'live' ? 'rgba(34,197,94,0.3)' : 'rgba(234,179,8,0.3)'}`
+                    }}>
+                        {mode === 'live' ? '🟢 LIVE' : '📝 PAPER'}
                     </div>
                 </div>
             </div>
@@ -366,7 +382,7 @@ export default function PortfolioView() {
                         Bot {status.is_running ? 'Active' : 'Stopped'}
                     </div>
                     <span>·</span>
-                    <span>Mode: Paper</span>
+                    <span>Mode: {mode === 'live' ? 'Live' : 'Paper'}</span>
                     <span>·</span>
                     <span>Strategy: Auto-Optimized</span>
                 </motion.div>
