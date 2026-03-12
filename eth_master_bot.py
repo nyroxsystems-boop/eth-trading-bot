@@ -52,8 +52,9 @@ import requests
 import numpy as np
 import pandas as pd
 
-# ML
-from sklearn.linear_model import SGDClassifier
+# ML — upgraded from SGDClassifier to MLPClassifier (neural network)
+from sklearn.neural_network import MLPClassifier
+from sklearn.linear_model import SGDClassifier  # Fallback
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 
@@ -249,10 +250,21 @@ daily_trade_results = []            # List of trade P&Ls today
 circuit_breaker_active = False      # True = NO MORE TRADING until midnight
 circuit_breaker_reason = ""
 
-# ML
+# ML — MLP Neural Network (2 hidden layers: 64, 32 neurons)
 clf = Pipeline([
     ("scaler", StandardScaler(with_mean=True)),
-    ("sgd", SGDClassifier(loss="log_loss", alpha=1e-4, max_iter=5, tol=1e-3))
+    ("mlp", MLPClassifier(
+        hidden_layer_sizes=(64, 32),
+        activation="relu",
+        solver="adam",
+        alpha=1e-4,
+        learning_rate="adaptive",
+        learning_rate_init=0.001,
+        max_iter=50,
+        warm_start=True,  # Incremental learning — keeps weights between fits
+        early_stopping=False,
+        tol=1e-4
+    ))
 ])
 ml_warm = False
 ml_classes = np.array([0,1])
@@ -680,13 +692,13 @@ def ml_online_update(df_feat: pd.DataFrame):
             clf.fit(X[:min(200, len(X))], y[:min(200, len(y))])
             if len(X) > 200:
                 X_rest_scaled = clf.named_steps["scaler"].transform(X[200:])
-                clf.named_steps["sgd"].partial_fit(X_rest_scaled, y[200:], classes=ml_classes)
+                clf.named_steps["mlp"].partial_fit(X_rest_scaled, y[200:], classes=ml_classes)
             ml_warm = True
             log(f"ML warm! Trained on {len(X)} samples ({X.shape[1]} features)")
         else:
-            # Online update: scaler already fitted, just update SGD
+            # Online update: scaler already fitted, just update MLP
             X_scaled = clf.named_steps["scaler"].transform(X[-200:])
-            clf.named_steps["sgd"].partial_fit(X_scaled, y[-200:])
+            clf.named_steps["mlp"].partial_fit(X_scaled, y[-200:])
         recent = y[-500:] if len(y) >= 500 else y
         ml_conf_boost = float(np.mean(recent))
         # Track real ML stats
@@ -781,7 +793,7 @@ def ml_feedback_trade(entry_row, outcome_win: bool):
             
             X_scaled = clf.named_steps["scaler"].transform(X)
             sample_weight = np.ones(len(y)) * 3.0  # Real trades worth 3x
-            clf.named_steps["sgd"].partial_fit(X_scaled, y, classes=ml_classes, sample_weight=sample_weight)
+            clf.named_steps["mlp"].partial_fit(X_scaled, y, classes=ml_classes, sample_weight=sample_weight)
             
             log(f"ML FEEDBACK: retrained on {len(_trade_feedback_buffer)} real trades "
                 f"(wins: {sum(y)}, losses: {len(y)-sum(y)})")
@@ -795,7 +807,7 @@ def ml_feedback_trade(entry_row, outcome_win: bool):
             X_scaled = clf.named_steps["scaler"].transform(X_replay)
             # Replay with lower weight (1.5x) — reinforcement, not override
             weight = np.ones(len(y_replay)) * 1.5
-            clf.named_steps["sgd"].partial_fit(X_scaled, y_replay, classes=ml_classes, sample_weight=weight)
+            clf.named_steps["mlp"].partial_fit(X_scaled, y_replay, classes=ml_classes, sample_weight=weight)
             _replay_counter = 0
             wins = sum(y_replay)
             log(f"EXPERIENCE REPLAY: {len(_experience_replay)} trades replayed "
@@ -819,19 +831,21 @@ def save_ml_model():
     _last_model_save = time.time()
     
     try:
-        sgd = clf.named_steps["sgd"]
+        mlp = clf.named_steps["mlp"]
         scaler = clf.named_steps["scaler"]
         
         state = {
-            "sgd_coef": sgd.coef_.tolist(),
-            "sgd_intercept": sgd.intercept_.tolist(),
-            "sgd_classes": sgd.classes_.tolist(),
+            "mlp_coefs": [c.tolist() for c in mlp.coefs_],
+            "mlp_intercepts": [i.tolist() for i in mlp.intercepts_],
+            "mlp_classes": mlp.classes_.tolist(),
+            "mlp_n_layers": mlp.n_layers_,
             "scaler_mean": scaler.mean_.tolist(),
             "scaler_scale": scaler.scale_.tolist(),
             "scaler_var": scaler.var_.tolist(),
             "scaler_n_samples": int(scaler.n_samples_seen_) if hasattr(scaler, 'n_samples_seen_') else 200,
             "ml_stats": ml_stats,
             "ml_conf_boost": ml_conf_boost,
+            "model_type": "mlp",
             "saved_at": datetime.now().isoformat()
         }
         
@@ -878,12 +892,18 @@ def load_ml_model():
         scaler.n_features_in_ = len(state["scaler_mean"])
         scaler.n_samples_seen_ = np.float64(state.get("scaler_n_samples", 200))
         
-        # Restore SGD
-        sgd = clf.named_steps["sgd"]
-        sgd.coef_ = np.array(state["sgd_coef"])
-        sgd.intercept_ = np.array(state["sgd_intercept"])
-        sgd.classes_ = np.array(state["sgd_classes"])
-        sgd.t_ = 1.0  # Required internal state
+        # Restore MLP (or skip if old SGD format)
+        mlp = clf.named_steps["mlp"]
+        if "mlp_coefs" in state:
+            mlp.coefs_ = [np.array(c) for c in state["mlp_coefs"]]
+            mlp.intercepts_ = [np.array(i) for i in state["mlp_intercepts"]]
+            mlp.classes_ = np.array(state["mlp_classes"])
+            mlp.n_layers_ = state.get("mlp_n_layers", 4)
+            mlp._no_improvement_count = 0
+            mlp.best_loss_ = np.inf
+        elif "sgd_coef" in state:
+            log("ML MODEL: old SGD format detected — skipping load, will retrain")
+            return False
         
         # Restore stats
         if state.get("ml_stats"):
@@ -1380,6 +1400,94 @@ def get_1h_context() -> dict:
         return _1h_cache
 
 # --- DYNAMIC RISK: scale position size 1%-5% based on market conditions ---
+# --- FUNDING RATE: contrarian signal from Binance Futures ---
+_funding_cache = {"rate": 0.0, "ts": 0, "signal": "NEUTRAL"}
+
+def get_funding_rate() -> dict:
+    """
+    Fetch funding rate from Binance Futures.
+    Extreme negative = everyone is short → contrarian LONG signal.
+    Extreme positive = everyone is long → be cautious.
+    
+    Cached for 5 minutes.
+    """
+    global _funding_cache
+    if time.time() - _funding_cache["ts"] < 300:  # 5 min cache
+        return _funding_cache
+    
+    try:
+        resp = requests.get(
+            "https://fapi.binance.com/fapi/v1/premiumIndex",
+            params={"symbol": "ETHUSDT"},
+            timeout=5
+        )
+        data = resp.json()
+        rate = float(data.get("lastFundingRate", 0))
+        
+        signal = "NEUTRAL"
+        if rate < -0.0005:        # -0.05% = extremely negative
+            signal = "EXTREME_SHORT"  # Everyone shorting → contrarian long
+        elif rate < -0.0001:      # -0.01%
+            signal = "SHORT_HEAVY"    # More shorts than usual
+        elif rate > 0.0005:       # +0.05%
+            signal = "EXTREME_LONG"   # Everyone longing → be cautious
+        elif rate > 0.0001:
+            signal = "LONG_HEAVY"
+        
+        _funding_cache = {
+            "rate": rate,
+            "rate_pct": round(rate * 100, 4),
+            "signal": signal,
+            "ts": time.time()
+        }
+        
+        if signal != "NEUTRAL":
+            log(f"FUNDING RATE: {rate*100:.4f}% → {signal}")
+        
+        return _funding_cache
+    except Exception as e:
+        log(f"WARN funding rate fetch failed: {e}")
+        _funding_cache = {"rate": 0.0, "rate_pct": 0.0, "signal": "NEUTRAL", "ts": time.time()}
+        return _funding_cache
+
+# --- 4H CONTEXT: overrides 1h when strongly bearish ---
+_4h_cache = {"bias": "NEUTRAL", "ts": 0}
+
+def get_4h_bias() -> str:
+    """
+    Quick 4h trend check. If 4h EMA20 < EMA50 → strong downtrend override.
+    Cached for 15 minutes (4h candles change slowly).
+    """
+    global _4h_cache
+    if time.time() - _4h_cache["ts"] < 900:  # 15 min cache
+        return _4h_cache["bias"]
+    
+    try:
+        df_4h = fetch_klines(interval="4h", lookback=60)
+        if len(df_4h) < 50:
+            _4h_cache = {"bias": "NEUTRAL", "ts": time.time()}
+            return "NEUTRAL"
+        
+        close = df_4h["close"]
+        px = float(close.iloc[-1])
+        ema20 = float(close.ewm(span=20).mean().iloc[-1])
+        ema50 = float(close.ewm(span=50).mean().iloc[-1])
+        
+        if px > ema20 and ema20 > ema50:
+            bias = "TREND_UP"
+        elif px < ema20 and ema20 < ema50:
+            bias = "TREND_DOWN"
+        else:
+            bias = "NEUTRAL"
+        
+        _4h_cache = {"bias": bias, "ts": time.time()}
+        log(f"4H BIAS: {bias} (px={px:.0f} ema20={ema20:.0f} ema50={ema50:.0f})")
+        return bias
+    except Exception as e:
+        log(f"WARN 4h bias failed: {e}")
+        _4h_cache = {"bias": "NEUTRAL", "ts": time.time()}
+        return "NEUTRAL"
+
 RISK_MIN = 0.01   # 1% — conservative baseline
 RISK_MAX = 0.05   # 5% — maximum on high-conviction setups
 
@@ -1743,14 +1851,30 @@ def decide_and_trade():
     hourly_bias = ctx_1h["bias"]
     hourly_strength = ctx_1h["strength"]
     
-    # HARD BLOCK: Never trade against the 1h downtrend
-    if hourly_bias == "TREND_DOWN" and not open_position:
-        if today_trades == 0 and (time.time() - _last_trade_ts) > 7200:
-            log(f"1H TREND_DOWN but 2h+ idle — allowing cautious entry")
-            # Don't return — allow with reduced score
-            base_score -= 0.10  # Penalty for trading against 1h
-        else:
-            return  # Skip — 1h says bearish
+    # --- 4H OVERRIDE: strongest timeframe wins ---
+    bias_4h = get_4h_bias()
+    if bias_4h == "TREND_DOWN" and not open_position:
+        log(f"4H OVERRIDE: TREND_DOWN blocks all entries (1h was {hourly_bias})")
+        return  # 4h says NO — absolute block
+    
+    # HARD BLOCK: 1h downtrend (unless 4h is bullish)
+    if hourly_bias == "TREND_DOWN" and bias_4h != "TREND_UP" and not open_position:
+        return  # Skip — 1h says bearish, 4h doesn't disagree
+    
+    # --- FUNDING RATE SIGNAL ---
+    funding = get_funding_rate()
+    funding_signal = funding["signal"]
+    
+    # Contrarian funding bonuses
+    if funding_signal == "EXTREME_SHORT":
+        base_score += 0.12  # Everyone shorting → contrarian long opportunity
+        log(f"FUNDING BOOST: +0.12 (extreme shorts, rate={funding['rate_pct']}%)")
+    elif funding_signal == "SHORT_HEAVY":
+        base_score += 0.06  # More shorts than usual
+    elif funding_signal == "EXTREME_LONG":
+        base_score -= 0.10  # Everyone longing → be cautious
+    elif funding_signal == "LONG_HEAVY":
+        base_score -= 0.05  # Slightly long-heavy
     
     # 1H SCORE BONUS: reward entries that align with 1h bias
     if hourly_bias == "OVERSOLD_BOUNCE":
@@ -1759,6 +1883,10 @@ def decide_and_trade():
         base_score += 0.10 * hourly_strength  # Trend alignment bonus
     elif hourly_bias == "NEUTRAL":
         base_score -= 0.03  # Small penalty for unclear direction
+    
+    # 4h bonus stacks with 1h
+    if bias_4h == "TREND_UP":
+        base_score += 0.08  # 4h confirms → extra confidence
     
     # Entry threshold: use 1h context instead of idle-time reduction
     effective_entry_min = ENTRY_SCORE_MIN
