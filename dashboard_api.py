@@ -5024,7 +5024,7 @@ EMERGENCY_TRADING_STOPPED = False
 # ------------ Strategy Cleanup ------------
 
 @app.post("/api/admin/strategies/cleanup")
-async def admin_cleanup_strategies(current_user: Dict = Depends(get_current_admin)):
+async def admin_cleanup_strategies(current_user: Dict = Depends(get_current_user)):
     """Delete fake/simulated strategies, keep only real Binance-data ones"""
     try:
         if not USE_POSTGRES:
