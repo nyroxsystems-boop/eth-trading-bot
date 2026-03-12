@@ -386,14 +386,55 @@ Focus on factors that would affect ETH price in the next 1-24 hours."""
     
     async def get_market_sentiment(self, currency: str = "ETH") -> SentimentResult:
         """
-        Get overall market sentiment for a currency
-        Fetches news and analyzes with LLM
+        Get overall market sentiment for a currency.
+        Priority: 1) Fear & Greed Index, 2) CryptoPanic news, 3) Rule-based fallback
         """
-        # Fetch recent news
+        # PRIMARY: Crypto Fear & Greed Index (always available, no API key needed)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get("https://api.alternative.me/fng/?limit=1", timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        fng = data["data"][0]
+                        value = int(fng["value"])  # 0-100
+                        classification = fng["value_classification"]
+                        
+                        # Convert 0-100 to -1.0 to +1.0
+                        score = (value - 50) / 50.0  # 0→-1.0, 50→0.0, 100→+1.0
+                        
+                        # Confidence based on how extreme the reading is
+                        confidence = min(1.0, abs(score) + 0.3)
+                        
+                        if value < 25:
+                            summary = f"Market in Extreme Fear ({value}/100). Historically a buying opportunity."
+                            topics = ["extreme fear", "capitulation", "contrarian buy signal"]
+                        elif value < 40:
+                            summary = f"Market showing Fear ({value}/100). Caution warranted."
+                            topics = ["fear", "uncertainty", "risk-off"]
+                        elif value < 60:
+                            summary = f"Market sentiment is Neutral ({value}/100). No strong directional bias."
+                            topics = ["neutral", "consolidation", "wait and see"]
+                        elif value < 75:
+                            summary = f"Market showing Greed ({value}/100). Momentum is positive."
+                            topics = ["greed", "bullish momentum", "risk-on"]
+                        else:
+                            summary = f"Market in Extreme Greed ({value}/100). Caution — potential overheating."
+                            topics = ["extreme greed", "euphoria", "potential correction"]
+                        
+                        return SentimentResult(
+                            score=round(score, 2),
+                            confidence=round(confidence, 2),
+                            summary=summary,
+                            key_topics=topics,
+                            source=f"fear_greed_index ({classification})",
+                            timestamp=datetime.now().isoformat()
+                        )
+        except Exception as e:
+            print(f"⚠️ Fear & Greed Index failed: {e}")
+        
+        # SECONDARY: Try CryptoPanic news
         news = await self.news_fetcher.fetch_cryptopanic(currency)
         headlines = [item.title for item in news]
-        
-        # Analyze sentiment
         return await self.analyze_headlines(headlines)
 
 
