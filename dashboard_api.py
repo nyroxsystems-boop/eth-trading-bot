@@ -629,29 +629,25 @@ async def clear_trade_journal(current_user = Depends(get_current_user)):
     # Clear PostgreSQL trade_journal
     if USE_POSTGRES:
         try:
-            conn = get_pg_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM trade_journal")
-            cleared["db"] = cursor.fetchone()[0] or 0
-            cursor.execute("DELETE FROM trade_journal")
-            conn.commit()
-            cursor.close()
-            conn.close()
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM trade_journal")
+                cleared["db"] = cursor.fetchone()[0] or 0
+                cursor.execute("DELETE FROM trade_journal")
+                conn.commit()
         except Exception as e:
             print(f"Error clearing DB trades: {e}")
     
     # Also clear PostgreSQL paper_trades table (where /api/trades reads from)
     if USE_POSTGRES:
         try:
-            conn = get_pg_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM paper_trades")
-            pt_count = cursor.fetchone()[0] or 0
-            cursor.execute("DELETE FROM paper_trades")
-            conn.commit()
-            cursor.close()
-            conn.close()
-            cleared["db"] += pt_count
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM paper_trades")
+                pt_count = cursor.fetchone()[0] or 0
+                cursor.execute("DELETE FROM paper_trades")
+                conn.commit()
+                cleared["db"] += pt_count
         except Exception as e:
             print(f"Error clearing paper_trades: {e}")
     
