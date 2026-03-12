@@ -608,6 +608,57 @@ async def get_trade_journal(limit: int = 200):
     
     return journal[-limit:]
 
+@app.post("/api/bot/journal/clear")
+async def clear_trade_journal(current_user = Depends(get_current_user)):
+    """Clear all trades from journal (CSV + PostgreSQL). Use to remove old forced trades."""
+    cleared = {"csv": 0, "db": 0}
+    
+    # Clear CSV
+    try:
+        if TRADES_CSV.exists():
+            import csv
+            with open(TRADES_CSV, 'r') as f:
+                reader = csv.reader(f)
+                rows = list(reader)
+            cleared["csv"] = max(0, len(rows) - 1)  # Minus header
+            with open(TRADES_CSV, 'w') as f:
+                f.write("timestamp,action,qty,price,pnl\n")
+    except Exception as e:
+        print(f"Error clearing CSV: {e}")
+    
+    # Clear PostgreSQL trade_journal
+    if USE_POSTGRES:
+        try:
+            conn = get_pg_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM trade_journal")
+            cleared["db"] = cursor.fetchone()[0] or 0
+            cursor.execute("DELETE FROM trade_journal")
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"Error clearing DB trades: {e}")
+    
+    # Also clear PostgreSQL trades table
+    if USE_POSTGRES:
+        try:
+            conn = get_pg_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM trades")
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"Error clearing trades table: {e}")
+    
+    return {
+        "status": "success",
+        "cleared_csv": cleared["csv"],
+        "cleared_db": cleared["db"],
+        "message": f"Cleared {cleared['csv']} CSV trades and {cleared['db']} DB trades"
+    }
+
 @app.get("/api/trades", response_model=List[Trade])
 async def get_trades(limit: int = 100):
     """Get recent trades — reads from PostgreSQL first, falls back to CSV"""

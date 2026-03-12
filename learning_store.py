@@ -288,7 +288,7 @@ def _pg_get_stats() -> Dict:
                 total_tested = cursor.fetchone()[0] or 0
             
             cursor.execute("SELECT COALESCE(MAX(score), 0) FROM learning_strategies")
-            best_score = min(cursor.fetchone()[0] or 0, 500)  # Cap insane scores
+            best_score = cursor.fetchone()[0] or 0  # No cap — reliability multiplier handles inflated scores
 
             # Applied count
             cursor.execute("SELECT COUNT(*) FROM learning_strategies WHERE applied = TRUE")
