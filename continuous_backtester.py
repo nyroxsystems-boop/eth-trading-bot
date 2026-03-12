@@ -125,33 +125,34 @@ class ContinuousBacktester:
     
     def calculate_score(self, metrics: Dict[str, Any]) -> float:
         """
-        Calculate strategy score based on multiple metrics
-        Higher is better
+        Calculate strategy score based on multiple metrics.
+        Rebalanced: ROI matters MORE, Sharpe matters LESS.
+        Higher is better.
         """
         if not metrics:
             return 0.0
         
         score = 0.0
         
-        # Win Rate (30% weight) - Target: 55-65%
+        # Win Rate (25% weight) - Target: 55-65%
         win_rate = metrics.get('win_rate', 0)
         score += win_rate * 0.30
         
-        # ROI (25% weight) - Target: 3-10%
+        # ROI (40% weight) - INCREASED: ROI is the ultimate goal
         roi = metrics.get('roi', 0)
-        score += roi * 2.5
+        score += roi * 5.0
         
-        # Sharpe Ratio (20% weight) - Target: 1.5-3.0
+        # Sharpe Ratio (15% weight) - REDUCED: was too dominant
         sharpe = metrics.get('sharpe_ratio', 0)
-        score += sharpe * 10
+        score += sharpe * 6
         
-        # Max Drawdown (15% weight, negative) - Target: < 10%
+        # Max Drawdown (10% weight, negative) - Target: < 10%
         max_dd = metrics.get('max_drawdown', 0)
         score -= max_dd * 0.15
         
-        # Total Trades (10% weight) - Target: 50-100
+        # Total Trades (10% weight) - Reward verified strategies
         total_trades = metrics.get('total_trades', 0)
-        score += min(total_trades / 100, 1.0) * 10
+        score += min(total_trades / 50, 1.0) * 15
         
         return score
     

@@ -299,10 +299,13 @@ _STRATEGY_RELOAD_INTERVAL = 300  # Check for better strategy every 5 minutes
 
 def apply_best_strategy():
     """
-    Load the best strategy from PostgreSQL and apply ALL params.
+    Load top-3 strategies as a WEIGHTED ENSEMBLE and apply blended params.
     Called every trading loop — picks up improvements from the backtester in real-time.
     Only reloads every 5 minutes to avoid DB spam.
-    Applies ALL 11 backtested parameters to live trading.
+    
+    Ensemble weights: Top-1=50%, Top-2=30%, Top-3=20%
+    This lets the bot benefit from multiple high-performing strategies
+    instead of just the single highest-score one.
     """
     global TP_MIN, TP_MAX, STOP_FLOOR, RISK_PCT_PER_TRADE, current_params
     global _last_strategy_load, SEC_PML_MIN
@@ -316,43 +319,55 @@ def apply_best_strategy():
     
     try:
         import learning_store
-        best = learning_store.get_current_strategy()
-        if not best or not best.get("params"):
+        top_strategies = learning_store.get_top_n_strategies(3)
+        if not top_strategies:
             return
         
-        p = best["params"]
+        # Ensemble weights: 50% / 30% / 20%
+        weights = [0.50, 0.30, 0.20]
+        
+        # Blend parameters from top strategies
+        blend_keys = ["tp_min", "tp_max", "ml_threshold", "rsi_oversold", "rsi_overbought",
+                      "max_trades_per_day", "entry_score_min"]
+        blended = {}
+        total_weight = 0.0
+        
+        for i, strat in enumerate(top_strategies):
+            params = strat.get("params", {})
+            if not params:
+                continue
+            w = weights[i] if i < len(weights) else 0.0
+            total_weight += w
+            for key in blend_keys:
+                if key in params:
+                    blended[key] = blended.get(key, 0.0) + float(params[key]) * w
+        
+        # Normalize by total weight
+        if total_weight > 0:
+            for key in blended:
+                blended[key] /= total_weight
+        
         old_tp = TP_MAX
         old_stop = STOP_FLOOR
         
         # === Core Risk Parameters ===
-        # TP can be adjusted by backtester (within safe limits)
-        if "tp_min" in p:
-            TP_MIN = max(0.012, min(0.04, float(p["tp_min"])))  # Clamp 1.2-4%
-        if "tp_max" in p:
-            TP_MAX = max(0.015, min(0.05, float(p["tp_max"])))  # Clamp 1.5-5%
+        if "tp_min" in blended:
+            TP_MIN = max(0.012, min(0.04, blended["tp_min"]))  # Clamp 1.2-4%
+        if "tp_max" in blended:
+            TP_MAX = max(0.015, min(0.05, blended["tp_max"]))  # Clamp 1.5-5%
         # STOP_FLOOR and RISK_PCT_PER_TRADE are LOCKED — backtester cannot override!
-        # Reason: backtester doesn't account for slippage/spread, sets SL too tight
-        # if "stop_floor" in p:  # DISABLED — was setting SL to 0.4%!
-        #     STOP_FLOOR = float(p["stop_floor"])
-        # if "risk_per_trade" in p:  # DISABLED — was setting risk to 1.2%!
-        #     RISK_PCT_PER_TRADE = float(p["risk_per_trade"])
-        if "ml_threshold" in p:
-            SEC_PML_MIN = max(0.30, float(p["ml_threshold"]))
+        if "ml_threshold" in blended:
+            SEC_PML_MIN = max(0.30, blended["ml_threshold"])
         
-        # === Entry Parameters (NEW — were not applied before!) ===
-        if "rsi_oversold" in p:
-            RSI_MIN = float(p["rsi_oversold"])
-        if "rsi_overbought" in p:
-            RSI_MAX = float(p["rsi_overbought"])
-        if "max_trades_per_day" in p:
-            MAX_TRADES_PER_DAY = int(p["max_trades_per_day"])
-        
-        # Entry threshold: strategy sets the CEILING, adaptive controls the floor
-        if "entry_score_min" in p:
-            _ENTRY_CEILING = max(0.15, min(0.30, float(p["entry_score_min"])))  # Cap at 0.30!
-        
-        # NOTE: BREAKOUT_WEIGHT and TREND_WEIGHT are NOT overridden by backtester
-        # Our rebalanced weights (0.20/0.12) are core to sideways-market trading
+        # === Entry Parameters ===
+        if "rsi_oversold" in blended:
+            RSI_MIN = blended["rsi_oversold"]
+        if "rsi_overbought" in blended:
+            RSI_MAX = blended["rsi_overbought"]
+        if "max_trades_per_day" in blended:
+            MAX_TRADES_PER_DAY = int(round(blended["max_trades_per_day"]))
+        if "entry_score_min" in blended:
+            _ENTRY_CEILING = max(0.15, min(0.30, blended["entry_score_min"]))
         
         # Update current_params dict for tracking
         current_params['tp_min'] = TP_MIN
@@ -360,9 +375,11 @@ def apply_best_strategy():
         current_params['risk_pct'] = RISK_PCT_PER_TRADE
         current_params['ml_threshold'] = SEC_PML_MIN
         
+        scores = [s.get("score", 0) for s in top_strategies]
         if old_tp != TP_MAX or old_stop != STOP_FLOOR:
-            score = best.get("score", 0)
-            log(f"AUTO-APPLY strategy (score={score:.1f}): TP={TP_MIN*100:.2f}-{TP_MAX*100:.2f}% Stop={STOP_FLOOR*100:.2f}% Risk={RISK_PCT_PER_TRADE*100:.2f}% ML={SEC_PML_MIN:.2f} RSI={RSI_MIN:.0f}-{RSI_MAX:.0f} MaxTrades={MAX_TRADES_PER_DAY}")
+            log(f"ENSEMBLE-APPLY ({len(top_strategies)} strategies, scores={[f'{s:.0f}' for s in scores]}): "
+                f"TP={TP_MIN*100:.2f}-{TP_MAX*100:.2f}% Stop={STOP_FLOOR*100:.2f}% "
+                f"ML={SEC_PML_MIN:.2f} RSI={RSI_MIN:.0f}-{RSI_MAX:.0f} MaxTrades={MAX_TRADES_PER_DAY}")
     except Exception as e:
         pass  # Silently fail — don't break trading loop
 
@@ -1851,15 +1868,16 @@ def decide_and_trade():
     hourly_bias = ctx_1h["bias"]
     hourly_strength = ctx_1h["strength"]
     
-    # --- 4H OVERRIDE: strongest timeframe wins ---
+    # --- 4H CONTEXT: penalty instead of absolute block ---
     bias_4h = get_4h_bias()
     if bias_4h == "TREND_DOWN" and not open_position:
-        log(f"4H OVERRIDE: TREND_DOWN blocks all entries (1h was {hourly_bias})")
-        return  # 4h says NO — absolute block
+        base_score -= 0.20  # Heavy penalty, but strong signals can still trigger
+        log(f"4H PENALTY: -0.20 (4H trend down, score now {base_score:.2f}, 1h was {hourly_bias})")
     
-    # HARD BLOCK: 1h downtrend (unless 4h is bullish)
+    # 1H DOWNTREND: penalty instead of hard block
     if hourly_bias == "TREND_DOWN" and bias_4h != "TREND_UP" and not open_position:
-        return  # Skip — 1h says bearish, 4h doesn't disagree
+        base_score -= 0.15  # Moderate penalty
+        log(f"1H PENALTY: -0.15 (1H trend down, score now {base_score:.2f})")
     
     # --- FUNDING RATE SIGNAL ---
     funding = get_funding_rate()

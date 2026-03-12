@@ -131,6 +131,12 @@ def get_evolution(days: int = 7) -> List[Dict]:
         return _json_get_evolution(days)
 
 
+def get_top_n_strategies(n: int = 3) -> List[Dict]:
+    """Get top N strategies for ensemble use (sorted by score DESC)."""
+    strategies = get_all_strategies(limit=n)
+    return strategies[:n]
+
+
 # ═══════════════════════════════════════════
 # PostgreSQL implementations
 # ═══════════════════════════════════════════
