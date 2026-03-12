@@ -347,8 +347,12 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     losses = [t for t in trades if not t["win"]]
     win_rate = len(wins) / len(trades) * 100
     
-    # QUALITY FILTER: reject strategies with win rate below 45%
-    if win_rate < 45.0:
+    # QUALITY FILTER: reject strategies with win rate below 50%
+    if win_rate < 50.0:
+        return None
+    
+    # QUALITY FILTER: reject strategies with too few trades (not statistically valid)
+    if len(trades) < 3:
         return None
     
     roi = (equity - initial_equity) / initial_equity * 100
@@ -363,6 +367,21 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     avg_pnl = sum(pnls) / len(pnls)
     std_pnl = (sum((p - avg_pnl) ** 2 for p in pnls) / len(pnls)) ** 0.5
     sharpe = (avg_pnl / std_pnl * (len(trades) ** 0.5)) if std_pnl > 0 else 0
+    
+    # === TRADE COUNT RELIABILITY MULTIPLIER ===
+    # Penalize strategies with few trades — 100% from 2 trades means nothing
+    n_trades = len(trades)
+    if n_trades >= 10:
+        trade_reliability = 1.0      # Full confidence
+    elif n_trades >= 7:
+        trade_reliability = 0.85     # Good sample
+    elif n_trades >= 5:
+        trade_reliability = 0.65     # Acceptable
+    else:
+        trade_reliability = 0.35     # Very low — almost meaningless
+    
+    # Bonus for more trades (encourages active strategies)
+    trade_bonus = min(n_trades * 2, 30)  # Up to +30 for 15+ trades
     
     # === SCORING: MAXIMIZE WIN RATE & ROI ===
     capped_roi = max(-50, min(roi, 100))  # Cap ROI between -50% and 100%
@@ -379,14 +398,20 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     # Profit factor bonus (penalizes bad risk/reward)
     pf_bonus = min(profit_factor * 5, 20)  # Up to +20 for PF > 4.0
     
-    score = (
-        win_rate * 1.5 +          # 1.5x win rate (was 0.3) — HEAVILY weighted
-        capped_roi * 3.0 +        # 3x ROI contribution (was 2.0)
+    raw_score = (
+        win_rate * 1.5 +          # 1.5x win rate — HEAVILY weighted
+        capped_roi * 3.0 +        # 3x ROI contribution
         sharpe * 8 +              # Sharpe still matters
         wr_bonus +                # Win rate tier bonus
-        pf_bonus -                # Profit factor bonus
-        max_drawdown * 100 * 1.0  # Higher drawdown penalty (was 0.5)
+        pf_bonus +                # Profit factor bonus
+        trade_bonus -             # More trades = better
+        max_drawdown * 100 * 1.0  # Higher drawdown penalty
     )
+    
+    # Apply reliability multiplier — this is the key fix!
+    # 100% WR from 2 trades: raw=180 × 0.35 = 63
+    # 85% WR from 7 trades with 7% ROI: raw=170 × 0.85 = 144.5 → WINS!
+    score = raw_score * trade_reliability
     
     return {
         "total_trades": len(trades),
