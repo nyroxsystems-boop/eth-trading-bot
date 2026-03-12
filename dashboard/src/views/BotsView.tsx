@@ -26,7 +26,14 @@ export default function BotsView() {
 
                 setBotRunning(statusData.is_running || false)
                 setStatus(statusData)
-                setTrades(Array.isArray(tradesData) ? tradesData : [])
+                // Filter to today's trades only
+                const allTrades = Array.isArray(tradesData) ? tradesData : []
+                const todayStr = new Date().toISOString().slice(0, 10)
+                const todayTrades = allTrades.filter((t: any) => {
+                    if (!t.timestamp) return false
+                    return t.timestamp.slice(0, 10) === todayStr
+                })
+                setTrades(todayTrades)
                 setCapital(capitalData.capital || 0)
             } catch (e) {
                 console.error('Status fetch error:', e)
@@ -117,7 +124,7 @@ export default function BotsView() {
             >
                 <div className="flex items-center gap-2 mb-4">
                     <BookOpen className="w-5 h-5 text-cyan-400" />
-                    <h2 className="text-xl font-semibold">Trade Journal</h2>
+                    <h2 className="text-xl font-semibold">Today's Trades</h2>
                     <span className="text-sm text-slate-400 ml-auto">{trades.length} trades</span>
                 </div>
 
@@ -240,7 +247,7 @@ export default function BotsView() {
                         <div className="space-y-3">
                             <div className="flex justify-between">
                                 <span className="text-slate-400">Model</span>
-                                <span className="text-white font-semibold">SGDClassifier + DQN</span>
+                                <span className="text-white font-semibold">MLP Neural Net + DQN</span>
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-slate-400">ML Confidence</span>

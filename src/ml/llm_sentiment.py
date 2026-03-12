@@ -86,30 +86,30 @@ class NewsFetcher:
             return self._get_mock_news()
     
     def _get_mock_news(self) -> List[NewsItem]:
-        """Return mock news for testing"""
+        """Return balanced mock news (prevents fake 100% bullish)"""
         return [
             NewsItem(
-                title="Ethereum ETF sees record inflows as institutional interest grows",
-                description="Major institutions continue to accumulate ETH following spot ETF approval",
-                source="CoinDesk",
+                title="Ethereum trades sideways as market awaits macro data",
+                description="ETH consolidates near support levels",
+                source="Mock",
                 published_at=datetime.now().isoformat(),
-                url="https://example.com/news/1",
+                url="",
                 currencies=["ETH"]
             ),
             NewsItem(
-                title="Ethereum network upgrade scheduled for Q2 2026",
-                description="The Pectra upgrade promises 10x lower gas fees and improved scalability",
-                source="The Block",
+                title="Crypto market volume drops as traders wait for direction",
+                description="Low volatility week for major cryptocurrencies",
+                source="Mock",
                 published_at=datetime.now().isoformat(),
-                url="https://example.com/news/2",
+                url="",
                 currencies=["ETH"]
             ),
             NewsItem(
-                title="DeFi TVL reaches new ATH with Ethereum leading the charge",
-                description="Total value locked in DeFi protocols surpasses $200B milestone",
-                source="DefiLlama",
+                title="Mixed signals from whale activity on Ethereum network",
+                description="Some accumulation offset by profit taking",
+                source="Mock",
                 published_at=datetime.now().isoformat(),
-                url="https://example.com/news/3",
+                url="",
                 currencies=["ETH"]
             )
         ]
