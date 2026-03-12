@@ -5054,11 +5054,29 @@ async def admin_cleanup_strategies(current_user: Dict = Depends(get_current_user
             cursor.execute("SELECT COUNT(*) FROM learning_strategies")
             total_after = cursor.fetchone()[0]
             
+            # Reset the total_strategies_tested counter in kv_store to match real count
+            try:
+                cursor.execute("""
+                    UPDATE kv_store SET value = %s 
+                    WHERE key = 'total_strategies_tested'
+                """, (str(total_after),))
+                if cursor.rowcount == 0:
+                    cursor.execute("""
+                        INSERT INTO kv_store (key, value) VALUES ('total_strategies_tested', %s)
+                    """, (str(total_after),))
+                # Also reset daily counter
+                cursor.execute("""
+                    DELETE FROM kv_store WHERE key LIKE 'daily_tested_%'
+                """)
+            except Exception as e:
+                print(f"⚠️ kv_store reset error: {e}")
+            
             return {
                 "status": "success",
                 "deleted": deleted,
                 "before": total_before,
                 "after": total_after,
+                "counter_reset_to": total_after,
                 "breakdown_before": breakdown
             }
     except Exception as e:
