@@ -5021,6 +5021,49 @@ async def run_strategy_backtest(data: dict, current_user: Optional[Dict] = Depen
 # Global emergency state
 EMERGENCY_TRADING_STOPPED = False
 
+# ------------ Strategy Cleanup ------------
+
+@app.post("/api/admin/strategies/cleanup")
+async def admin_cleanup_strategies(current_user: Dict = Depends(get_current_admin)):
+    """Delete fake/simulated strategies, keep only real Binance-data ones"""
+    try:
+        if not USE_POSTGRES:
+            return {"status": "error", "message": "No PostgreSQL connection"}
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Count before
+            cursor.execute("SELECT COUNT(*) FROM learning_strategies")
+            total_before = cursor.fetchone()[0]
+            
+            # Count by source
+            cursor.execute("SELECT data_source, COUNT(*) FROM learning_strategies GROUP BY data_source")
+            breakdown = {(row[0] or "NULL"): row[1] for row in cursor.fetchall()}
+            
+            # Delete fake/simulated strategies
+            cursor.execute("""
+                DELETE FROM learning_strategies 
+                WHERE data_source = 'simulated' 
+                   OR data_source IS NULL 
+                   OR data_source = ''
+            """)
+            deleted = cursor.rowcount
+            
+            # Count after
+            cursor.execute("SELECT COUNT(*) FROM learning_strategies")
+            total_after = cursor.fetchone()[0]
+            
+            return {
+                "status": "success",
+                "deleted": deleted,
+                "before": total_before,
+                "after": total_after,
+                "breakdown_before": breakdown
+            }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 # ------------ User Management ------------
 
 @app.get("/api/admin/users")
