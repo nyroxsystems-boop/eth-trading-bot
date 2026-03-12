@@ -1,4 +1,4 @@
-import { Home, TrendingUp, Bot, Brain, Users, Shield, BarChart3, BookOpen, Users2 } from 'lucide-react'
+import { Home, TrendingUp, Bot, Brain, Users, Shield, BarChart3, BookOpen } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 
@@ -25,7 +25,7 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
         { id: 'portfolio', icon: TrendingUp, labelKey: 'nav.portfolio' },
         { id: 'trading', icon: Bot, labelKey: 'nav.trading' },
         { id: 'analytics', icon: BarChart3, labelKey: 'nav.analytics' },
-        { id: 'social', icon: Users2, labelKey: 'nav.social' },
+
         { id: 'learning', icon: Brain, labelKey: 'nav.learning' },
         { id: 'journal', icon: BookOpen, labelKey: 'nav.journal' },
         { id: 'account', icon: Users, labelKey: 'settings.account' },
