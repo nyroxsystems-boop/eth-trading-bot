@@ -306,9 +306,19 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
         return None  # Not enough trades
     
     wins = [t for t in trades if t["win"]]
+    losses = [t for t in trades if not t["win"]]
     win_rate = len(wins) / len(trades) * 100
     
+    # QUALITY FILTER: reject strategies with win rate below 45%
+    if win_rate < 45.0:
+        return None
+    
     roi = (equity - initial_equity) / initial_equity * 100
+    
+    # Profit factor: gross wins / gross losses (>1.5 is good, >2.0 is excellent)
+    gross_wins = sum(t["pnl"] for t in wins) if wins else 0
+    gross_losses = abs(sum(t["pnl"] for t in losses)) if losses else 0.0001
+    profit_factor = gross_wins / max(gross_losses, 0.0001)
     
     # Sharpe ratio (simplified)
     pnls = [t["pnl"] for t in trades]
@@ -316,13 +326,28 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     std_pnl = (sum((p - avg_pnl) ** 2 for p in pnls) / len(pnls)) ** 0.5
     sharpe = (avg_pnl / std_pnl * (len(trades) ** 0.5)) if std_pnl > 0 else 0
     
-    # Composite score — cap ROI contribution to prevent runaway scores
+    # === SCORING: MAXIMIZE WIN RATE & ROI ===
     capped_roi = max(-50, min(roi, 100))  # Cap ROI between -50% and 100%
+    
+    # Win rate bonus tiers
+    wr_bonus = 0
+    if win_rate >= 70:
+        wr_bonus = 30    # Excellent
+    elif win_rate >= 60:
+        wr_bonus = 15    # Good
+    elif win_rate >= 55:
+        wr_bonus = 5     # Decent
+    
+    # Profit factor bonus (penalizes bad risk/reward)
+    pf_bonus = min(profit_factor * 5, 20)  # Up to +20 for PF > 4.0
+    
     score = (
-        win_rate * 0.3 +
-        capped_roi * 2.0 +
-        sharpe * 10 -
-        max_drawdown * 100 * 0.5
+        win_rate * 1.5 +          # 1.5x win rate (was 0.3) — HEAVILY weighted
+        capped_roi * 3.0 +        # 3x ROI contribution (was 2.0)
+        sharpe * 8 +              # Sharpe still matters
+        wr_bonus +                # Win rate tier bonus
+        pf_bonus -                # Profit factor bonus
+        max_drawdown * 100 * 1.0  # Higher drawdown penalty (was 0.5)
     )
     
     return {
@@ -331,6 +356,7 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
         "roi": round(roi, 2),
         "sharpe_ratio": round(sharpe, 2),
         "max_drawdown": round(max_drawdown * 100, 2),
+        "profit_factor": round(profit_factor, 2),
         "score": round(score, 2)
     }
 
