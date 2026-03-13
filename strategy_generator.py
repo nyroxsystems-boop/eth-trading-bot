@@ -17,7 +17,7 @@ class StrategyGenerator:
             'risk_per_trade': (0.005, 0.020),
             'tp_min': (0.010, 0.030),
             'tp_max': (0.015, 0.050),
-            'stop_floor': (0.010, 0.025),  # Min 1% SL (was 0.3% — deadly)
+            'stop_floor': (0.012, 0.025),  # Min 1.2% SL (backtest enforces 1% floor)
             'max_trades_per_day': (5, 25),
             # NEW: expanded params for broader search
             'rsi_oversold': (25, 45),

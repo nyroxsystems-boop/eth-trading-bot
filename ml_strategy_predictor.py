@@ -62,7 +62,29 @@ class MLStrategyPredictor:
         return np.array(features).reshape(1, -1)
     
     def _load_training_data(self) -> tuple:
-        """Load historical strategies from database"""
+        """Load historical strategies from PostgreSQL (preferred) or SQLite fallback."""
+        
+        # Try PostgreSQL first (has 9000+ strategies on Railway)
+        try:
+            import learning_store
+            strategies = learning_store.get_all_strategies(limit=1000)
+            if strategies and len(strategies) >= self.min_samples:
+                X = []
+                y = []
+                for s in strategies:
+                    params = s.get("params", {})
+                    if not params:
+                        continue
+                    features = self._extract_features(params).flatten()
+                    X.append(features)
+                    y.append(s.get("score", 0))
+                if len(X) >= self.min_samples:
+                    print(f"📊 GB training data: {len(X)} strategies from PostgreSQL")
+                    return np.array(X), np.array(y)
+        except Exception as e:
+            print(f"⚠️ PG load failed, falling back to SQLite: {e}")
+        
+        # Fallback: SQLite
         if not Path(self.db_path).exists():
             return None, None
         

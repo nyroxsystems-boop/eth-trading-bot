@@ -49,20 +49,27 @@ class AutoApply:
         self.min_roi = float(os.getenv("MIN_ROI", "2.0"))
     
     def get_current_strategy(self) -> Optional[Dict[str, Any]]:
-        """Get currently applied strategy"""
-        with get_learning_db() as conn:
-            cursor = conn.cursor()
-            
-            if False:  # SQLite only
-                cursor.execute("""
-                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                           score, win_rate, roi, max_drawdown
-                    FROM strategies
-                    WHERE applied = true
-                    ORDER BY applied_at DESC
-                    LIMIT 1
-                """)
-            else:
+        """Get currently applied strategy from PostgreSQL via learning_store."""
+        try:
+            import learning_store
+            current = learning_store.get_current_strategy()
+            if current:
+                params = current.get("params", {})
+                metrics = current.get("metrics", {})
+                return {
+                    'params': params,
+                    'score': current.get("score", 0),
+                    'win_rate': metrics.get("win_rate", 0),
+                    'roi': metrics.get("roi", 0),
+                    'max_drawdown': metrics.get("max_drawdown", 0)
+                }
+        except Exception as e:
+            print(f"⚠️ PG current strategy read failed: {e}")
+        
+        # Fallback to SQLite
+        try:
+            with get_learning_db() as conn:
+                cursor = conn.cursor()
                 cursor.execute("""
                     SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
                            score, win_rate, roi, max_drawdown
@@ -71,59 +78,64 @@ class AutoApply:
                     ORDER BY applied_at DESC
                     LIMIT 1
                 """)
-            
-            row = cursor.fetchone()
-        
-        if row:
-            return {
-                'params': {
-                    'ml_threshold': row[0],
-                    'risk_per_trade': row[1],
-                    'tp_min': row[2],
-                    'tp_max': row[3],
-                    'stop_floor': row[4],
-                    'max_trades_per_day': row[5]
-                },
-                'score': row[6],
-                'win_rate': row[7],
-                'roi': row[8],
-                'max_drawdown': row[9]
-            }
-        
+                row = cursor.fetchone()
+            if row:
+                return {
+                    'params': {
+                        'ml_threshold': row[0], 'risk_per_trade': row[1],
+                        'tp_min': row[2], 'tp_max': row[3],
+                        'stop_floor': row[4], 'max_trades_per_day': row[5]
+                    },
+                    'score': row[6], 'win_rate': row[7], 'roi': row[8], 'max_drawdown': row[9]
+                }
+        except Exception:
+            pass
         return None
     
     def get_best_strategy(self) -> Optional[Dict[str, Any]]:
-        """Get best strategy from database"""
-        with get_learning_db() as conn:
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                       score, win_rate, roi, max_drawdown, sharpe_ratio
-                FROM strategies
-                ORDER BY score DESC
-                LIMIT 1
-            """)
-            
-            row = cursor.fetchone()
+        """Get best strategy from PostgreSQL via learning_store."""
+        try:
+            import learning_store
+            strategies = learning_store.get_all_strategies(limit=1)
+            if strategies:
+                s = strategies[0]
+                params = s.get("params", {})
+                metrics = s.get("metrics", {})
+                return {
+                    'params': params,
+                    'score': s.get("score", 0),
+                    'win_rate': metrics.get("win_rate", 0),
+                    'roi': metrics.get("roi", 0),
+                    'max_drawdown': metrics.get("max_drawdown", 0),
+                    'sharpe_ratio': metrics.get("sharpe_ratio", 0)
+                }
+        except Exception as e:
+            print(f"⚠️ PG best strategy read failed: {e}")
         
-        if row:
-            return {
-                'params': {
-                    'ml_threshold': row[0],
-                    'risk_per_trade': row[1],
-                    'tp_min': row[2],
-                    'tp_max': row[3],
-                    'stop_floor': row[4],
-                    'max_trades_per_day': row[5]
-                },
-                'score': row[6],
-                'win_rate': row[7],
-                'roi': row[8],
-                'max_drawdown': row[9],
-                'sharpe_ratio': row[10]
-            }
-        
+        # Fallback to SQLite
+        try:
+            with get_learning_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
+                           score, win_rate, roi, max_drawdown, sharpe_ratio
+                    FROM strategies
+                    ORDER BY score DESC
+                    LIMIT 1
+                """)
+                row = cursor.fetchone()
+            if row:
+                return {
+                    'params': {
+                        'ml_threshold': row[0], 'risk_per_trade': row[1],
+                        'tp_min': row[2], 'tp_max': row[3],
+                        'stop_floor': row[4], 'max_trades_per_day': row[5]
+                    },
+                    'score': row[6], 'win_rate': row[7], 'roi': row[8],
+                    'max_drawdown': row[9], 'sharpe_ratio': row[10]
+                }
+        except Exception:
+            pass
         return None
     
     def should_apply_strategy(self, new_strategy: Dict[str, Any], current_strategy: Optional[Dict[str, Any]]) -> bool:
