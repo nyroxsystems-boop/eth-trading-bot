@@ -282,6 +282,21 @@ class ContinuousBacktester:
             if metrics:
                 score = self.calculate_score(metrics)
                 self.save_result(strategy, metrics, score)
+                
+                # === SYNC TO POSTGRESQL via learning_store ===
+                # Without this, apply_best_strategy() never sees new results!
+                try:
+                    import learning_store
+                    learning_store.save_strategy({
+                        "params": strategy,
+                        "metrics": metrics,
+                        "score": score,
+                        "applied": False,
+                        "data_source": "continuous_backtester"
+                    })
+                except Exception as e:
+                    print(f" [PG sync: {e}]", end="")
+                
                 results.append({
                     'params': strategy,
                     'metrics': metrics,
@@ -299,6 +314,13 @@ class ContinuousBacktester:
             print(f"  Win Rate: {best['metrics']['win_rate']:.1f}%")
             print(f"  ROI: {best['metrics']['roi']:.2f}%")
             print(f"  Sharpe: {best['metrics']['sharpe_ratio']:.2f}")
+            
+            # Mark best strategy as current in PostgreSQL
+            try:
+                import learning_store
+                learning_store.set_current_strategy(best)
+            except Exception as e:
+                print(f"  ⚠️ Set current strategy error: {e}")
         
         print(f"Cycle complete. Tested {len(results)} strategies.")
         

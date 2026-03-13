@@ -374,7 +374,29 @@ async def calculate_pnl(trades: List[Trade]) -> float:
 
 async def get_performance_metrics() -> PerformanceMetrics:
     """Calculate comprehensive performance metrics using FIFO pairing"""
-    trades = await read_trades_csv()
+    # Read from PostgreSQL FIRST (survives deploys, is authoritative),
+    # fall back to CSV only if PG empty. Previously read CSV first which
+    # contained stale orphaned entries causing inflated PnL.
+    trades = []
+    if USE_POSTGRES:
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT timestamp, action, qty, price, pnl 
+                    FROM paper_trades ORDER BY created_at ASC
+                """)
+                rows = cursor.fetchall()
+                for r in rows:
+                    trades.append(Trade(
+                        timestamp=r[0], action=r[1],
+                        qty=float(r[2]), price=float(r[3]),
+                        pnl=float(r[4] or 0)
+                    ))
+        except Exception as e:
+            print(f"⚠️ PG performance trades read error: {e}")
+    if not trades:
+        trades = await read_trades_csv()
     
     if not trades:
         return PerformanceMetrics(
