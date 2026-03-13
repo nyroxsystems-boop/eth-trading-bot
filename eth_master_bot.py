@@ -386,7 +386,7 @@ def apply_best_strategy():
 # --- Adaptive Entry Threshold ---
 # Self-correcting: bot MUST trade to learn and hit 1%/day target
 _adaptive_entry_min = ENTRY_SCORE_MIN
-_last_trade_ts = time.time()
+_last_trade_ts = 0  # Will be restored from persisted state on startup
 _ENTRY_FLOOR = 0.05        # Absolute minimum — nearly any signal triggers trade
 # _ENTRY_CEILING is set by apply_best_strategy() from backtester results
 _NO_TRADE_DECAY_MIN = 30   # Start lowering after 30min of no trades (was 2h)
@@ -983,18 +983,127 @@ if AUTO_OPTIMIZE:
         log("WARN auto_optimizer module not found, disabling auto-optimization")
 
 # ------------------ BALANCE / ORDERS ------------------
+def _get_api_url():
+    """Get the web API URL (shared helper)."""
+    api_url = _os.getenv("RAILWAY_URL", _os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
+    if not api_url:
+        api_url = "https://web-production-d57ac.up.railway.app"
+    if api_url and not api_url.startswith("http"):
+        api_url = f"https://{api_url}"
+    return api_url
+
 def _save_paper_balance():
     """Persist paper balance to PostgreSQL so it survives deploys."""
     try:
-        api_url = _os.getenv("RAILWAY_URL", _os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
-        if not api_url:
-            api_url = "https://web-production-d57ac.up.railway.app"
-        if api_url and not api_url.startswith("http"):
-            api_url = f"https://{api_url}"
-        requests.post(f"{api_url}/api/paper-balance",
+        requests.post(f"{_get_api_url()}/api/paper-balance",
                       json={"balance": round(PAPER_BASE_USDT, 2)}, timeout=5)
     except Exception:
         pass
+
+# --- Trade State Persistence (survives Railway deploys) ---
+_last_trade_state_save = 0.0  # Throttle: save at most every 10s
+
+def _save_open_position():
+    """Persist open_position + TRAIL_STATE to PostgreSQL so trades survive deploys."""
+    global _last_trade_state_save
+    # Throttle to avoid API spam (save at most every 10s)
+    if time.time() - _last_trade_state_save < 10:
+        return
+    _last_trade_state_save = time.time()
+    try:
+        state = {
+            "open_position": None,
+            "trail_state": dict(TRAIL_STATE),
+            "last_trade_ts": _last_trade_ts,
+            "paper_position_locked": _paper_position_locked,
+            "today_trades": today_trades,
+            "loss_streak": loss_streak,
+            "win_streak": win_streak,
+            "bars_in_position": bars_in_position,
+            "saved_at": datetime.now(timezone.utc).isoformat()
+        }
+        if open_position:
+            # Serialize open_position (entry_row may have numpy/pandas types)
+            pos_copy = {}
+            for k, v in open_position.items():
+                if k == "entry_row":
+                    pos_copy[k] = {rk: float(rv) if hasattr(rv, '__float__') else str(rv) for rk, rv in v.items()}
+                elif k == "open_bar_time":
+                    pos_copy[k] = str(v)  # Timestamp → string
+                else:
+                    try:
+                        pos_copy[k] = float(v) if hasattr(v, '__float__') else v
+                    except Exception:
+                        pos_copy[k] = str(v)
+            state["open_position"] = pos_copy
+        resp = requests.post(f"{_get_api_url()}/api/trade-state", json=state, timeout=5)
+        if resp.status_code == 200:
+            if open_position:
+                log(f"TRADE STATE SAVED: entry={open_position.get('entry', 0):.2f} qty={open_position.get('qty', 0):.6f}")
+        else:
+            log(f"WARN trade state save failed: HTTP {resp.status_code}")
+    except Exception as e:
+        log(f"WARN trade state save: {e}")
+
+def _load_open_position():
+    """Restore open_position + TRAIL_STATE from web API on startup."""
+    global open_position, _paper_position_locked, _last_trade_ts
+    global today_trades, loss_streak, win_streak, bars_in_position
+    try:
+        resp = requests.get(f"{_get_api_url()}/api/trade-state", timeout=10)
+        if resp.status_code != 200:
+            log("TRADE STATE: no saved state (fresh start)")
+            return
+        state = resp.json()
+        if state.get("status") in ("empty", "error"):
+            log("TRADE STATE: no saved state (fresh start)")
+            return
+        # Restore open_position
+        pos = state.get("open_position")
+        if pos and pos.get("entry"):
+            open_position = {
+                "entry": float(pos["entry"]),
+                "qty": float(pos.get("qty", 0)),
+                "atr": float(pos.get("atr", 0)),
+            }
+            if "open_bar_time" in pos:
+                try:
+                    from pandas import to_datetime
+                    open_position["open_bar_time"] = to_datetime(pos["open_bar_time"])
+                except Exception:
+                    pass
+            if "entry_row" in pos:
+                open_position["entry_row"] = {k: float(v) if v not in (None, '') else 0.0 for k, v in pos["entry_row"].items() if k != "time"}
+            if "peak_pnl" in pos:
+                open_position["peak_pnl"] = float(pos["peak_pnl"])
+            if "trailing_active" in pos:
+                open_position["trailing_active"] = bool(pos["trailing_active"])
+            if "partial_taken" in pos:
+                open_position["partial_taken"] = bool(pos["partial_taken"])
+            _paper_position_locked = float(state.get("paper_position_locked", pos["entry"] * pos["qty"]))
+            log(f"✅ TRADE STATE RESTORED: entry={open_position['entry']:.2f} qty={open_position['qty']:.6f} locked=${_paper_position_locked:.2f}")
+        else:
+            log("TRADE STATE: no open position")
+        # Restore TRAIL_STATE
+        ts = state.get("trail_state", {})
+        if ts:
+            TRAIL_STATE['active'] = bool(ts.get('active', False))
+            TRAIL_STATE['entry'] = float(ts.get('entry', 0))
+            TRAIL_STATE['peak'] = float(ts.get('peak', 0))
+            TRAIL_STATE['qty'] = float(ts.get('qty', 0))
+            TRAIL_STATE['tp_pct'] = float(ts.get('tp_pct', TAKE_PROFIT_PCT))
+            TRAIL_STATE['trail_pct'] = float(ts.get('trail_pct', TRAIL_PCT))
+            TRAIL_STATE['opened_at'] = float(ts.get('opened_at', 0))
+        # Restore counters
+        _last_trade_ts = float(state.get("last_trade_ts", 0)) or time.time()
+        today_trades = int(state.get("today_trades", 0))
+        loss_streak = int(state.get("loss_streak", 0))
+        win_streak = int(state.get("win_streak", 0))
+        bars_in_position = int(state.get("bars_in_position", 0))
+        saved_at = state.get("saved_at", "unknown")
+        log(f"TRADE STATE: counters restored | trades_today={today_trades} loss_streak={loss_streak} win_streak={win_streak} saved_at={saved_at}")
+    except Exception as e:
+        log(f"WARN trade state load: {e} (starting fresh)")
 
 def _load_paper_balance():
     """Load persisted paper balance from web API."""
@@ -1946,6 +2055,7 @@ def decide_and_trade():
                 bars_in_position = 0
                 _last_trade_ts = time.time()  # Reset adaptive threshold timer
                 sync_paper_trade("BUY", qty, px)
+                _save_open_position()  # Persist trade state
                 tg(f"▶️ LONG {BASE_ASSET} (OS-FAST) @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | adx={regime['adx']:.1f} | rsi={rsi14:.1f} | vol={vol_ok} 15m={trend_15m_ok}")
                 return
     # ----------------------------------------------------
@@ -1993,6 +2103,7 @@ def decide_and_trade():
                 win_streak += 1
                 daily_realized_pnl += pnl_val  # Track daily PnL on TP
                 daily_trade_results.append(pnl_val)
+                _last_trade_state_save = 0; _save_open_position()  # Persist cleared state immediately
                 log(f"CONFIDENCE: win_streak={win_streak} conf_lvl={confidence_lvl:.2f} | daily_pnl=${daily_realized_pnl:.2f}")
                 # Reset ML threshold after winning trade (was permanently decaying)
                 SEC_PML_MIN = _SEC_PML_DEFAULT
@@ -2010,6 +2121,7 @@ def decide_and_trade():
             open_position = None
             bars_in_position = 0
             loss_streak += 1
+            _last_trade_state_save = 0; _save_open_position()  # Persist cleared state immediately
             win_streak = 0
             # Track daily realized PnL
             daily_realized_pnl += pnl_val
@@ -2035,6 +2147,7 @@ def decide_and_trade():
             place_sell(open_position["qty"])
             open_position = None
             bars_in_position = 0
+            _last_trade_state_save = 0; _save_open_position()  # Persist cleared state immediately
             # Track win/loss on time exit too
             if upnl_time > 0:
                 win_streak += 1
@@ -2077,6 +2190,7 @@ def decide_and_trade():
             bars_in_position = 0
             _last_trade_ts = time.time()  # Reset adaptive threshold timer
             sync_paper_trade("BUY", qty, px)
+            _save_open_position()  # Persist trade state
             tg(f"▶️ LONG {BASE_ASSET} @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | p_ml={p_ml:.2f} | adx={regime['adx']:.1f} | vol={vol_ok} 15m={trend_15m_ok} risk={r_factor:.1f}x")
     else:
         log(f"INFO no entry | score={entry_score:.2f}/{effective_entry_min:.2f} p_ml={p_ml:.2f} adx={regime['adx']:.1f} px={px:.2f} rsi={rsi14:.1f} brk={breakout_ok} ema_b={ema_bounce_ok} bb_b={bb_bounce_ok} macd_x={macd_cross_ok} vol={vol_ok} 15m={trend_15m_ok}")
@@ -2096,6 +2210,11 @@ def main_loop():
     if DRY_RUN or PAPER_MODE:
         _load_paper_balance()  # Load persisted balance from PostgreSQL
         log(f"Paper USDT: {PAPER_BASE_USDT:.2f}")
+    _load_open_position()  # Restore open trade state from PostgreSQL
+    
+    # Force immediate strategy load on startup
+    apply_best_strategy()
+    log(f"STARTUP: strategy applied | TP={TP_MIN*100:.2f}-{TP_MAX*100:.2f}% ML_min={SEC_PML_MIN:.2f} RSI={RSI_MIN:.0f}-{RSI_MAX:.0f}")
     if not (TG_TOKEN and TG_CHAT):
         log("HINWEIS: Telegram nicht konfiguriert (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)")
 

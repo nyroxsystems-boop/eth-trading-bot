@@ -807,6 +807,55 @@ async def get_ml_model_state():
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+# --- Trade State Persistence (survives Railway deploys) ---
+TRADE_STATE_FILE = LOG_DIR / "trade_state.json"
+
+@app.post("/api/trade-state")
+async def save_trade_state(request: Request):
+    """Save open trade state to PostgreSQL kv_store (called by Worker on every BUY/SELL)."""
+    try:
+        data = await request.json()
+        import json as _json
+        state_json = _json.dumps(data)
+        
+        if USE_POSTGRES:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO kv_store (key, value) VALUES ('open_trade_state', %s)
+                    ON CONFLICT (key) DO UPDATE SET value = %s
+                """, (state_json, state_json))
+            return {"status": "saved", "size": len(state_json)}
+        else:
+            # Fallback: save to file
+            TRADE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(TRADE_STATE_FILE, 'w') as f:
+                f.write(state_json)
+            return {"status": "saved_file", "size": len(state_json)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/trade-state")
+async def get_trade_state():
+    """Get persisted open trade state (called by Worker on startup)."""
+    try:
+        if USE_POSTGRES:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM kv_store WHERE key = 'open_trade_state'")
+                row = cursor.fetchone()
+                if row:
+                    import json as _json
+                    return _json.loads(row[0])
+        else:
+            if TRADE_STATE_FILE.exists():
+                import json as _json
+                with open(TRADE_STATE_FILE, 'r') as f:
+                    return _json.loads(f.read())
+        return {"status": "empty"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @app.get("/api/performance", response_model=PerformanceMetrics)
 async def get_performance():
     """Get performance metrics"""
