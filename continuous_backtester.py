@@ -125,34 +125,40 @@ class ContinuousBacktester:
     
     def calculate_score(self, metrics: Dict[str, Any]) -> float:
         """
-        Calculate strategy score based on multiple metrics.
-        Rebalanced: ROI matters MORE, Sharpe matters LESS.
-        Higher is better.
+        Calculate strategy score.  ROI is king — once you're at 100 % win-rate
+        the only way to improve is higher returns per trade.
+        
+        Weights (approximate contribution for a typical good strategy):
+          ROI          ×20   →  6 % ROI ≈ 120 pts   (DOMINANT)
+          Win Rate     ×0.30 →  100 % WR ≈  30 pts
+          Sharpe       ×2    →  high sharpe ≈ tiebreaker
+          Total Trades bonus →  more trades = more reliable
+          Max Drawdown penalty
         """
         if not metrics:
             return 0.0
         
         score = 0.0
         
-        # Win Rate (25% weight) - Target: 55-65%
+        # Win Rate — good baseline, but 100% is the ceiling
         win_rate = metrics.get('win_rate', 0)
         score += win_rate * 0.30
         
-        # ROI (40% weight) - INCREASED: ROI is the ultimate goal
+        # ROI — THE dominant factor.  Higher ROI = better strategy, period.
         roi = metrics.get('roi', 0)
-        score += roi * 5.0
+        score += roi * 20.0
         
-        # Sharpe Ratio (15% weight) - REDUCED: was too dominant
+        # Sharpe Ratio — tiebreaker only (was ×6, dominated everything)
         sharpe = metrics.get('sharpe_ratio', 0)
-        score += sharpe * 6
+        score += min(sharpe, 20) * 2    # cap at 20 so it can't dominate
         
-        # Max Drawdown (10% weight, negative) - Target: < 10%
+        # Max Drawdown penalty
         max_dd = metrics.get('max_drawdown', 0)
-        score -= max_dd * 0.15
+        score -= max_dd * 0.5
         
-        # Total Trades (10% weight) - Reward verified strategies
+        # More trades = more statistically reliable
         total_trades = metrics.get('total_trades', 0)
-        score += min(total_trades / 50, 1.0) * 15
+        score += min(total_trades / 20, 1.0) * 25
         
         return score
     
