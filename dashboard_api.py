@@ -726,20 +726,40 @@ async def record_trade(trade: dict = None, request: Request = None):
         return {"status": "error", "message": str(e)}
 
 
-# Paper balance persistence file
+# Paper balance persistence file (fallback only)
 PAPER_BALANCE_FILE = LOG_DIR / "paper_balance.json"
 
 @app.post("/api/paper-balance")
 async def save_paper_balance(request: Request):
-    """Save paper trading balance (called by Worker bot on every trade exit)."""
+    """Save paper trading balance (called by Worker bot on every trade exit).
+    Uses PostgreSQL kv_store for persistence across deploys, file as fallback."""
     try:
         data = await request.json()
         balance = data.get("balance", 0)
         if balance > 0:
-            PAPER_BALANCE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            import json
-            with open(PAPER_BALANCE_FILE, 'w') as f:
-                json.dump({"balance": balance, "updated_at": datetime.now().isoformat()}, f)
+            updated_at = datetime.now().isoformat()
+            payload = json.dumps({"balance": balance, "updated_at": updated_at})
+            
+            # Save to PostgreSQL (survives deploys)
+            if USE_POSTGRES:
+                try:
+                    with get_db_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            INSERT INTO kv_store (key, value) VALUES ('paper_balance', %s)
+                            ON CONFLICT (key) DO UPDATE SET value = %s
+                        """, (payload, payload))
+                except Exception as e:
+                    print(f"⚠️ PG paper balance save error: {e}")
+            
+            # Also save to file as fallback
+            try:
+                PAPER_BALANCE_FILE.parent.mkdir(parents=True, exist_ok=True)
+                with open(PAPER_BALANCE_FILE, 'w') as f:
+                    f.write(payload)
+            except Exception:
+                pass
+            
             return {"status": "saved", "balance": balance}
         return {"status": "error", "message": "Invalid balance"}
     except Exception as e:
@@ -747,16 +767,32 @@ async def save_paper_balance(request: Request):
 
 @app.get("/api/paper-balance")
 async def get_paper_balance():
-    """Get persisted paper trading balance."""
+    """Get persisted paper trading balance.
+    Reads from PostgreSQL first (survives deploys), file fallback."""
+    # Try PostgreSQL first
+    if USE_POSTGRES:
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM kv_store WHERE key = 'paper_balance'")
+                row = cursor.fetchone()
+                if row:
+                    data = json.loads(row[0])
+                    if data.get("balance", 0) > 0:
+                        return data
+        except Exception as e:
+            print(f"⚠️ PG paper balance read error: {e}")
+    
+    # Fallback to file
     try:
         if PAPER_BALANCE_FILE.exists():
-            import json
             with open(PAPER_BALANCE_FILE, 'r') as f:
                 data = json.load(f)
             return data
-        return {"balance": 100000, "updated_at": None}
-    except Exception as e:
-        return {"balance": 100000, "updated_at": None}
+    except Exception:
+        pass
+    
+    return {"balance": 100000, "updated_at": None}
 
 # --- ML Model Persistence (survives Railway deploys) ---
 @app.post("/api/ml/model-state")

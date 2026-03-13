@@ -995,10 +995,14 @@ def _get_api_url():
 def _save_paper_balance():
     """Persist paper balance to PostgreSQL so it survives deploys."""
     try:
-        requests.post(f"{_get_api_url()}/api/paper-balance",
+        resp = requests.post(f"{_get_api_url()}/api/paper-balance",
                       json={"balance": round(PAPER_BASE_USDT, 2)}, timeout=5)
-    except Exception:
-        pass
+        if resp.status_code == 200:
+            log(f"PAPER BALANCE SAVED: ${PAPER_BASE_USDT:.2f}")
+        else:
+            log(f"WARN paper balance save failed: HTTP {resp.status_code}")
+    except Exception as e:
+        log(f"WARN paper balance save failed: {e}")
 
 # --- Trade State Persistence (survives Railway deploys) ---
 _last_trade_state_save = 0.0  # Throttle: save at most every 10s
