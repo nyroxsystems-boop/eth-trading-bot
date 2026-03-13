@@ -73,8 +73,76 @@ def ensure_learning_tables():
             """)
 
         print("✅ Learning Store: PostgreSQL tables ready")
+        
+        # One-time migration: re-score existing strategies with updated formula
+        _rescore_migration_v2()
     except Exception as e:
         print(f"⚠️ Learning Store table creation error: {e}")
+
+
+def _rescore_migration_v2():
+    """One-time migration: re-score all existing strategies with the v2 formula.
+    
+    v2 changes: Sharpe capped at 3.0 (was 20), reliability gate for <5 trades.
+    Without this, old strategies with inflated scores (610+) block new ones forever.
+    """
+    if not USE_POSTGRES or not HAS_DB_ADAPTER:
+        return
+    
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Check if already migrated
+            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v2_migrated'")
+            row = cursor.fetchone()
+            if row:
+                return  # Already done
+            
+            # Fetch all strategies
+            cursor.execute("SELECT id, metrics, score FROM learning_strategies")
+            rows = cursor.fetchall()
+            if not rows:
+                cursor.execute("""
+                    INSERT INTO kv_store (key, value) VALUES ('scoring_v2_migrated', 'true')
+                    ON CONFLICT (key) DO UPDATE SET value = 'true'
+                """)
+                return
+            
+            updated = 0
+            for row_id, metrics_raw, old_score in rows:
+                metrics = metrics_raw if isinstance(metrics_raw, dict) else json.loads(metrics_raw)
+                
+                # New scoring formula (must match continuous_backtester.calculate_score)
+                new_score = 0.0
+                new_score += metrics.get('win_rate', 0) * 0.30
+                new_score += metrics.get('roi', 0) * 20.0
+                new_score += min(metrics.get('sharpe_ratio', 0), 3.0) * 2  # Capped at 3.0!
+                new_score -= metrics.get('max_drawdown', 0) * 0.5
+                total_trades = metrics.get('total_trades', 0)
+                new_score += min(total_trades / 20, 1.0) * 25
+                if total_trades < 5:
+                    new_score *= 0.2  # Reliability gate
+                
+                if abs(new_score - old_score) > 0.1:
+                    cursor.execute(
+                        "UPDATE learning_strategies SET score = %s WHERE id = %s",
+                        (round(new_score, 2), row_id)
+                    )
+                    updated += 1
+            
+            # Mark migration as done
+            cursor.execute("""
+                INSERT INTO kv_store (key, value) VALUES ('scoring_v2_migrated', 'true')
+                ON CONFLICT (key) DO UPDATE SET value = 'true'
+            """)
+            
+            if updated:
+                print(f"🔄 SCORING v2 MIGRATION: re-scored {updated}/{len(rows)} strategies")
+            else:
+                print("✅ Scoring v2: all strategies already have correct scores")
+    except Exception as e:
+        print(f"⚠️ Scoring v2 migration error: {e}")
 
 
 # ─── Write Operations ───
