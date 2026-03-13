@@ -130,7 +130,7 @@ class ContinuousBacktester:
         
         Weights (approximate contribution for a typical good strategy):
           ROI          ×20   →  6 % ROI ≈ 120 pts   (DOMINANT)
-          Win Rate     ×0.30 →  100 % WR ≈  30 pts
+          Win Rate     ×2.0  →  100 % WR ≈ 200 pts  (STRONG)
           Sharpe       ×2    →  capped at 3.0 raw → max 6 pts (was 40!)
           Total Trades bonus →  more trades = more reliable
           Max Drawdown penalty
@@ -142,9 +142,9 @@ class ContinuousBacktester:
         
         score = 0.0
         
-        # Win Rate — good baseline, but 100% is the ceiling
+        # Win Rate — strong factor: incentivizes reliable strategies
         win_rate = metrics.get('win_rate', 0)
-        score += win_rate * 0.30
+        score += win_rate * 2.0
         
         # ROI — THE dominant factor.  Higher ROI = better strategy, period.
         roi = metrics.get('roi', 0)

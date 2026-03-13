@@ -81,10 +81,11 @@ def ensure_learning_tables():
 
 
 def _rescore_migration_v2():
-    """One-time migration: re-score all existing strategies with the v2 formula.
+    """One-time migration: re-score all existing strategies with the v2/v3 formula.
     
-    v2 changes: Sharpe capped at 3.0 (was 20), reliability gate for <5 trades.
-    Without this, old strategies with inflated scores (610+) block new ones forever.
+    v2: Sharpe capped at 3.0 (was 20), reliability gate for <5 trades.
+    v3: Win Rate weight increased to ×2.0 (was ×0.30).
+    Without this, old strategies with inflated scores block new ones forever.
     """
     if not USE_POSTGRES or not HAS_DB_ADAPTER:
         return
@@ -94,7 +95,7 @@ def _rescore_migration_v2():
             cursor = conn.cursor()
             
             # Check if already migrated
-            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v2_migrated'")
+            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v3_migrated'")
             row = cursor.fetchone()
             if row:
                 return  # Already done
@@ -104,7 +105,7 @@ def _rescore_migration_v2():
             rows = cursor.fetchall()
             if not rows:
                 cursor.execute("""
-                    INSERT INTO kv_store (key, value) VALUES ('scoring_v2_migrated', 'true')
+                    INSERT INTO kv_store (key, value) VALUES ('scoring_v3_migrated', 'true')
                     ON CONFLICT (key) DO UPDATE SET value = 'true'
                 """)
                 return
@@ -115,7 +116,7 @@ def _rescore_migration_v2():
                 
                 # New scoring formula (must match continuous_backtester.calculate_score)
                 new_score = 0.0
-                new_score += metrics.get('win_rate', 0) * 0.30
+                new_score += metrics.get('win_rate', 0) * 2.0
                 new_score += metrics.get('roi', 0) * 20.0
                 new_score += min(metrics.get('sharpe_ratio', 0), 3.0) * 2  # Capped at 3.0!
                 new_score -= metrics.get('max_drawdown', 0) * 0.5
@@ -133,7 +134,7 @@ def _rescore_migration_v2():
             
             # Mark migration as done
             cursor.execute("""
-                INSERT INTO kv_store (key, value) VALUES ('scoring_v2_migrated', 'true')
+                INSERT INTO kv_store (key, value) VALUES ('scoring_v3_migrated', 'true')
                 ON CONFLICT (key) DO UPDATE SET value = 'true'
             """)
             
