@@ -52,12 +52,13 @@ export default function PortfolioView() {
         }
     }
 
-    // Calculate today's P&L
-    const todayPnl = trades.reduce((sum, t) => sum + (t.pnl || 0), 0)
+    // Calculate today's P&L — only from SELL trades (BUYs have pnl=0 which skews stats)
+    const sellTrades = trades.filter(t => t.action === 'SELL' && (t.pnl || 0) !== 0)
+    const todayPnl = sellTrades.reduce((sum, t) => sum + (t.pnl || 0), 0)
     const todayPnlPct = capital > 0 ? (todayPnl / capital) * 100 : 0
-    const wins = trades.filter(t => (t.pnl || 0) > 0).length
-    const losses = trades.filter(t => (t.pnl || 0) < 0).length
-    const winRate = trades.length > 0 ? (wins / trades.length * 100) : 0
+    const wins = sellTrades.filter(t => (t.pnl || 0) > 0).length
+    const losses = sellTrades.filter(t => (t.pnl || 0) < 0).length
+    const winRate = sellTrades.length > 0 ? (wins / sellTrades.length * 100) : 0
 
     // ETH equivalent
     const ethEquivalent = ethPrice > 0 ? capital / ethPrice : 0

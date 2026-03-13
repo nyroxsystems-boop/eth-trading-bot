@@ -249,6 +249,7 @@ class BotStatus(BaseModel):
     ml_confidence: float
     sentiment_score: float
     regime: str
+    current_price: float = 0.0
 
 
 # Helper Functions
@@ -525,14 +526,25 @@ async def get_bot_status() -> BotStatus:
     today = datetime.now().date().isoformat()
     today_trades = len([t for t in trades if t.timestamp.startswith(today)])
     
+    # Fetch current ETH price from Binance public API (no auth needed)
+    current_price = 0.0
+    try:
+        import requests as _req
+        r = _req.get("https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT", timeout=3)
+        if r.status_code == 200:
+            current_price = float(r.json().get("price", 0))
+    except Exception:
+        pass
+    
     return BotStatus(
-        is_running=not _bot_paused,  # Reflects actual bot state
-        current_position=None,  # Position data will be parsed from state file when bot state management is implemented
+        is_running=not _bot_paused,
+        current_position=None,
         last_update=datetime.now().isoformat(),
         today_trades=today_trades,
         ml_confidence=ml_conf,
         sentiment_score=sentiment,
-        regime=regime
+        regime=regime,
+        current_price=current_price
     )
 
 # API Endpoints
