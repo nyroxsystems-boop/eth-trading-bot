@@ -139,6 +139,15 @@ except Exception:
 print("[Preflight] Hook aktiv – Orders werden vor dem Senden geprüft.")
 # === /Preflight Hook (auto) ===
 
+# === Market Intelligence (ScraperAPI-powered signals) ===
+try:
+    from market_intelligence import get_intel as _get_market_intel
+    _market_intel = _get_market_intel()
+    print(f"[MarketIntel] Loaded (enabled={_market_intel.enabled})")
+except ImportError:
+    _market_intel = None
+    print("[MarketIntel] Module not available — trading without external signals")
+
 BOT_VERSION = "2.1.0-multiuser"  # Version marker for deploy verification
 
 
@@ -168,7 +177,7 @@ TRADE_CAPITAL_PCT  = float(_os.getenv("TRADE_CAPITAL_PCT", "1.0"))
 TP_MIN             = 0.015      # 1.5% — minimal acceptable profit target
 TP_MAX             = 0.025      # 2.5% — good risk/reward ratio
 STOP_ATR_MULT      = 2.0        # 2.0x ATR for stops that survive noise
-STOP_FLOOR         = 0.015      # 1.5% — MINIMUM stop distance (was 0.5% = death)
+STOP_FLOOR         = 0.012      # 1.2% — MINIMUM stop distance (tightened from 1.5% to cut losses earlier)
 
 # --- Risk/Engine tuning ---
 RISK_PCT_PER_TRADE = 0.01       # 1% risk per trade (with 1.5% SL = 67% position size)
@@ -193,7 +202,7 @@ COOLDOWN_MIN       = int(_os.getenv("COOLDOWN_MIN", "10"))             # Minuten
 
 BREAK_EVEN_TRIGGER = 0.012     # +1.2% before moving SL to break-even
 TRAIL_ATR_MULT     = 1.5       # ATR * 1.5 for trailing
-MAX_HOLD_BARS      = 90        # ~7.5h — gives trades time to develop
+MAX_HOLD_BARS      = 60        # ~5h — reduced from 7.5h to avoid long losing time-exits
 
 # Regime-Filter
 USE_ADX_FILTER     = _os.getenv("USE_ADX_FILTER", "true").lower()=="true"
@@ -389,7 +398,7 @@ _adaptive_entry_min = ENTRY_SCORE_MIN
 _last_trade_ts = 0  # Will be restored from persisted state on startup
 _ENTRY_FLOOR = 0.05        # Absolute minimum — nearly any signal triggers trade
 # _ENTRY_CEILING is set by apply_best_strategy() from backtester results
-_NO_TRADE_DECAY_MIN = 30   # Start lowering after 30min of no trades (was 2h)
+_NO_TRADE_DECAY_MIN = 60   # Start lowering after 60min of no trades (was 30min — too aggressive)
 _DECAY_STEP = 0.03         # Lower by 0.03 each check (was 0.02)
 _EMERGENCY_HOURS = 4       # After 4h with 0 trades: emergency mode
 
@@ -1858,6 +1867,16 @@ def decide_and_trade():
         else:
             return  # No new trades
 
+    # === MARKET INTELLIGENCE: Extreme Fear Block ===
+    if _market_intel and not open_position:
+        try:
+            blocked, reason = _market_intel.is_extreme_fear_block()
+            if blocked:
+                log(f"🛑 MARKET_INTEL BLOCK: {reason}")
+                return
+        except Exception as e:
+            log(f"WARN market_intel fear check: {e}")
+
     if time.time() < cooldown_until_ts:
         return
 
@@ -2006,6 +2025,16 @@ def decide_and_trade():
         base_score -= 0.10  # Everyone longing → be cautious
     elif funding_signal == "LONG_HEAVY":
         base_score -= 0.05  # Slightly long-heavy
+    
+    # === MARKET INTELLIGENCE: News Sentiment + Whale + Fear/Greed ===
+    if _market_intel:
+        try:
+            intel_adj = _market_intel.get_entry_score_adjustment()
+            if abs(intel_adj) > 0.001:
+                base_score += intel_adj
+                log(f"MARKET_INTEL: entry_score {'+' if intel_adj >= 0 else ''}{intel_adj:.4f} → {base_score:.3f}")
+        except Exception as e:
+            log(f"WARN market_intel score: {e}")
     
     # 1H SCORE BONUS: reward entries that align with 1h bias
     if hourly_bias == "OVERSOLD_BOUNCE":
