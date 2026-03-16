@@ -495,12 +495,13 @@ def crossover(parent_a: Dict, parent_b: Dict) -> Dict:
 
 def generate_evolved_params() -> Dict:
     """
-    Bayesian-inspired evolutionary optimization:
-    - 35% Fine-tune: small Gaussian mutation of top parent (intensification)
-    - 25% Crossover + mutate: blend two parents, then tiny polish
-    - 15% Big mutation: large perturbation to escape local minimum
-    - 25% Pure exploration: random from continuous ranges
+    Bayesian-inspired evolutionary optimization — EXPLORATION-HEAVY:
+    - 20% Fine-tune: small Gaussian mutation of top parent (intensification)
+    - 15% Crossover + mutate: blend two parents, then tiny polish
+    - 20% Big mutation: large perturbation to escape local minimum
+    - 45% Pure exploration: random from continuous ranges (ANTI-STAGNATION)
     
+    Higher exploration prevents convergence → dedup → 0 new strategies/hour.
     Score-proportional parent selection (roulette wheel).
     """
     top = get_top_strategies(10)
@@ -524,13 +525,13 @@ def generate_evolved_params() -> Dict:
     
     roll = random.random()
     
-    if roll < 0.35:
+    if roll < 0.20:
         # FINE-TUNE: small Gaussian mutation
         parent = pick_parent()
         child = mutate_strategy(parent, mutation_rate=0.10)
         logger.info(f"FINE-TUNE parent score={parent.get('score',0):.1f}")
         return child
-    elif roll < 0.60:
+    elif roll < 0.35:
         # CROSSOVER + MUTATE: blend two parents, then small perturbation
         pa = pick_parent()
         pb = pick_parent()
@@ -538,7 +539,7 @@ def generate_evolved_params() -> Dict:
         child = mutate_strategy(child, mutation_rate=0.05)
         logger.info(f"CROSSOVER+MUTATE {pa.get('score',0):.1f} x {pb.get('score',0):.1f}")
         return child
-    elif roll < 0.75:
+    elif roll < 0.55:
         # BIG MUTATION: jump out of local minimum
         parent = pick_parent()
         child = mutate_strategy(parent, mutation_rate=0.40)

@@ -230,12 +230,18 @@ def _pg_save_strategy(strategy: Dict):
                 INSERT INTO kv_store (key, value) VALUES (%s, '1')
                 ON CONFLICT (key) DO UPDATE SET value = (COALESCE(kv_store.value::int, 0) + 1)::text
             """, (today_key,))
+            # Increment hourly counter (for accurate "This Hour" dashboard display)
+            hour_key = f"strategies_tested_{datetime.now().strftime('%Y-%m-%d_%H')}"
+            cursor.execute("""
+                INSERT INTO kv_store (key, value) VALUES (%s, '1')
+                ON CONFLICT (key) DO UPDATE SET value = (COALESCE(kv_store.value::int, 0) + 1)::text
+            """, (hour_key,))
             
             # DEDUP: Skip if a strategy with very similar score AND same win_rate already exists
-            # Widened from 0.5 to 5.0 — real backtests cluster tighter than random sims
+            # Tightened from 5.0 to 1.0 — was blocking diverse strategies from entering
             cursor.execute("""
                 SELECT COUNT(*) FROM learning_strategies
-                WHERE ABS(score - %s) < 5.0
+                WHERE ABS(score - %s) < 1.0
                 AND metrics::text LIKE %s
             """, (
                 score,
@@ -255,13 +261,13 @@ def _pg_save_strategy(strategy: Dict):
                 strategy.get("data_source", "historical_binance")
             ))
 
-            # Keep only top 500 strategies (prune old low-scorers)
+            # Keep only top 1000 strategies (prune old low-scorers)
             cursor.execute("""
                 DELETE FROM learning_strategies
                 WHERE id NOT IN (
                     SELECT id FROM learning_strategies
                     ORDER BY score DESC
-                    LIMIT 500
+                    LIMIT 1000
                 )
             """)
     except Exception as e:
@@ -387,13 +393,24 @@ def _pg_get_stats() -> Dict:
                 """)
                 today_tested = cursor.fetchone()[0] or 0
 
-            # This hour's count
-            cursor.execute("""
-                SELECT COUNT(*) FROM learning_strategies
-                WHERE created_at >= NOW() - INTERVAL '1 hour'
-            """)
-            hour_row = cursor.fetchone()
-            this_hour_tested = hour_row[0] or 0
+            # This hour's count — use kv_store hourly counter (counts ALL tested, not just saved)
+            this_hour_tested = 0
+            try:
+                hour_key = f"strategies_tested_{datetime.now().strftime('%Y-%m-%d_%H')}"
+                cursor.execute("SELECT value FROM kv_store WHERE key = %s", (hour_key,))
+                hour_kv = cursor.fetchone()
+                if hour_kv:
+                    this_hour_tested = int(hour_kv[0])
+            except Exception:
+                pass
+            if this_hour_tested == 0:
+                # Fallback: count DB rows created this hour
+                cursor.execute("""
+                    SELECT COUNT(*) FROM learning_strategies
+                    WHERE created_at >= NOW() - INTERVAL '1 hour'
+                """)
+                hour_row = cursor.fetchone()
+                this_hour_tested = hour_row[0] or 0
 
             # Top 10 strategies for display
             cursor.execute("""
