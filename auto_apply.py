@@ -43,7 +43,7 @@ class AutoApply:
         self.telegram_chat_id = telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID")
         
         # Safety thresholds
-        self.min_score_improvement = float(os.getenv("MIN_SCORE_IMPROVEMENT", "1.1"))  # 10% better
+        self.min_score_improvement = float(os.getenv("MIN_SCORE_IMPROVEMENT", "1.03"))  # 3% better (lowered to allow WR improvements)
         self.min_win_rate = float(os.getenv("MIN_WIN_RATE", "55.0"))
         self.max_drawdown = float(os.getenv("MAX_DRAWDOWN_THRESHOLD", "15.0"))
         self.min_roi = float(os.getenv("MIN_ROI", "2.0"))
@@ -159,13 +159,21 @@ class AutoApply:
             print("✅ No current strategy, applying first good one")
             return True
         
-        # Must be significantly better
+        # Win Rate regression protection — never go backwards on WR
+        if new_strategy['win_rate'] < current_strategy['win_rate']:
+            print(f"❌ Win rate regression: {new_strategy['win_rate']:.1f}% < current {current_strategy['win_rate']:.1f}%")
+            return False
+        
+        # Must be significantly better by score
+        if current_strategy['score'] == 0:
+            print("✅ Current strategy has score 0, applying new one")
+            return True
         score_improvement = new_strategy['score'] / current_strategy['score']
         if score_improvement < self.min_score_improvement:
             print(f"❌ Not enough improvement: {score_improvement:.2f}x < {self.min_score_improvement}x")
             return False
         
-        print(f"✅ New strategy is {score_improvement:.2f}x better!")
+        print(f"✅ New strategy is {score_improvement:.2f}x better! (WR: {current_strategy['win_rate']:.1f}% → {new_strategy['win_rate']:.1f}%)")
         return True
     
     def apply_strategy(self, strategy: Dict[str, Any]) -> bool:

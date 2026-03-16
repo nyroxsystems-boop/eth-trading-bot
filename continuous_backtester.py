@@ -125,15 +125,15 @@ class ContinuousBacktester:
     
     def calculate_score(self, metrics: Dict[str, Any]) -> float:
         """
-        Calculate strategy score.  ROI is king — once you're at 100 % win-rate
-        the only way to improve is higher returns per trade.
+        Calculate strategy score — WIN RATE OPTIMIZED.
         
-        Weights (approximate contribution for a typical good strategy):
-          ROI          ×20   →  6 % ROI ≈ 120 pts   (DOMINANT)
-          Win Rate     ×2.0  →  100 % WR ≈ 200 pts  (STRONG)
-          Sharpe       ×2    →  capped at 3.0 raw → max 6 pts (was 40!)
+        Weights (v2 — win-rate co-dominant):
+          Win Rate     ×5.0  →  60 % WR ≈ 300 pts   (CO-DOMINANT)
+          Win Rate Bonus      →  +100 pts if WR > 60% (rewards consistency)
+          ROI          ×12   →  6 % ROI ≈ 72 pts     (STRONG but not dominant)
+          Sharpe       ×2    →  capped at 3.0 raw → max 6 pts
           Total Trades bonus →  more trades = more reliable
-          Max Drawdown penalty
+          Max Drawdown penalty ×1.0 (doubled — penalize risky strategies harder)
           
         RELIABILITY GATE: <5 trades = score ÷ 5 (100% WR with 2 trades is meaningless)
         """
@@ -142,23 +142,25 @@ class ContinuousBacktester:
         
         score = 0.0
         
-        # Win Rate — strong factor: incentivizes reliable strategies
+        # Win Rate — CO-DOMINANT factor: consistency is king
         win_rate = metrics.get('win_rate', 0)
-        score += win_rate * 2.0
+        score += win_rate * 5.0
         
-        # ROI — THE dominant factor.  Higher ROI = better strategy, period.
+        # Win Rate Bonus — extra reward for breaking 60% barrier
+        if win_rate > 60:
+            score += 100.0
+        
+        # ROI — strong but no longer overshadows win rate
         roi = metrics.get('roi', 0)
-        score += roi * 20.0
+        score += roi * 12.0
         
         # Sharpe Ratio — HARD CAP at 3.0 raw value
-        # Previously capped at 20 which let annualized values (×√252) dominate.
-        # A raw Sharpe of 1.0 is already "good", 3.0 is exceptional.
         sharpe = metrics.get('sharpe_ratio', 0)
-        score += min(sharpe, 3.0) * 2    # Max 6 pts (was up to 40 pts!)
+        score += min(sharpe, 3.0) * 2    # Max 6 pts
         
-        # Max Drawdown penalty
+        # Max Drawdown penalty — doubled to penalize risky strategies
         max_dd = metrics.get('max_drawdown', 0)
-        score -= max_dd * 0.5
+        score -= max_dd * 1.0
         
         # More trades = more statistically reliable
         total_trades = metrics.get('total_trades', 0)
