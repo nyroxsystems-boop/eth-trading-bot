@@ -395,7 +395,7 @@ def apply_best_strategy():
 # --- Adaptive Entry Threshold ---
 # Self-correcting: bot MUST trade to learn and hit 1%/day target
 _adaptive_entry_min = ENTRY_SCORE_MIN
-_last_trade_ts = 0  # Will be restored from persisted state on startup
+_last_trade_ts = time.time()  # Safe default — prevents aggressive threshold decay on startup
 _ENTRY_FLOOR = 0.05        # Absolute minimum — nearly any signal triggers trade
 # _ENTRY_CEILING is set by apply_best_strategy() from backtester results
 _NO_TRADE_DECAY_MIN = 60   # Start lowering after 60min of no trades (was 30min — too aggressive)
@@ -1059,81 +1059,106 @@ def _save_open_position():
         log(f"WARN trade state save: {e}")
 
 def _load_open_position():
-    """Restore open_position + TRAIL_STATE from web API on startup."""
+    """Restore open_position + TRAIL_STATE from web API on startup.
+    Retries up to 3 times with exponential backoff to handle deploy race conditions."""
     global open_position, _paper_position_locked, _last_trade_ts
     global today_trades, loss_streak, win_streak, bars_in_position
-    try:
-        resp = requests.get(f"{_get_api_url()}/api/trade-state", timeout=10)
-        if resp.status_code != 200:
-            log("TRADE STATE: no saved state (fresh start)")
-            return
-        state = resp.json()
-        if state.get("status") in ("empty", "error"):
-            log("TRADE STATE: no saved state (fresh start)")
-            return
-        # Restore open_position
-        pos = state.get("open_position")
-        if pos and pos.get("entry"):
-            open_position = {
-                "entry": float(pos["entry"]),
-                "qty": float(pos.get("qty", 0)),
-                "atr": float(pos.get("atr", 0)),
-            }
-            if "open_bar_time" in pos:
-                try:
-                    from pandas import to_datetime
-                    open_position["open_bar_time"] = to_datetime(pos["open_bar_time"])
-                except Exception:
-                    pass
-            if "entry_row" in pos:
-                open_position["entry_row"] = {k: float(v) if v not in (None, '') else 0.0 for k, v in pos["entry_row"].items() if k != "time"}
-            if "peak_pnl" in pos:
-                open_position["peak_pnl"] = float(pos["peak_pnl"])
-            if "trailing_active" in pos:
-                open_position["trailing_active"] = bool(pos["trailing_active"])
-            if "partial_taken" in pos:
-                open_position["partial_taken"] = bool(pos["partial_taken"])
-            _paper_position_locked = float(state.get("paper_position_locked", pos["entry"] * pos["qty"]))
-            log(f"✅ TRADE STATE RESTORED: entry={open_position['entry']:.2f} qty={open_position['qty']:.6f} locked=${_paper_position_locked:.2f}")
-        else:
-            log("TRADE STATE: no open position")
-        # Restore TRAIL_STATE
-        ts = state.get("trail_state", {})
-        if ts:
-            TRAIL_STATE['active'] = bool(ts.get('active', False))
-            TRAIL_STATE['entry'] = float(ts.get('entry', 0))
-            TRAIL_STATE['peak'] = float(ts.get('peak', 0))
-            TRAIL_STATE['qty'] = float(ts.get('qty', 0))
-            TRAIL_STATE['tp_pct'] = float(ts.get('tp_pct', TAKE_PROFIT_PCT))
-            TRAIL_STATE['trail_pct'] = float(ts.get('trail_pct', TRAIL_PCT))
-            TRAIL_STATE['opened_at'] = float(ts.get('opened_at', 0))
-        # Restore counters
-        _last_trade_ts = float(state.get("last_trade_ts", 0)) or time.time()
-        today_trades = int(state.get("today_trades", 0))
-        loss_streak = int(state.get("loss_streak", 0))
-        win_streak = int(state.get("win_streak", 0))
-        bars_in_position = int(state.get("bars_in_position", 0))
-        saved_at = state.get("saved_at", "unknown")
-        log(f"TRADE STATE: counters restored | trades_today={today_trades} loss_streak={loss_streak} win_streak={win_streak} saved_at={saved_at}")
-    except Exception as e:
-        log(f"WARN trade state load: {e} (starting fresh)")
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(f"{_get_api_url()}/api/trade-state", timeout=10)
+            if resp.status_code != 200:
+                if attempt < max_retries - 1:
+                    delay = 3 * (2 ** attempt)  # 3s, 6s, 12s
+                    log(f"TRADE STATE: API returned {resp.status_code}, retry {attempt+1}/{max_retries} in {delay}s...")
+                    time.sleep(delay)
+                    continue
+                log("TRADE STATE: no saved state (fresh start)")
+                _last_trade_ts = time.time()  # Safe default
+                return
+            state = resp.json()
+            if state.get("status") in ("empty", "error"):
+                log("TRADE STATE: no saved state (fresh start)")
+                _last_trade_ts = time.time()  # Safe default
+                return
+            # Restore open_position
+            pos = state.get("open_position")
+            if pos and pos.get("entry"):
+                open_position = {
+                    "entry": float(pos["entry"]),
+                    "qty": float(pos.get("qty", 0)),
+                    "atr": float(pos.get("atr", 0)),
+                }
+                if "open_bar_time" in pos:
+                    try:
+                        from pandas import to_datetime
+                        open_position["open_bar_time"] = to_datetime(pos["open_bar_time"])
+                    except Exception:
+                        pass
+                if "entry_row" in pos:
+                    open_position["entry_row"] = {k: float(v) if v not in (None, '') else 0.0 for k, v in pos["entry_row"].items() if k != "time"}
+                if "peak_pnl" in pos:
+                    open_position["peak_pnl"] = float(pos["peak_pnl"])
+                if "trailing_active" in pos:
+                    open_position["trailing_active"] = bool(pos["trailing_active"])
+                if "partial_taken" in pos:
+                    open_position["partial_taken"] = bool(pos["partial_taken"])
+                _paper_position_locked = float(state.get("paper_position_locked", pos["entry"] * pos["qty"]))
+                log(f"✅ TRADE STATE RESTORED: entry={open_position['entry']:.2f} qty={open_position['qty']:.6f} locked=${_paper_position_locked:.2f}")
+            else:
+                log("TRADE STATE: no open position")
+            # Restore TRAIL_STATE
+            ts = state.get("trail_state", {})
+            if ts:
+                TRAIL_STATE['active'] = bool(ts.get('active', False))
+                TRAIL_STATE['entry'] = float(ts.get('entry', 0))
+                TRAIL_STATE['peak'] = float(ts.get('peak', 0))
+                TRAIL_STATE['qty'] = float(ts.get('qty', 0))
+                TRAIL_STATE['tp_pct'] = float(ts.get('tp_pct', TAKE_PROFIT_PCT))
+                TRAIL_STATE['trail_pct'] = float(ts.get('trail_pct', TRAIL_PCT))
+                TRAIL_STATE['opened_at'] = float(ts.get('opened_at', 0))
+            # Restore counters
+            _last_trade_ts = float(state.get("last_trade_ts", 0)) or time.time()
+            today_trades = int(state.get("today_trades", 0))
+            loss_streak = int(state.get("loss_streak", 0))
+            win_streak = int(state.get("win_streak", 0))
+            bars_in_position = int(state.get("bars_in_position", 0))
+            saved_at = state.get("saved_at", "unknown")
+            log(f"TRADE STATE: counters restored | trades_today={today_trades} loss_streak={loss_streak} win_streak={win_streak} saved_at={saved_at}")
+            return  # Success
+        except Exception as e:
+            if attempt < max_retries - 1:
+                delay = 3 * (2 ** attempt)
+                log(f"WARN trade state load attempt {attempt+1}/{max_retries}: {e} — retry in {delay}s")
+                time.sleep(delay)
+            else:
+                log(f"WARN trade state load FAILED after {max_retries} attempts: {e} (starting fresh)")
+                _last_trade_ts = time.time()  # Safe default — prevent aggressive entry
 
 def _load_paper_balance():
-    """Load persisted paper balance from web API."""
+    """Load persisted paper balance from web API.
+    Retries up to 3 times with exponential backoff to handle deploy race conditions."""
     global PAPER_BASE_USDT
-    try:
-        api_url = _os.getenv("RAILWAY_URL", _os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
-        if not api_url:
-            api_url = "https://web-production-d57ac.up.railway.app"
-        if api_url and not api_url.startswith("http"):
-            api_url = f"https://{api_url}"
-        r = requests.get(f"{api_url}/api/paper-balance", timeout=5)
-        data = r.json()
-        if data.get("balance") and data["balance"] > 0:
-            PAPER_BASE_USDT = float(data["balance"])
-            log(f"Loaded paper balance from DB: ${PAPER_BASE_USDT:.2f}")
-    except Exception:
-        pass  # Use default from env
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            r = requests.get(f"{_get_api_url()}/api/paper-balance", timeout=5)
+            data = r.json()
+            if data.get("balance") and data["balance"] > 0:
+                PAPER_BASE_USDT = float(data["balance"])
+                log(f"Loaded paper balance from DB: ${PAPER_BASE_USDT:.2f}")
+                return  # Success
+            else:
+                log(f"WARN paper balance API returned no valid balance: {data}")
+                return
+        except Exception as e:
+            if attempt < max_retries - 1:
+                delay = 3 * (2 ** attempt)  # 3s, 6s, 12s
+                log(f"WARN paper balance load attempt {attempt+1}/{max_retries}: {e} — retry in {delay}s")
+                time.sleep(delay)
+            else:
+                log(f"WARN paper balance load FAILED after {max_retries} attempts: {e} — using default ${PAPER_BASE_USDT:.2f}")
 
 def usdt_balance() -> float:
     if PAPER_MODE or DRY_RUN:
@@ -2237,9 +2262,34 @@ def rss_thread():
             if STOP.wait(0.2):
                 break
 
+def _wait_for_api_ready(max_wait=60):
+    """Wait for Web API to be ready before loading state.
+    Prevents deploy race condition where Worker starts before Web API."""
+    api_url = _get_api_url()
+    start = time.time()
+    attempt = 0
+    while time.time() - start < max_wait:
+        try:
+            resp = requests.get(f"{api_url}/api/health", timeout=5)
+            if resp.status_code == 200:
+                log(f"✅ Web API ready after {time.time()-start:.1f}s")
+                return True
+        except Exception:
+            pass
+        attempt += 1
+        delay = min(5, 2 ** attempt)  # 2s, 4s, 5s, 5s...
+        log(f"⏳ Waiting for Web API ({attempt}, {time.time()-start:.0f}s/{max_wait}s)...")
+        time.sleep(delay)
+    log(f"⚠️ Web API not ready after {max_wait}s — loading state may fail")
+    return False
+
 def main_loop():
     tg("Bot gestartet | DRY_RUN=%s | PAPER_MODE=%s | MaxTrades=%s | Version=%s" % (DRY_RUN, PAPER_MODE, MAX_TRADES_PER_DAY, BOT_VERSION))
     log(f"START ETH Master Bot | DRY_RUN={DRY_RUN} | PAPER_MODE={PAPER_MODE} | MaxTrades={MAX_TRADES_PER_DAY} | Version={BOT_VERSION}")
+    
+    # Wait for Web API to be ready before loading state (prevents deploy race condition)
+    _wait_for_api_ready(max_wait=60)
+    
     if DRY_RUN or PAPER_MODE:
         _load_paper_balance()  # Load persisted balance from PostgreSQL
         log(f"Paper USDT: {PAPER_BASE_USDT:.2f}")
