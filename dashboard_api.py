@@ -2442,22 +2442,44 @@ async def get_capital():
     
     if paper_mode:
         # Paper mode: read real simulated balance from bot
+        # Priority: PostgreSQL kv_store > local file > default
         balance = 100000.0  # Default
         updated_at = None
-        try:
-            if PAPER_BALANCE_FILE.exists():
-                with open(PAPER_BALANCE_FILE, 'r') as f:
-                    data = _json.load(f)
-                balance = float(data.get("balance", 100000))
-                updated_at = data.get("updated_at")
-        except Exception:
-            pass
+        loaded_from = "default"
+        
+        # 1. Try PostgreSQL first (survives deploys)
+        if USE_POSTGRES:
+            try:
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT value FROM kv_store WHERE key = 'paper_balance'")
+                    row = cursor.fetchone()
+                    if row:
+                        data = _json.loads(row[0])
+                        if data.get("balance", 0) > 0:
+                            balance = float(data["balance"])
+                            updated_at = data.get("updated_at")
+                            loaded_from = "postgresql"
+            except Exception as e:
+                print(f"⚠️ /api/capital PG read error: {e}")
+        
+        # 2. Fallback to local file
+        if loaded_from == "default":
+            try:
+                if PAPER_BALANCE_FILE.exists():
+                    with open(PAPER_BALANCE_FILE, 'r') as f:
+                        data = _json.load(f)
+                    balance = float(data.get("balance", 100000))
+                    updated_at = data.get("updated_at")
+                    loaded_from = "file"
+            except Exception:
+                pass
         
         return {
             "capital": round(balance, 2),
             "currency": "USDT",
             "mode": "paper",
-            "source": "paper_simulation",
+            "source": f"paper_{loaded_from}",
             "updated_at": updated_at
         }
     else:
