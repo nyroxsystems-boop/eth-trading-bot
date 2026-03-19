@@ -81,10 +81,10 @@ def ensure_learning_tables():
 
 
 def _rescore_migration_v2():
-    """One-time migration: re-score all existing strategies with the v2/v3 formula.
+    """One-time migration: re-score all existing strategies with the v4 formula.
     
-    v2: Sharpe capped at 3.0 (was 20), reliability gate for <5 trades.
-    v3: Win Rate weight increased to ×2.0 (was ×0.30).
+    v4: Win Rate ULTRA-DOMINANT. WR < 55% = score 0, WR tier bonuses,
+    ROI weight slashed to ×3 (was ×20), drawdown penalty doubled.
     Without this, old strategies with inflated scores block new ones forever.
     """
     if not USE_POSTGRES or not HAS_DB_ADAPTER:
@@ -94,8 +94,8 @@ def _rescore_migration_v2():
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Check if already migrated
-            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v3_migrated'")
+            # Check if already migrated (v4 key — forces re-score from v3)
+            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v4_migrated'")
             row = cursor.fetchone()
             if row:
                 return  # Already done
@@ -105,7 +105,7 @@ def _rescore_migration_v2():
             rows = cursor.fetchall()
             if not rows:
                 cursor.execute("""
-                    INSERT INTO kv_store (key, value) VALUES ('scoring_v3_migrated', 'true')
+                    INSERT INTO kv_store (key, value) VALUES ('scoring_v4_migrated', 'true')
                     ON CONFLICT (key) DO UPDATE SET value = 'true'
                 """)
                 return
@@ -114,16 +114,32 @@ def _rescore_migration_v2():
             for row_id, metrics_raw, old_score in rows:
                 metrics = metrics_raw if isinstance(metrics_raw, dict) else json.loads(metrics_raw)
                 
-                # New scoring formula (must match continuous_backtester.calculate_score)
-                new_score = 0.0
-                new_score += metrics.get('win_rate', 0) * 2.0
-                new_score += metrics.get('roi', 0) * 20.0
-                new_score += min(metrics.get('sharpe_ratio', 0), 3.0) * 2  # Capped at 3.0!
-                new_score -= metrics.get('max_drawdown', 0) * 0.5
+                # v4 scoring formula (must match continuous_backtester.calculate_score)
+                win_rate = metrics.get('win_rate', 0)
                 total_trades = metrics.get('total_trades', 0)
-                new_score += min(total_trades / 20, 1.0) * 25
-                if total_trades < 5:
-                    new_score *= 0.2  # Reliability gate
+                
+                # KILL GATE: WR < 55% = instant death
+                if win_rate < 55.0:
+                    new_score = 0.0
+                else:
+                    new_score = 0.0
+                    new_score += win_rate * 10.0
+                    # Tier bonuses
+                    if win_rate > 58: new_score += 100.0
+                    if win_rate > 62: new_score += 250.0
+                    if win_rate > 66: new_score += 500.0
+                    if win_rate > 70: new_score += 800.0
+                    # ROI tiebreaker
+                    new_score += metrics.get('roi', 0) * 3.0
+                    # Sharpe capped
+                    new_score += min(metrics.get('sharpe_ratio', 0), 3.0) * 2.0
+                    # Drawdown penalty
+                    new_score -= metrics.get('max_drawdown', 0) * 2.0
+                    # Trade count bonus
+                    new_score += min(total_trades / 10, 1.0) * 50
+                    # Reliability gate
+                    if total_trades < 5:
+                        new_score *= 0.1
                 
                 if abs(new_score - old_score) > 0.1:
                     cursor.execute(
@@ -134,16 +150,16 @@ def _rescore_migration_v2():
             
             # Mark migration as done
             cursor.execute("""
-                INSERT INTO kv_store (key, value) VALUES ('scoring_v3_migrated', 'true')
+                INSERT INTO kv_store (key, value) VALUES ('scoring_v4_migrated', 'true')
                 ON CONFLICT (key) DO UPDATE SET value = 'true'
             """)
             
             if updated:
-                print(f"🔄 SCORING v2 MIGRATION: re-scored {updated}/{len(rows)} strategies")
+                print(f"🔄 SCORING v4 MIGRATION: re-scored {updated}/{len(rows)} strategies (WR-dominant)")
             else:
-                print("✅ Scoring v2: all strategies already have correct scores")
+                print("✅ Scoring v4: all strategies already have correct scores")
     except Exception as e:
-        print(f"⚠️ Scoring v2 migration error: {e}")
+        print(f"⚠️ Scoring v4 migration error: {e}")
 
 
 # ─── Write Operations ───

@@ -13,35 +13,48 @@ class StrategyGenerator:
     def __init__(self, learning_db_path: str = "/root/ethbot/logs/learning.db"):
         self.db_path = Path(learning_db_path)
         self.parameter_ranges = {
-            'ml_threshold': (0.45, 0.70),      # Tightened: higher confidence = better WR
-            'risk_per_trade': (0.005, 0.020),
-            'tp_min': (0.010, 0.030),
-            'tp_max': (0.015, 0.050),
-            'stop_floor': (0.012, 0.025),  # Min 1.2% SL (backtest enforces 1% floor)
-            'max_trades_per_day': (5, 25),
-            # Expanded params for broader search
-            'rsi_oversold': (25, 45),
-            'rsi_overbought': (60, 85),
-            'entry_score_min': (0.10, 0.30),
-            'breakout_pct': (0.00001, 0.001)
+            'ml_threshold': (0.50, 0.70),      # Higher confidence only (was 0.45)
+            'risk_per_trade': (0.005, 0.015),   # Tighter risk (was 0.020)
+            'tp_min': (0.008, 0.020),           # Tighter TPs for more frequent wins
+            'tp_max': (0.012, 0.030),           # Not too greedy (was 0.050)
+            'stop_floor': (0.015, 0.030),       # Wider SL = fewer stop-outs (was 0.012)
+            'max_trades_per_day': (3, 15),      # Fewer trades (was 5-25)
+            'rsi_oversold': (28, 42),           # Tighter RSI (was 25-45)
+            'rsi_overbought': (62, 78),         # Tighter RSI (was 60-85)
+            'entry_score_min': (0.18, 0.35),    # Higher entry bar (was 0.10-0.30)
+            'breakout_pct': (0.00005, 0.0008)   # Tighter breakout (was 0.00001)
         }
         
         # Conservative ranges biased toward high win rates
         self.high_wr_ranges = {
-            'ml_threshold': (0.55, 0.70),      # High confidence only
-            'risk_per_trade': (0.005, 0.012),   # Lower risk = fewer blowups
-            'tp_min': (0.010, 0.020),           # Tighter TP = more frequent wins
-            'tp_max': (0.015, 0.035),           # Not too greedy
-            'stop_floor': (0.015, 0.025),       # Wider SL = fewer stop-outs
-            'max_trades_per_day': (5, 15),      # Fewer, more selective trades
-            'rsi_oversold': (28, 40),           # Conservative RSI entries
-            'rsi_overbought': (65, 80),
-            'entry_score_min': (0.18, 0.30),    # Higher entry bar
-            'breakout_pct': (0.0001, 0.0008)
+            'ml_threshold': (0.58, 0.70),      # Only high confidence trades
+            'risk_per_trade': (0.005, 0.010),   # Very low risk
+            'tp_min': (0.008, 0.015),           # Quick, achievable TPs
+            'tp_max': (0.012, 0.025),           # Realistic maxima
+            'stop_floor': (0.018, 0.030),       # Wide SL = survive noise
+            'max_trades_per_day': (3, 10),      # Quality over quantity
+            'rsi_oversold': (30, 40),           # Conservative entries
+            'rsi_overbought': (65, 75),         # Exit before overbought
+            'entry_score_min': (0.22, 0.35),    # HIGH entry quality bar
+            'breakout_pct': (0.0001, 0.0005)
+        }
+        
+        # Ultra-conservative: maximum selectivity for peak WR
+        self.ultra_conservative_ranges = {
+            'ml_threshold': (0.62, 0.70),      # Only very high confidence
+            'risk_per_trade': (0.005, 0.008),   # Minimal risk
+            'tp_min': (0.006, 0.012),           # Very tight TPs — almost always hit
+            'tp_max': (0.010, 0.018),           # Small but consistent gains
+            'stop_floor': (0.020, 0.035),       # Wide stops — rarely stopped out
+            'max_trades_per_day': (2, 6),       # Very few, very selective trades
+            'rsi_oversold': (32, 38),           # Narrow oversold window
+            'rsi_overbought': (68, 75),         # Narrow overbought window
+            'entry_score_min': (0.25, 0.40),    # Very high entry bar
+            'breakout_pct': (0.0002, 0.0006)
         }
     
     def generate_random_strategy(self) -> Dict[str, Any]:
-        """Generate completely random strategy"""
+        """Generate random strategy within tightened ranges"""
         return {
             'ml_threshold': random.uniform(*self.parameter_ranges['ml_threshold']),
             'risk_per_trade': random.uniform(*self.parameter_ranges['risk_per_trade']),
@@ -56,8 +69,7 @@ class StrategyGenerator:
         }
     
     def generate_high_winrate_strategy(self) -> Dict[str, Any]:
-        """Generate a conservative strategy optimized for high win rate.
-        Uses tighter parameters: high ML confidence, lower risk, realistic TPs."""
+        """Generate a conservative strategy optimized for high win rate."""
         return {
             'ml_threshold': random.uniform(*self.high_wr_ranges['ml_threshold']),
             'risk_per_trade': random.uniform(*self.high_wr_ranges['risk_per_trade']),
@@ -69,6 +81,22 @@ class StrategyGenerator:
             'rsi_overbought': random.uniform(*self.high_wr_ranges['rsi_overbought']),
             'entry_score_min': random.uniform(*self.high_wr_ranges['entry_score_min']),
             'breakout_pct': random.uniform(*self.high_wr_ranges['breakout_pct'])
+        }
+    
+    def generate_ultra_conservative_strategy(self) -> Dict[str, Any]:
+        """Generate ultra-conservative strategy for maximum win rate.
+        Tight TPs, wide SLs, very high entry quality — few trades but almost all winners."""
+        return {
+            'ml_threshold': random.uniform(*self.ultra_conservative_ranges['ml_threshold']),
+            'risk_per_trade': random.uniform(*self.ultra_conservative_ranges['risk_per_trade']),
+            'tp_min': random.uniform(*self.ultra_conservative_ranges['tp_min']),
+            'tp_max': random.uniform(*self.ultra_conservative_ranges['tp_max']),
+            'stop_floor': random.uniform(*self.ultra_conservative_ranges['stop_floor']),
+            'max_trades_per_day': random.randint(*self.ultra_conservative_ranges['max_trades_per_day']),
+            'rsi_oversold': random.uniform(*self.ultra_conservative_ranges['rsi_oversold']),
+            'rsi_overbought': random.uniform(*self.ultra_conservative_ranges['rsi_overbought']),
+            'entry_score_min': random.uniform(*self.ultra_conservative_ranges['entry_score_min']),
+            'breakout_pct': random.uniform(*self.ultra_conservative_ranges['breakout_pct'])
         }
     
     def mutate_strategy(self, strategy: Dict[str, Any], mutation_rate: float = 0.20) -> Dict[str, Any]:
@@ -103,47 +131,53 @@ class StrategyGenerator:
     
     def generate_strategies(self, count: int = 10, best_strategies: List[Dict] = None) -> List[Dict[str, Any]]:
         """
-        Generate mix of strategies (v2 — win-rate optimized):
-        - 40% Random exploration
-        - 20% High win-rate focused (conservative params)
-        - 25% Mutation of best
+        Generate mix of strategies (v4 — win-rate ULTRA-DOMINANT):
+        - 15% Random exploration (reduced from 40%)
+        - 30% High win-rate focused (increased from 20%)
+        - 20% Ultra-conservative (NEW — maximum WR pursuit)
+        - 20% Mutation of best (slightly reduced)
         - 15% Crossover
         """
         strategies = []
         
-        # Random exploration (40%)
-        random_count = int(count * 0.4)
+        # Random exploration (15% — reduced)
+        random_count = max(1, int(count * 0.15))
         for _ in range(random_count):
             strategies.append(self.generate_random_strategy())
         
-        # High win-rate focused (20%)
-        high_wr_count = int(count * 0.2)
+        # High win-rate focused (30%)
+        high_wr_count = max(1, int(count * 0.30))
         for _ in range(high_wr_count):
             strategies.append(self.generate_high_winrate_strategy())
         
+        # Ultra-conservative (20% — NEW)
+        ultra_count = max(1, int(count * 0.20))
+        for _ in range(ultra_count):
+            strategies.append(self.generate_ultra_conservative_strategy())
+        
         # If we have best strategies, use them for mutation and crossover
         if best_strategies and len(best_strategies) >= 2:
-            # Mutation (25%)
-            mutation_count = int(count * 0.25)
+            # Mutation (20%)
+            mutation_count = max(1, int(count * 0.20))
             for _ in range(mutation_count):
                 parent = random.choice(best_strategies)
                 mutated = self.mutate_strategy(parent['params'], mutation_rate=0.15)
                 strategies.append(mutated)
             
-            # Crossover (15%)
+            # Crossover (fill remaining)
             crossover_count = count - len(strategies)
-            for _ in range(crossover_count):
+            for _ in range(max(0, crossover_count)):
                 parent1 = random.choice(best_strategies)
                 parent2 = random.choice(best_strategies)
                 child = self.crossover(parent1['params'], parent2['params'])
                 strategies.append(child)
         else:
-            # Fill remaining with mix of random + high WR
+            # Fill remaining with high WR + ultra-conservative
             while len(strategies) < count:
-                if random.random() < 0.4:
+                if random.random() < 0.5:
                     strategies.append(self.generate_high_winrate_strategy())
                 else:
-                    strategies.append(self.generate_random_strategy())
+                    strategies.append(self.generate_ultra_conservative_strategy())
         
         return strategies
     

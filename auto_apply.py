@@ -44,7 +44,7 @@ class AutoApply:
         
         # Safety thresholds
         self.min_score_improvement = float(os.getenv("MIN_SCORE_IMPROVEMENT", "1.03"))  # 3% better (lowered to allow WR improvements)
-        self.min_win_rate = float(os.getenv("MIN_WIN_RATE", "55.0"))
+        self.min_win_rate = float(os.getenv("MIN_WIN_RATE", "60.0"))  # Raised from 55% for higher WR
         self.max_drawdown = float(os.getenv("MAX_DRAWDOWN_THRESHOLD", "15.0"))
         self.min_roi = float(os.getenv("MIN_ROI", "2.0"))
     

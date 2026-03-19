@@ -215,7 +215,7 @@ BREAKOUT_WEIGHT    = 0.20   # FIXED — rebalanced for sideways trading (was 0.3
 TREND_WEIGHT       = 0.12   # FIXED — rebalanced for sideways trading (was 0.16)
 RSI_MIN            = float(_os.getenv("RSI_MIN", "35"))              # More opportunities
 RSI_MAX            = float(_os.getenv("RSI_MAX", "75"))              # Allow higher RSI entries
-SEC_PML_MIN        = float(_os.getenv("SEC_PML_MIN", "0.40"))       # Lower ML threshold
+SEC_PML_MIN        = float(_os.getenv("SEC_PML_MIN", "0.42"))       # ML confidence threshold (floor = 0.42)
 _SEC_PML_DEFAULT   = SEC_PML_MIN  # Store original value for reset after trades
         # ab hier gilt 'trendend'
 
@@ -332,6 +332,13 @@ def apply_best_strategy():
         if not top_strategies:
             return
         
+        # WIN RATE GATE: only use strategies with WR >= 55%
+        top_strategies = [s for s in top_strategies 
+                         if s.get('metrics', {}).get('win_rate', 0) >= 55.0]
+        if not top_strategies:
+            log("ENSEMBLE: No strategies with WR >= 55% found, keeping current params")
+            return
+        
         # Ensemble weights: 50% / 30% / 20%
         weights = [0.50, 0.30, 0.20]
         
@@ -366,7 +373,7 @@ def apply_best_strategy():
             TP_MAX = max(0.015, min(0.05, blended["tp_max"]))  # Clamp 1.5-5%
         # STOP_FLOOR and RISK_PCT_PER_TRADE are LOCKED — backtester cannot override!
         if "ml_threshold" in blended:
-            SEC_PML_MIN = max(0.30, blended["ml_threshold"])
+            SEC_PML_MIN = max(0.42, blended["ml_threshold"])  # Floor 0.42 (was 0.30)
         
         # === Entry Parameters ===
         if "rsi_oversold" in blended:
@@ -376,7 +383,7 @@ def apply_best_strategy():
         if "max_trades_per_day" in blended:
             MAX_TRADES_PER_DAY = int(round(blended["max_trades_per_day"]))
         if "entry_score_min" in blended:
-            _ENTRY_CEILING = max(0.15, min(0.30, blended["entry_score_min"]))
+            _ENTRY_CEILING = max(0.20, min(0.35, blended["entry_score_min"]))  # Raised floor 0.15→0.20
         
         # Update current_params dict for tracking
         current_params['tp_min'] = TP_MIN
@@ -396,7 +403,7 @@ def apply_best_strategy():
 # Self-correcting: bot MUST trade to learn and hit 1%/day target
 _adaptive_entry_min = ENTRY_SCORE_MIN
 _last_trade_ts = time.time()  # Safe default — prevents aggressive threshold decay on startup
-_ENTRY_FLOOR = 0.05        # Absolute minimum — nearly any signal triggers trade
+_ENTRY_FLOOR = 0.15        # Minimum entry quality — raised from 0.05 to prevent blind trades
 # _ENTRY_CEILING is set by apply_best_strategy() from backtester results
 _NO_TRADE_DECAY_MIN = 60   # Start lowering after 60min of no trades (was 30min — too aggressive)
 _DECAY_STEP = 0.03         # Lower by 0.03 each check (was 0.02)
@@ -425,7 +432,7 @@ def adapt_entry_threshold():
         
         # Also lower ML threshold after 1h of no trades
         if hours_since_trade >= 1.0:
-            SEC_PML_MIN = max(0.30, SEC_PML_MIN - 0.02)
+            SEC_PML_MIN = max(0.42, SEC_PML_MIN - 0.02)
         
         if old != _adaptive_entry_min:
             log(f"ADAPT⚡ entry threshold: {old:.2f} -> {_adaptive_entry_min:.2f} | ml_min: {SEC_PML_MIN:.2f} | no trades for {min_since_trade:.0f}min")
@@ -434,10 +441,10 @@ def adapt_entry_threshold():
         # BUT only if market regime is OK — don't force trades in a crash!
         if hours_since_trade >= _EMERGENCY_HOURS and today_trades == 0:
             # Check regime before going emergency — need at least basic conditions
-            _adaptive_entry_min = max(_ENTRY_FLOOR, 0.10)  # Low but not insane
+            _adaptive_entry_min = max(_ENTRY_FLOOR, 0.15)  # Low but still requires real signal
             ENTRY_SCORE_MIN = _adaptive_entry_min
-            SEC_PML_MIN = 0.30
-            log(f"⚠️ LOW-THRESHOLD MODE: 0 trades in {hours_since_trade:.1f}h! Threshold={_adaptive_entry_min}, ml_min=0.30")
+            SEC_PML_MIN = 0.42
+            log(f"⚠️ LOW-THRESHOLD MODE: 0 trades in {hours_since_trade:.1f}h! Threshold={_adaptive_entry_min}, ml_min=0.42")
     elif today_trades > 0 and loss_streak == 0:
         # Winning = gently raise threshold (but cap at 0.30)
         _adaptive_entry_min = min(min(_ENTRY_CEILING, 0.30), _adaptive_entry_min + 0.01)
@@ -1852,6 +1859,7 @@ def decide_and_trade():
     global _last_trade_ts, _paper_position_locked, PAPER_BASE_USDT
     global win_streak, confidence_lvl
     global daily_realized_pnl, daily_trade_results, circuit_breaker_active, circuit_breaker_reason
+    global _adaptive_entry_min, ENTRY_SCORE_MIN, SEC_PML_MIN
 
 
     if now_date() != last_trade_day:
@@ -1859,17 +1867,23 @@ def decide_and_trade():
         today_trades = 0
         # DON'T reset loss_streak at midnight — it should only reset on a winning trade
         # loss_streak = 0  # BUG FIX: was resetting streak, allowing immediate aggressive trading after midnight
-        cooldown_until_ts = 0.0
+        # POST-MIDNIGHT COOLDOWN: 30min observation period before first trade
+        # Prevents blind trades at 00:01 when adaptive thresholds are at rock bottom
+        cooldown_until_ts = time.time() + 1800  # 30 minutes cooldown after midnight
         day_start_equity = current_equity()
         # Reset circuit breaker at midnight
         daily_realized_pnl = 0.0
         daily_trade_results = []
         if circuit_breaker_active:
-            log(f"🔄 CIRCUIT BREAKER RESET — new day, trading resumed")
-            tg("🔄 Circuit Breaker zurückgesetzt — neuer Tag, Trading wieder aktiv")
+            log(f"🔄 CIRCUIT BREAKER RESET — new day, trading resumed after 30min cooldown")
+            tg("🔄 Circuit Breaker zurückgesetzt — neuer Tag, 30min Cooldown dann Trading aktiv")
         circuit_breaker_active = False
         circuit_breaker_reason = ""
-        log(f"INFO new UTC day → reset trade counter | day_start_equity={day_start_equity:.2f}")
+        # Reset adaptive threshold to a sane level (not the decayed floor)
+        _adaptive_entry_min = 0.20
+        ENTRY_SCORE_MIN = 0.20
+        SEC_PML_MIN = _SEC_PML_DEFAULT
+        log(f"INFO new UTC day → reset trade counter + 30min cooldown | day_start_equity={day_start_equity:.2f} | entry_min=0.20 ml_min={SEC_PML_MIN:.2f}")
 
     if day_start_equity is None:
         day_start_equity = current_equity()
@@ -1966,11 +1980,8 @@ def decide_and_trade():
     range_support_ok = (px <= ll20 * 1.003) and (rsi14 < 40) and (macd_val > prev_macd)
 
     p_ml         = ml_predict_row(row)
-    # In paper mode or when adapting: relax secondary check
-    if PAPER_MODE or ENTRY_SCORE_MIN <= 0.15:
-        secondary_ok = trend_ok and (px > ema20)  # Skip p_ml requirement
-    else:
-        secondary_ok = trend_ok and (rsi14 >= RSI_MIN) and (p_ml >= SEC_PML_MIN) and (px > ema20)
+    # ML check is ALWAYS required — paper mode must trade like live mode for valid results
+    secondary_ok = trend_ok and (rsi14 >= RSI_MIN) and (p_ml >= SEC_PML_MIN) and (px > ema20)
 
     adx_bonus = 0.0
     if regime["trend_ok"]:
@@ -2076,10 +2087,11 @@ def decide_and_trade():
     # Entry threshold: use 1h context instead of idle-time reduction
     effective_entry_min = ENTRY_SCORE_MIN
     if hourly_bias == "OVERSOLD_BOUNCE":
-        effective_entry_min = ENTRY_SCORE_MIN * 0.60  # Lower bar for high-conviction 1h setups
+        effective_entry_min = ENTRY_SCORE_MIN * 0.75  # Modest reduction for high-conviction setups (was 0.60)
     elif hourly_bias == "TREND_UP" and hourly_strength > 0.5:
-        effective_entry_min = ENTRY_SCORE_MIN * 0.80  # Slightly lower for strong uptrend
-    # No more idle-time threshold reduction — that was forcing bad trades
+        effective_entry_min = ENTRY_SCORE_MIN * 0.90  # Slight reduction for strong uptrend (was 0.80)
+    # HARD FLOOR: never trade below 0.20 entry score regardless of any reduction
+    effective_entry_min = max(effective_entry_min, 0.20)
     
     entry_score = base_score
 

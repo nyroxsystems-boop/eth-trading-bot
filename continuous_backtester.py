@@ -125,51 +125,65 @@ class ContinuousBacktester:
     
     def calculate_score(self, metrics: Dict[str, Any]) -> float:
         """
-        Calculate strategy score — WIN RATE OPTIMIZED.
+        Calculate strategy score — WIN RATE ULTRA-DOMINANT (v4).
         
-        Weights (v2 — win-rate co-dominant):
-          Win Rate     ×5.0  →  60 % WR ≈ 300 pts   (CO-DOMINANT)
-          Win Rate Bonus      →  +100 pts if WR > 60% (rewards consistency)
-          ROI          ×12   →  6 % ROI ≈ 72 pts     (STRONG but not dominant)
-          Sharpe       ×2    →  capped at 3.0 raw → max 6 pts
-          Total Trades bonus →  more trades = more reliable
-          Max Drawdown penalty ×1.0 (doubled — penalize risky strategies harder)
+        Philosophy: Win Rate IS the score. ROI is a tiebreaker.
+        A 65% WR + 2% ROI strategy MUST beat a 50% WR + 30% ROI strategy.
+        
+        Formula:
+          KILL GATE: WR < 55% → score = 0  (instantly kill bad strategies)
+          Base:      WR × 10.0             (55% = 550, 65% = 650, 70% = 700)
+          WR Tiers:  +100 if WR>58%, +250 if WR>62%, +500 if WR>66%, +800 if WR>70%
+          ROI:       × 3.0  (tiebreaker only — 10% ROI = 30 pts, trivial vs WR)
+          Sharpe:    × 2.0  (capped at 3.0 raw)
+          Drawdown:  × -2.0 (heavier penalty for risky strategies)
+          Trades:    min(trades/10, 1) × 50 (need ≥10 trades for full credit)
           
-        RELIABILITY GATE: <5 trades = score ÷ 5 (100% WR with 2 trades is meaningless)
+        RELIABILITY GATE: <5 trades = score ÷ 10
         """
         if not metrics:
             return 0.0
         
+        win_rate = metrics.get('win_rate', 0)
+        total_trades = metrics.get('total_trades', 0)
+        
+        # KILL GATE: below 55% WR = instant death
+        if win_rate < 55.0:
+            return 0.0
+        
         score = 0.0
         
-        # Win Rate — CO-DOMINANT factor: consistency is king
-        win_rate = metrics.get('win_rate', 0)
-        score += win_rate * 5.0
+        # Win Rate — ULTRA-DOMINANT: this IS the score
+        score += win_rate * 10.0
         
-        # Win Rate Bonus — extra reward for breaking 60% barrier
-        if win_rate > 60:
-            score += 100.0
+        # Win Rate TIER BONUSES — exponential reward for higher WR
+        if win_rate > 58:
+            score += 100.0   # Breaking 58% = solid
+        if win_rate > 62:
+            score += 250.0   # Breaking 62% = very good
+        if win_rate > 66:
+            score += 500.0   # Breaking 66% = excellent
+        if win_rate > 70:
+            score += 800.0   # Breaking 70% = exceptional
         
-        # ROI — strong but no longer overshadows win rate
+        # ROI — tiebreaker only (not dominant)
         roi = metrics.get('roi', 0)
-        score += roi * 12.0
+        score += roi * 3.0
         
-        # Sharpe Ratio — HARD CAP at 3.0 raw value
+        # Sharpe Ratio — capped and minor
         sharpe = metrics.get('sharpe_ratio', 0)
-        score += min(sharpe, 3.0) * 2    # Max 6 pts
+        score += min(sharpe, 3.0) * 2.0
         
-        # Max Drawdown penalty — doubled to penalize risky strategies
+        # Max Drawdown — heavy penalty
         max_dd = metrics.get('max_drawdown', 0)
-        score -= max_dd * 1.0
+        score -= max_dd * 2.0
         
-        # More trades = more statistically reliable
-        total_trades = metrics.get('total_trades', 0)
-        score += min(total_trades / 20, 1.0) * 25
+        # Trade count reliability bonus (need ≥10 trades for full credit)
+        score += min(total_trades / 10, 1.0) * 50
         
-        # RELIABILITY GATE: <5 trades = divide score by 5
-        # A "100% WR" with 2 trades is statistically meaningless
+        # RELIABILITY GATE: <5 trades = divide by 10
         if total_trades < 5:
-            score *= 0.2
+            score *= 0.1
         
         return score
     
