@@ -38,7 +38,7 @@ PARAM_RANGES = {
     "risk_per_trade":     (0.002, 0.020),  # was [0.004-0.012]
     "tp_min":             (0.004, 0.025),  # was [0.008-0.015]
     "tp_max":             (0.010, 0.050),  # was [0.015-0.025] — now up to 5%!
-    "stop_floor":         (0.002, 0.015),  # was [0.004-0.008]
+    "stop_floor":         (0.008, 0.035),  # Aligned with live bot clamp (was 0.002-0.015 = too tight)
     "rsi_oversold":       (15, 40),        # was [25-35]
     "rsi_overbought":     (60, 85),        # was [65-75]
     "max_trades_per_day": (3, 30),         # was [8-20]
@@ -169,8 +169,8 @@ def calculate_indicators(candles: List[Dict]) -> List[Dict]:
 def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     """
     Run a single backtest with given parameters.
-    Uses TA-based entry signals (not random), fixed take-profit.
-    Returns performance metrics.
+    ALIGNED WITH LIVE BOT: includes trailing TP, break-even, partial exit, time exit.
+    Returns performance metrics including losses (no more hiding bad strategies).
     """
     if len(candles) < 60:
         return None
@@ -180,10 +180,12 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     risk_pct = params.get("risk_per_trade", 0.01)
     tp_min = params.get("tp_min", 0.01)
     tp_max = params.get("tp_max", 0.02)
-    stop_floor = params.get("stop_floor", 0.005)
+    stop_floor = params.get("stop_floor", 0.012)
     rsi_oversold = params.get("rsi_oversold", 30)
     rsi_overbought = params.get("rsi_overbought", 70)
     max_trades = params.get("max_trades_per_day", 10)
+    break_even_trigger = 0.012  # Match live bot: +1.2% → move SL to break-even
+    max_hold_bars = 60  # Match live bot: ~5h max hold time
     
     # Simulation state
     equity = 10000.0
@@ -217,38 +219,68 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
             daily_trades = 0
             last_day = day
         
-        # If in position, check exit
+        # ═══ POSITION MANAGEMENT (aligned with live bot) ═══
         if position:
             entry = position["entry"]
             pnl_pct = (price - entry) / entry
+            pos_size = position.get("size", equity * risk_pct / max(stop_floor, 0.001))
+            bars_held = i - position.get("entry_idx", i)
+            peak_pnl = position.get("peak_pnl", 0.0)
+            trailing_active = position.get("trailing_active", False)
+            sl_pct = stop_floor  # Dynamic SL starts at stop_floor
             
-            # Position size = risk_capital / stop_loss_pct
-            # This is how the real bot sizes positions too
-            pos_size = equity * risk_pct / max(stop_floor, 0.001)
+            # Track peak PnL
+            if pnl_pct > peak_pnl:
+                position["peak_pnl"] = pnl_pct
+                peak_pnl = pnl_pct
             
-            # Fixed take-profit at tp_max
-            if pnl_pct >= tp_max:
+            exit_reason = None
+            
+            # === TIME EXIT (match live bot MAX_HOLD_BARS) ===
+            if bars_held >= max_hold_bars:
+                exit_reason = "TIME"
+            
+            # === BREAK-EVEN: after +1.2%, move SL to 0 ===
+            if pnl_pct >= break_even_trigger:
+                sl_pct = 0.001  # Break-even + tiny buffer
+            
+            # === TRAILING TP SYSTEM (match live bot exactly) ===
+            if peak_pnl >= tp_max and not trailing_active:
+                position["trailing_active"] = True
+                trailing_active = True
+            
+            if trailing_active:
+                # Lock in 60% of peak gains (match live bot)
+                trail_floor = peak_pnl * 0.60
+                trail_sl = max(trail_floor, tp_max * 0.50)
+                
+                if pnl_pct <= trail_sl and peak_pnl > tp_max * 0.8:
+                    exit_reason = "TRAIL_TP"
+                
+                # Hard cap at 3x TP
+                if pnl_pct >= tp_max * 3.0:
+                    exit_reason = "TRAIL_CAP"
+            else:
+                # Standard TP (not trailing yet)
+                if pnl_pct >= tp_max:
+                    exit_reason = "TP"
+                elif pnl_pct >= tp_min and rsi > rsi_overbought:
+                    exit_reason = "TP_RSI"
+            
+            # === STOP LOSS ===
+            if pnl_pct <= -sl_pct and not exit_reason:
+                exit_reason = "SL"
+            
+            # === EXECUTE EXIT ===
+            if exit_reason:
+                is_win = pnl_pct > 0
                 position["exit"] = price
                 position["pnl"] = pnl_pct
-                position["win"] = True
+                position["win"] = is_win
+                position["exit_reason"] = exit_reason
+                position["bars_held"] = bars_held
                 trades.append(position)
-                equity += pos_size * pnl_pct * 0.999  # 0.1% fee
-                position = None
-            # Partial take-profit at tp_min if RSI overbought
-            elif pnl_pct >= tp_min and rsi > rsi_overbought:
-                position["exit"] = price
-                position["pnl"] = pnl_pct
-                position["win"] = True
-                trades.append(position)
-                equity += pos_size * pnl_pct * 0.999
-                position = None
-            # Stop loss
-            elif pnl_pct <= -stop_floor:
-                position["exit"] = price
-                position["pnl"] = pnl_pct
-                position["win"] = False
-                trades.append(position)
-                equity += pos_size * pnl_pct  # Full loss, no fee
+                equity += pos_size * pnl_pct * (0.999 if is_win else 1.0)  # Fee only on wins
                 position = None
             
             # Update max drawdown
@@ -258,19 +290,17 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
             if dd > max_drawdown:
                 max_drawdown = dd
         
-        # Check for entry using TA-based signals (no randomness!)
+        # ═══ ENTRY LOGIC (aligned with live bot) ═══
         if not position and daily_trades < max_trades:
             entry_min = params.get("entry_score_min", 0.25)
             brk_w = params.get("breakout_weight", 0.30)
             trn_w = params.get("trend_weight", 0.20)
             
-            # --- 1H CONTEXT SIMULATION (aggregate 12 x 5m candles) ---
+            # --- 1H CONTEXT SIMULATION ---
             hourly_bias = "NEUTRAL"
-            if i >= 168:  # Need 14 * 12 = 168 candles for 14h RSI
-                # Aggregate 5m to 1h: take every 12th candle's close
+            if i >= 168:
                 h1_closes = [candles[j]["close"] for j in range(i - 167, i + 1, 12)]
                 if len(h1_closes) >= 14:
-                    # Simple RSI on 1h closes
                     h1_gains, h1_losses = [], []
                     for k in range(1, len(h1_closes)):
                         chg = h1_closes[k] - h1_closes[k-1]
@@ -279,8 +309,6 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
                     ag = sum(h1_gains[-14:]) / 14
                     al = sum(h1_losses[-14:]) / 14
                     h1_rsi = 100 - 100 / (1 + ag / max(al, 1e-9)) if al > 0 else 100
-                    
-                    # 1h EMAs
                     h1_ema20 = sum(h1_closes[-min(20, len(h1_closes)):]) / min(20, len(h1_closes))
                     h1_ema50 = sum(h1_closes[-min(len(h1_closes), 14):]) / min(len(h1_closes), 14)
                     
@@ -291,136 +319,125 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
                     elif price < h1_ema20 and h1_ema20 < h1_ema50:
                         hourly_bias = "TREND_DOWN"
             
-            # BLOCK entries during 1h downtrend
-            if hourly_bias == "TREND_DOWN":
-                continue  # Skip this candle entirely
+            # Penalty for 1h downtrend (match live bot: -0.15 penalty, not hard block)
+            bias_penalty = -0.15 if hourly_bias == "TREND_DOWN" else 0.0
             
-            # --- TA-based signal components (deterministic) ---
-            # 1. Trend: price > SMA20 > SMA50
+            # --- TA-based signal components ---
             trend_ok = price > sma20 and (sma50 is None or sma20 > sma50)
-            
-            # 2. RSI conditions
             rsi_ok = rsi_oversold < rsi < rsi_overbought
             oversold = rsi <= rsi_oversold + 5
-            
-            # 3. Breakout: price above 20-period high
             recent_high = max(c["high"] for c in candles[max(0,i-20):i])
             breakout = price > recent_high * 1.0001
-            
-            # 4. Volume spike: current volume > 1.5x average
             vol_spike = vol > avg_volume * 1.5 if avg_volume > 0 else False
-            
-            # 5. Momentum: price higher than 3 candles ago
             momentum = price > candles[i-3]["close"] if i >= 3 else False
             
-            # Composite TA score (deterministic, no random!)
+            # EMA bounce (match live bot)
+            ema_bounce = (price > sma20) and (candle["low"] <= sma20 * 1.002) and (rsi > 40)
+            
+            # MACD crossover (simplified)
+            macd_cross = False
+            if i >= 2:
+                prev_mom = candles[i-1]["close"] - candles[i-2]["close"]
+                curr_mom = candle["close"] - candles[i-1]["close"]
+                macd_cross = curr_mom > 0 and prev_mom <= 0
+            
+            # Composite TA score (aligned with live bot weights)
             ta_score = (
-                brk_w * (1.0 if breakout else 0.0) +
-                trn_w * (1.0 if trend_ok else 0.0) +
-                0.15 * (1.0 if oversold else 0.0) +
-                0.10 * (1.0 if vol_spike else 0.0) +
-                0.10 * (1.0 if momentum else 0.0) +
-                0.10 * (1.0 if rsi_ok else 0.0)
+                0.18 * (1.0 if breakout else 0.0) +
+                0.10 * (1.0 if trend_ok else 0.0) +
+                0.12 * (1.0 if oversold else 0.0) +
+                0.10 * (1.0 if ema_bounce else 0.0) +
+                0.10 * (1.0 if macd_cross else 0.0) +
+                0.08 * (1.0 if vol_spike else 0.0) +
+                0.08 * (1.0 if momentum else 0.0) +
+                0.06 * (1.0 if rsi_ok else 0.0) +
+                bias_penalty
             )
             
-            # 1h bias bonuses (match live bot behavior)
+            # 1h bias bonuses
             if hourly_bias == "OVERSOLD_BOUNCE":
                 ta_score += 0.15
-                entry_min *= 0.60  # Lower bar for mean reversion
+                entry_min *= 0.75  # Match live bot: modest reduction (was 0.60)
             elif hourly_bias == "TREND_UP":
                 ta_score += 0.10
             
-            # ML signal: TA score exceeds threshold (deterministic!)
+            # Entry gate: score must pass both entry_min AND ml_threshold
             if ta_score >= entry_min and ta_score >= ml_threshold * 0.7:
                 position = {
                     "entry": price,
                     "time": candle["time"],
-                    "size": equity * risk_pct
+                    "entry_idx": i,
+                    "size": equity * risk_pct / max(stop_floor, 0.001),
+                    "peak_pnl": 0.0,
+                    "trailing_active": False
                 }
                 daily_trades += 1
     
-    # Calculate final metrics
-    if len(trades) < 5:
-        return None  # Not enough trades
+    # ═══ CALCULATE METRICS (no more hiding bad strategies!) ═══
+    if len(trades) < 3:
+        return None  # Not enough trades for any valid assessment
     
     wins = [t for t in trades if t["win"]]
     losses = [t for t in trades if not t["win"]]
     win_rate = len(wins) / len(trades) * 100
     
-    # QUALITY FILTER: reject strategies with win rate below 50%
-    if win_rate < 50.0:
-        return None
-    
-    # QUALITY FILTER: reject strategies with too few trades (not statistically valid)
-    if len(trades) < 3:
-        return None
+    # FIX: DON'T delete strategies with WR < 50%!
+    # Return ALL results honestly so the scoring system can rank them properly.
+    # The old filter was hiding failures → only 100% WR strategies survived → misleading dashboard.
     
     roi = (equity - initial_equity) / initial_equity * 100
     
-    # Profit factor: gross wins / gross losses (>1.5 is good, >2.0 is excellent)
+    # Profit factor
     gross_wins = sum(t["pnl"] for t in wins) if wins else 0
     gross_losses = abs(sum(t["pnl"] for t in losses)) if losses else 0.0001
     profit_factor = gross_wins / max(gross_losses, 0.0001)
     
-    # Sharpe ratio (simplified)
+    # Sharpe ratio
     pnls = [t["pnl"] for t in trades]
     avg_pnl = sum(pnls) / len(pnls)
     std_pnl = (sum((p - avg_pnl) ** 2 for p in pnls) / len(pnls)) ** 0.5
     sharpe = (avg_pnl / std_pnl * (len(trades) ** 0.5)) if std_pnl > 0 else 0
     
-    # === TRADE COUNT RELIABILITY MULTIPLIER ===
-    # Penalize strategies with few trades — 100% from 2 trades means nothing
+    # === SCORING: v4 WIN-RATE DOMINANT (aligned with continuous_backtester) ===
     n_trades = len(trades)
-    if n_trades >= 10:
-        trade_reliability = 1.0      # Full confidence
-    elif n_trades >= 7:
-        trade_reliability = 0.85     # Good sample
-    elif n_trades >= 5:
-        trade_reliability = 0.65     # Acceptable
+    
+    # KILL GATE: WR < 55% = score 0 (same as continuous_backtester)
+    if win_rate < 55.0:
+        score = 0.0
     else:
-        trade_reliability = 0.35     # Very low — almost meaningless
+        score = win_rate * 10.0
+        # Tier bonuses
+        if win_rate > 58: score += 100.0
+        if win_rate > 62: score += 250.0
+        if win_rate > 66: score += 500.0
+        if win_rate > 70: score += 800.0
+        # ROI tiebreaker
+        score += roi * 3.0
+        # Sharpe
+        score += min(sharpe, 3.0) * 2.0
+        # Drawdown penalty
+        score -= max_drawdown * 100 * 2.0
+        # Trade count bonus
+        score += min(n_trades / 10, 1.0) * 50
+        # Reliability gate
+        if n_trades < 5:
+            score *= 0.1
     
-    # Bonus for more trades (encourages active strategies)
-    trade_bonus = min(n_trades * 2, 30)  # Up to +30 for 15+ trades
-    
-    # === SCORING: MAXIMIZE WIN RATE & ROI ===
-    capped_roi = max(-50, min(roi, 100))  # Cap ROI between -50% and 100%
-    
-    # Win rate bonus tiers
-    wr_bonus = 0
-    if win_rate >= 70:
-        wr_bonus = 30    # Excellent
-    elif win_rate >= 60:
-        wr_bonus = 15    # Good
-    elif win_rate >= 55:
-        wr_bonus = 5     # Decent
-    
-    # Profit factor bonus (penalizes bad risk/reward)
-    pf_bonus = min(profit_factor * 5, 20)  # Up to +20 for PF > 4.0
-    
-    raw_score = (
-        win_rate * 1.5 +          # 1.5x win rate — HEAVILY weighted
-        capped_roi * 3.0 +        # 3x ROI contribution
-        sharpe * 8 +              # Sharpe still matters
-        wr_bonus +                # Win rate tier bonus
-        pf_bonus +                # Profit factor bonus
-        trade_bonus -             # More trades = better
-        max_drawdown * 100 * 1.0  # Higher drawdown penalty
-    )
-    
-    # Apply reliability multiplier — this is the key fix!
-    # 100% WR from 2 trades: raw=180 × 0.35 = 63
-    # 85% WR from 7 trades with 7% ROI: raw=170 × 0.85 = 144.5 → WINS!
-    score = raw_score * trade_reliability
+    # Exit reason breakdown for debugging
+    exit_reasons = {}
+    for t in trades:
+        r = t.get("exit_reason", "unknown")
+        exit_reasons[r] = exit_reasons.get(r, 0) + 1
     
     return {
-        "total_trades": len(trades),
+        "total_trades": n_trades,
         "win_rate": round(win_rate, 1),
         "roi": round(roi, 2),
         "sharpe_ratio": round(sharpe, 2),
         "max_drawdown": round(max_drawdown * 100, 2),
         "profit_factor": round(profit_factor, 2),
-        "score": round(score, 2)
+        "score": round(score, 2),
+        "exit_reasons": exit_reasons
     }
 
 

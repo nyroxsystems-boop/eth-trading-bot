@@ -17,11 +17,11 @@ class StrategyGenerator:
             'risk_per_trade': (0.005, 0.015),   # Tighter risk (was 0.020)
             'tp_min': (0.008, 0.020),           # Tighter TPs for more frequent wins
             'tp_max': (0.012, 0.030),           # Not too greedy (was 0.050)
-            'stop_floor': (0.015, 0.030),       # Wider SL = fewer stop-outs (was 0.012)
+            'stop_floor': (0.010, 0.030),       # Aligned with live bot clamp 0.8-3.5%
             'max_trades_per_day': (3, 15),      # Fewer trades (was 5-25)
             'rsi_oversold': (28, 42),           # Tighter RSI (was 25-45)
             'rsi_overbought': (62, 78),         # Tighter RSI (was 60-85)
-            'entry_score_min': (0.18, 0.35),    # Higher entry bar (was 0.10-0.30)
+            'entry_score_min': (0.20, 0.35),    # Floor raised to 0.20 (was 0.18)
             'breakout_pct': (0.00005, 0.0008)   # Tighter breakout (was 0.00001)
         }
         
@@ -31,7 +31,7 @@ class StrategyGenerator:
             'risk_per_trade': (0.005, 0.010),   # Very low risk
             'tp_min': (0.008, 0.015),           # Quick, achievable TPs
             'tp_max': (0.012, 0.025),           # Realistic maxima
-            'stop_floor': (0.018, 0.030),       # Wide SL = survive noise
+            'stop_floor': (0.012, 0.028),       # Match live bot range
             'max_trades_per_day': (3, 10),      # Quality over quantity
             'rsi_oversold': (30, 40),           # Conservative entries
             'rsi_overbought': (65, 75),         # Exit before overbought
@@ -45,7 +45,7 @@ class StrategyGenerator:
             'risk_per_trade': (0.005, 0.008),   # Minimal risk
             'tp_min': (0.006, 0.012),           # Very tight TPs — almost always hit
             'tp_max': (0.010, 0.018),           # Small but consistent gains
-            'stop_floor': (0.020, 0.035),       # Wide stops — rarely stopped out
+            'stop_floor': (0.015, 0.035),       # Wide stops — rarely stopped out (within clamp)
             'max_trades_per_day': (2, 6),       # Very few, very selective trades
             'rsi_oversold': (32, 38),           # Narrow oversold window
             'rsi_overbought': (68, 75),         # Narrow overbought window

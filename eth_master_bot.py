@@ -197,8 +197,8 @@ TRAIL_STATE = {
 }
 
 MAX_DRAWDOWN_DAY   = float(_os.getenv("MAX_DRAWDOWN_DAY", "0.03"))     # 3% Tages-MaxDD -> Pause
-LOSS_STREAK_COOL   = int(_os.getenv("LOSS_STREAK_COOL", "3"))          # n Verluste in Folge -> Cooldown
-COOLDOWN_MIN       = int(_os.getenv("COOLDOWN_MIN", "10"))             # Minuten Pause nach Loss-Streak
+LOSS_STREAK_COOL   = int(_os.getenv("LOSS_STREAK_COOL", "5"))          # 5 Verluste in Folge -> 2h Cooldown (was 3 = whole day kill)
+COOLDOWN_MIN       = int(_os.getenv("COOLDOWN_MIN", "120"))            # 2h Pause nach Loss-Streak (was 10min / whole day)
 
 BREAK_EVEN_TRIGGER = 0.012     # +1.2% before moving SL to break-even
 TRAIL_ATR_MULT     = 1.5       # ATR * 1.5 for trailing
@@ -343,7 +343,7 @@ def apply_best_strategy():
         weights = [0.50, 0.30, 0.20]
         
         # Blend parameters from top strategies
-        blend_keys = ["tp_min", "tp_max", "ml_threshold", "rsi_oversold", "rsi_overbought",
+        blend_keys = ["tp_min", "tp_max", "stop_floor", "ml_threshold", "rsi_oversold", "rsi_overbought",
                       "max_trades_per_day", "entry_score_min"]
         blended = {}
         total_weight = 0.0
@@ -371,7 +371,9 @@ def apply_best_strategy():
             TP_MIN = max(0.012, min(0.04, blended["tp_min"]))  # Clamp 1.2-4%
         if "tp_max" in blended:
             TP_MAX = max(0.015, min(0.05, blended["tp_max"]))  # Clamp 1.5-5%
-        # STOP_FLOOR and RISK_PCT_PER_TRADE are LOCKED — backtester cannot override!
+        # FIX: STOP_FLOOR now accepts backtester values (was locked, causing backtest/live divergence)
+        if "stop_floor" in blended:
+            STOP_FLOOR = max(0.008, min(0.035, blended["stop_floor"]))  # Clamp 0.8-3.5%
         if "ml_threshold" in blended:
             SEC_PML_MIN = max(0.42, blended["ml_threshold"])  # Floor 0.42 (was 0.30)
         
@@ -403,11 +405,11 @@ def apply_best_strategy():
 # Self-correcting: bot MUST trade to learn and hit 1%/day target
 _adaptive_entry_min = ENTRY_SCORE_MIN
 _last_trade_ts = time.time()  # Safe default — prevents aggressive threshold decay on startup
-_ENTRY_FLOOR = 0.15        # Minimum entry quality — raised from 0.05 to prevent blind trades
+_ENTRY_FLOOR = 0.20        # Minimum entry quality — raised from 0.15 (prevent desperation trades)
 # _ENTRY_CEILING is set by apply_best_strategy() from backtester results
-_NO_TRADE_DECAY_MIN = 60   # Start lowering after 60min of no trades (was 30min — too aggressive)
-_DECAY_STEP = 0.03         # Lower by 0.03 each check (was 0.02)
-_EMERGENCY_HOURS = 4       # After 4h with 0 trades: emergency mode
+_NO_TRADE_DECAY_MIN = 120  # Start lowering after 2h of no trades (was 60min — caused 00:01 trades)
+_DECAY_STEP = 0.01         # Lower by 0.01 each check (was 0.03 — too fast, caused blind trades)
+_EMERGENCY_HOURS = 8       # After 8h with 0 trades: lower threshold (was 4h — too aggressive)
 
 def adapt_entry_threshold():
     """
@@ -423,28 +425,25 @@ def adapt_entry_threshold():
     min_since_trade = hours_since_trade * 60
     
     if min_since_trade >= _NO_TRADE_DECAY_MIN:
-        # No trades = threshold too high, lower it aggressively
+        # No trades = threshold might be too high, lower it GENTLY
         old = _adaptive_entry_min
-        # Faster decay the longer we haven't traded
-        decay = _DECAY_STEP * max(1, int(hours_since_trade))
+        # Steady slow decay — NOT exponential (was causing desperation trades)
+        decay = _DECAY_STEP  # Fixed 0.01 per check (was 0.03 * hours = exponential!)
         _adaptive_entry_min = max(_ENTRY_FLOOR, _adaptive_entry_min - decay)
         ENTRY_SCORE_MIN = _adaptive_entry_min
         
-        # Also lower ML threshold after 1h of no trades
-        if hours_since_trade >= 1.0:
-            SEC_PML_MIN = max(0.42, SEC_PML_MIN - 0.02)
+        # DON'T lower ML threshold — it should stay at what the backtester set
+        # (was lowering to 0.42 which allowed garbage trades)
         
         if old != _adaptive_entry_min:
-            log(f"ADAPT⚡ entry threshold: {old:.2f} -> {_adaptive_entry_min:.2f} | ml_min: {SEC_PML_MIN:.2f} | no trades for {min_since_trade:.0f}min")
+            log(f"ADAPT entry threshold: {old:.2f} -> {_adaptive_entry_min:.2f} | ml_min: {SEC_PML_MIN:.2f} | no trades for {min_since_trade:.0f}min")
         
-        # EMERGENCY MODE: 4+ hours with 0 trades today
-        # BUT only if market regime is OK — don't force trades in a crash!
+        # EMERGENCY MODE: 8+ hours with 0 trades today
         if hours_since_trade >= _EMERGENCY_HOURS and today_trades == 0:
-            # Check regime before going emergency — need at least basic conditions
-            _adaptive_entry_min = max(_ENTRY_FLOOR, 0.15)  # Low but still requires real signal
+            _adaptive_entry_min = max(_ENTRY_FLOOR, 0.20)  # Floor is 0.20, not 0.15
             ENTRY_SCORE_MIN = _adaptive_entry_min
-            SEC_PML_MIN = 0.42
-            log(f"⚠️ LOW-THRESHOLD MODE: 0 trades in {hours_since_trade:.1f}h! Threshold={_adaptive_entry_min}, ml_min=0.42")
+            # DON'T lower ML threshold in emergency — keep quality gate
+            log(f"⚠️ LOW-THRESHOLD MODE: 0 trades in {hours_since_trade:.1f}h! Threshold={_adaptive_entry_min} (ml_min unchanged={SEC_PML_MIN:.2f})")
     elif today_trades > 0 and loss_streak == 0:
         # Winning = gently raise threshold (but cap at 0.30)
         _adaptive_entry_min = min(min(_ENTRY_CEILING, 0.30), _adaptive_entry_min + 0.01)
@@ -1866,24 +1865,23 @@ def decide_and_trade():
         last_trade_day = now_date()
         today_trades = 0
         # DON'T reset loss_streak at midnight — it should only reset on a winning trade
-        # loss_streak = 0  # BUG FIX: was resetting streak, allowing immediate aggressive trading after midnight
-        # POST-MIDNIGHT COOLDOWN: 30min observation period before first trade
-        # Prevents blind trades at 00:01 when adaptive thresholds are at rock bottom
-        cooldown_until_ts = time.time() + 1800  # 30 minutes cooldown after midnight
         day_start_equity = current_equity()
-        # Reset circuit breaker at midnight
+        # Reset circuit breaker at midnight (but no forced cooldown!)
         daily_realized_pnl = 0.0
         daily_trade_results = []
         if circuit_breaker_active:
-            log(f"🔄 CIRCUIT BREAKER RESET — new day, trading resumed after 30min cooldown")
-            tg("🔄 Circuit Breaker zurückgesetzt — neuer Tag, 30min Cooldown dann Trading aktiv")
+            log(f"🔄 CIRCUIT BREAKER RESET — new day")
+            tg("🔄 Circuit Breaker zurückgesetzt — neuer Tag")
         circuit_breaker_active = False
         circuit_breaker_reason = ""
-        # Reset adaptive threshold to a sane level (not the decayed floor)
-        _adaptive_entry_min = 0.20
-        ENTRY_SCORE_MIN = 0.20
+        # FIX: Keep threshold at NORMAL level, NOT a low 0.20 that causes immediate desperation trades!
+        # Use the strategy-set entry ceiling, or default 0.25 — same bar as rest of the day
+        _adaptive_entry_min = min(_ENTRY_CEILING, 0.25)
+        ENTRY_SCORE_MIN = _adaptive_entry_min
         SEC_PML_MIN = _SEC_PML_DEFAULT
-        log(f"INFO new UTC day → reset trade counter + 30min cooldown | day_start_equity={day_start_equity:.2f} | entry_min=0.20 ml_min={SEC_PML_MIN:.2f}")
+        # NO more 30min cooldown — bot should trade normally from market open
+        # (The old 1800s cooldown + threshold of 0.20 caused the 00:31 UTC trade bursts)
+        log(f"INFO new UTC day → reset trade counter | day_start_equity={day_start_equity:.2f} | entry_min={ENTRY_SCORE_MIN:.2f} ml_min={SEC_PML_MIN:.2f}")
 
     if day_start_equity is None:
         day_start_equity = current_equity()
@@ -1991,24 +1989,28 @@ def decide_and_trade():
     boost = (p_ml - 0.5) * 0.4 + (sent_score * 0.1) + adx_bonus + vol_zone_boost
     effective_tp = compute_effective_tp(rsi14, regime, row)
 
-    # --- REBALANCED scoring (works in trending AND sideways markets) ---
-    ml_direct = max(0.0, min(0.15, (p_ml - 0.5) * 0.3)) if p_ml > 0.55 else 0.0
+    # --- REBALANCED scoring with STRONGER ML influence ---
+    # FIX: ML now contributes up to 0.25 (was 0.15) — real AI influence on trades
+    ml_direct = max(0.0, min(0.25, (p_ml - 0.5) * 0.5)) if p_ml > 0.52 else 0.0
+    # FIX: ML penalty for bearish signals (was ignored, bot traded against ML)
+    ml_penalty = min(0.0, (p_ml - 0.5) * 0.3) if p_ml < 0.45 else 0.0
     base_score = (
         # Trend signals (work in trending markets)
-        0.20*(1.0 if breakout_ok else 0.0) +      # Was 0.32 — reduced
-        0.12*(1.0 if trend_ok else 0.0) +          # Was 0.16 — reduced
+        0.18*(1.0 if breakout_ok else 0.0) +
+        0.10*(1.0 if trend_ok else 0.0) +
         0.05*(1.0 if secondary_ok else 0.0) +
         # Universal signals (work in any market)
-        0.12*(1.0 if drawdown_ok else 0.0) +       # Was 0.18
-        0.06*(1.0 if rsi_ok_band else 0.0) +
-        0.05*(1.0 if regime["vol_ok"] else 0.0) +
-        # Sideways/reversal signals (NEW — work when trend doesn't)
-        0.15*(1.0 if oversold_ok else 0.0) +
-        0.12*(1.0 if ema_bounce_ok else 0.0) +     # NEW
-        0.10*(1.0 if bb_bounce_ok else 0.0) +      # NEW
-        0.12*(1.0 if macd_cross_ok else 0.0) +     # NEW
-        0.08*(1.0 if range_support_ok else 0.0) +  # NEW
+        0.10*(1.0 if drawdown_ok else 0.0) +
+        0.05*(1.0 if rsi_ok_band else 0.0) +
+        0.04*(1.0 if regime["vol_ok"] else 0.0) +
+        # Sideways/reversal signals
+        0.12*(1.0 if oversold_ok else 0.0) +
+        0.10*(1.0 if ema_bounce_ok else 0.0) +
+        0.08*(1.0 if bb_bounce_ok else 0.0) +
+        0.10*(1.0 if macd_cross_ok else 0.0) +
+        0.06*(1.0 if range_support_ok else 0.0) +
         ml_direct +
+        ml_penalty +  # NEW: ML bearish signal REDUCES score
         boost
     )
     
@@ -2198,11 +2200,12 @@ def decide_and_trade():
             daily_trade_results.append(pnl_val)
             log(f"CONFIDENCE: loss_streak={loss_streak} conf_lvl={confidence_lvl:.2f} | daily_pnl=${daily_realized_pnl:.2f}")
             if loss_streak >= LOSS_STREAK_COOL:
-                # === CIRCUIT BREAKER: stop trading for REST OF DAY ===
-                circuit_breaker_active = True
-                circuit_breaker_reason = f"{loss_streak} consecutive losses (daily PnL: ${daily_realized_pnl:.2f})"
-                log(f"🛑 CIRCUIT BREAKER: {circuit_breaker_reason} — no more trading today")
-                tg(f"🛑 CIRCUIT BREAKER — {loss_streak}x Verlust in Folge. Tages-PnL: ${daily_realized_pnl:.2f}. Kein Trading bis morgen.")
+                # === CIRCUIT BREAKER: 2h cooldown (was: stop for REST OF DAY) ===
+                cooldown_until_ts = time.time() + COOLDOWN_MIN * 60  # 2h cooldown
+                circuit_breaker_reason = f"{loss_streak} consecutive losses → {COOLDOWN_MIN}min cooldown (daily PnL: ${daily_realized_pnl:.2f})"
+                log(f"⏸️ COOLDOWN: {circuit_breaker_reason}")
+                tg(f"⏸️ COOLDOWN — {loss_streak}x Verlust in Folge. {COOLDOWN_MIN}min Pause. Tages-PnL: ${daily_realized_pnl:.2f}")
+                loss_streak = 0  # Reset streak after cooldown triggered
             return
         elif decision == "TIME":
             pnl_val = (px - open_position['entry']) * open_position['qty']
@@ -2228,12 +2231,13 @@ def decide_and_trade():
             daily_realized_pnl += pnl_val  # Track daily PnL on time exit
             daily_trade_results.append(pnl_val)
             log(f"CONFIDENCE: win_streak={win_streak} loss_streak={loss_streak} conf_lvl={confidence_lvl:.2f} | daily_pnl=${daily_realized_pnl:.2f}")
-            # Check if time-exit losses trigger circuit breaker
+            # Check if time-exit losses trigger cooldown
             if loss_streak >= LOSS_STREAK_COOL:
-                circuit_breaker_active = True
-                circuit_breaker_reason = f"{loss_streak} consecutive losses (daily PnL: ${daily_realized_pnl:.2f})"
-                log(f"🛑 CIRCUIT BREAKER: {circuit_breaker_reason} — no more trading today")
-                tg(f"🛑 CIRCUIT BREAKER — {loss_streak}x Verlust in Folge. Tages-PnL: ${daily_realized_pnl:.2f}. Kein Trading bis morgen.")
+                cooldown_until_ts = time.time() + COOLDOWN_MIN * 60  # 2h cooldown
+                circuit_breaker_reason = f"{loss_streak} consecutive losses → {COOLDOWN_MIN}min cooldown (daily PnL: ${daily_realized_pnl:.2f})"
+                log(f"⏸️ COOLDOWN: {circuit_breaker_reason}")
+                tg(f"⏸️ COOLDOWN — {loss_streak}x Verlust in Folge. {COOLDOWN_MIN}min Pause. Tages-PnL: ${daily_realized_pnl:.2f}")
+                loss_streak = 0  # Reset streak after cooldown triggered
             return
         return
 
@@ -2390,23 +2394,25 @@ def backtest(days=30, interval="5m"):
 
         adx_now = float(adx_full.iloc[i]) if not np.isnan(adx_full.iloc[i]) else 0.0
         adx_bonus = max(0.0, min((adx_now - 20.0) / 400.0, 0.15))
-        ml_direct = max(0.0, min(0.15, (p_ml - 0.5) * 0.3)) if p_ml > 0.55 else 0.0
+        ml_direct = max(0.0, min(0.25, (p_ml - 0.5) * 0.5)) if p_ml > 0.52 else 0.0
+        ml_penalty = min(0.0, (p_ml - 0.5) * 0.3) if p_ml < 0.45 else 0.0
         boost = (p_ml - 0.5) * 0.4 + adx_bonus
 
         # SYNCHRONIZED scoring weights (matches live trading exactly)
         score = (
-            0.20*(1.0 if breakout_ok else 0.0) +
-            0.12*(1.0 if trend_ok else 0.0) +
+            0.18*(1.0 if breakout_ok else 0.0) +
+            0.10*(1.0 if trend_ok else 0.0) +
             0.05*(1.0 if secondary_ok else 0.0) +
-            0.12*(1.0 if drawdown_ok else 0.0) +
-            0.06*(1.0 if rsi_ok else 0.0) +
-            0.05*(1.0 if vol_gate else 0.0) +
-            0.15*(1.0 if oversold_ok else 0.0) +
-            0.12*(1.0 if ema_bounce_ok else 0.0) +
-            0.10*(1.0 if bb_bounce_ok else 0.0) +
-            0.12*(1.0 if macd_cross_ok else 0.0) +
-            0.08*(1.0 if range_support_ok else 0.0) +
+            0.10*(1.0 if drawdown_ok else 0.0) +
+            0.05*(1.0 if rsi_ok else 0.0) +
+            0.04*(1.0 if vol_gate else 0.0) +
+            0.12*(1.0 if oversold_ok else 0.0) +
+            0.10*(1.0 if ema_bounce_ok else 0.0) +
+            0.08*(1.0 if bb_bounce_ok else 0.0) +
+            0.10*(1.0 if macd_cross_ok else 0.0) +
+            0.06*(1.0 if range_support_ok else 0.0) +
             ml_direct +
+            ml_penalty +
             boost
         )
 
