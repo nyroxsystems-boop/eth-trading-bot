@@ -160,6 +160,53 @@ def _rescore_migration_v2():
                 print("✅ Scoring v4: all strategies already have correct scores")
     except Exception as e:
         print(f"⚠️ Scoring v4 migration error: {e}")
+    
+    # === v5 MIGRATION: Purge fake 100% WR strategies ===
+    # The old backtester deleted all strategies with WR < 50%, so only "100% WR"
+    # strategies survived. Their stored metrics are fake — tiny TP targets that
+    # always hit, with losses hidden. These block new honest strategies.
+    # Fix: set score=0 for any strategy with exactly 100% WR (no real strategy
+    # has a perfect win rate over meaningful trade counts).
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v5_purge_fake_wr'")
+            row = cursor.fetchone()
+            if row:
+                return  # Already done
+            
+            # Set score=0 for strategies with 100% WR (these are guaranteed fake)
+            cursor.execute("""
+                UPDATE learning_strategies 
+                SET score = 0
+                WHERE metrics::text LIKE '%"win_rate": 100.0%'
+                   OR metrics::text LIKE '%"win_rate": 100%'
+                   OR metrics::text LIKE '%"win_rate":100%'
+            """)
+            purged = cursor.rowcount
+            
+            # Also purge strategies with WR > 95% and fewer than 20 trades (statistically meaningless)
+            cursor.execute("""
+                UPDATE learning_strategies 
+                SET score = 0
+                WHERE CAST(metrics->>'win_rate' AS FLOAT) > 95.0
+                  AND CAST(metrics->>'total_trades' AS FLOAT) < 20
+                  AND score > 0
+            """)
+            purged2 = cursor.rowcount
+            
+            cursor.execute("""
+                INSERT INTO kv_store (key, value) VALUES ('scoring_v5_purge_fake_wr', 'true')
+                ON CONFLICT (key) DO UPDATE SET value = 'true'
+            """)
+            
+            if purged + purged2 > 0:
+                print(f"🧹 PURGE v5: Zeroed {purged} fake-100%-WR + {purged2} suspicious >95%-WR strategies")
+            else:
+                print("✅ Purge v5: no fake strategies found")
+    except Exception as e:
+        print(f"⚠️ Purge v5 error: {e}")
 
 
 # ─── Write Operations ───
