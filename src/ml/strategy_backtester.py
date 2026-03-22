@@ -398,11 +398,18 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     std_pnl = (sum((p - avg_pnl) ** 2 for p in pnls) / len(pnls)) ** 0.5
     sharpe = (avg_pnl / std_pnl * (len(trades) ** 0.5)) if std_pnl > 0 else 0
     
-    # === SCORING: v4 WIN-RATE DOMINANT (aligned with continuous_backtester) ===
+    # === SCORING: v5 WIN-RATE DOMINANT with RELIABILITY FILTERS ===
     n_trades = len(trades)
     
-    # KILL GATE: WR < 55% = score 0 (same as continuous_backtester)
-    if win_rate < 55.0:
+    # FAKE GATES: reject unrealistically perfect strategies
+    if win_rate >= 99.5:
+        score = 0.0  # No real strategy has 100% WR
+    elif win_rate >= 90.0 and n_trades < 30:
+        score = 0.0  # Statistically meaningless with so few trades
+    elif win_rate >= 80.0 and n_trades < 10:
+        score = 0.0  # Way too few samples for such high WR
+    # KILL GATE: WR < 55% = score 0
+    elif win_rate < 55.0:
         score = 0.0
     else:
         score = win_rate * 10.0
@@ -417,10 +424,10 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
         score += min(sharpe, 3.0) * 2.0
         # Drawdown penalty
         score -= max_drawdown * 100 * 2.0
-        # Trade count bonus
-        score += min(n_trades / 10, 1.0) * 50
-        # Reliability gate
-        if n_trades < 5:
+        # Trade count bonus (need ≥20 trades for full credit)
+        score += min(n_trades / 20, 1.0) * 50
+        # Reliability gate: <10 trades = divide by 10
+        if n_trades < 10:
             score *= 0.1
     
     # Exit reason breakdown for debugging

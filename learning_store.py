@@ -81,10 +81,12 @@ def ensure_learning_tables():
 
 
 def _rescore_migration_v2():
-    """One-time migration: re-score all existing strategies with the v4 formula.
+    """One-time migration: re-score all existing strategies with the v5 formula.
     
-    v4: Win Rate ULTRA-DOMINANT. WR < 55% = score 0, WR tier bonuses,
-    ROI weight slashed to ×3 (was ×20), drawdown penalty doubled.
+    v5: Win Rate DOMINANT with RELIABILITY FILTERS.
+    WR >= 99.5% = score 0, WR >= 90% with < 30 trades = score 0,
+    WR >= 80% with < 10 trades = score 0, WR < 55% = score 0.
+    Reliability gate raised to 10 trades, trade bonus requires 20 trades.
     Without this, old strategies with inflated scores block new ones forever.
     """
     if not USE_POSTGRES or not HAS_DB_ADAPTER:
@@ -94,8 +96,8 @@ def _rescore_migration_v2():
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            # Check if already migrated (v4 key — forces re-score from v3)
-            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v4_migrated'")
+            # Check if already migrated (v5 key — forces re-score from v4)
+            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v5_migrated'")
             row = cursor.fetchone()
             if row:
                 return  # Already done
@@ -114,12 +116,19 @@ def _rescore_migration_v2():
             for row_id, metrics_raw, old_score in rows:
                 metrics = metrics_raw if isinstance(metrics_raw, dict) else json.loads(metrics_raw)
                 
-                # v4 scoring formula (must match continuous_backtester.calculate_score)
+                # v5 scoring formula (must match continuous_backtester.calculate_score)
                 win_rate = metrics.get('win_rate', 0)
                 total_trades = metrics.get('total_trades', 0)
                 
+                # FAKE GATES: reject unrealistically perfect strategies
+                if win_rate >= 99.5:
+                    new_score = 0.0
+                elif win_rate >= 90.0 and total_trades < 30:
+                    new_score = 0.0
+                elif win_rate >= 80.0 and total_trades < 10:
+                    new_score = 0.0
                 # KILL GATE: WR < 55% = instant death
-                if win_rate < 55.0:
+                elif win_rate < 55.0:
                     new_score = 0.0
                 else:
                     new_score = 0.0
@@ -135,10 +144,10 @@ def _rescore_migration_v2():
                     new_score += min(metrics.get('sharpe_ratio', 0), 3.0) * 2.0
                     # Drawdown penalty
                     new_score -= metrics.get('max_drawdown', 0) * 2.0
-                    # Trade count bonus
-                    new_score += min(total_trades / 10, 1.0) * 50
-                    # Reliability gate
-                    if total_trades < 5:
+                    # Trade count bonus (need ≥20 for full credit)
+                    new_score += min(total_trades / 20, 1.0) * 50
+                    # Reliability gate: <10 trades = divide by 10
+                    if total_trades < 10:
                         new_score *= 0.1
                 
                 if abs(new_score - old_score) > 0.1:
@@ -150,14 +159,14 @@ def _rescore_migration_v2():
             
             # Mark migration as done
             cursor.execute("""
-                INSERT INTO kv_store (key, value) VALUES ('scoring_v4_migrated', 'true')
+                INSERT INTO kv_store (key, value) VALUES ('scoring_v5_migrated', 'true')
                 ON CONFLICT (key) DO UPDATE SET value = 'true'
             """)
             
             if updated:
-                print(f"🔄 SCORING v4 MIGRATION: re-scored {updated}/{len(rows)} strategies (WR-dominant)")
+                print(f"🔄 SCORING v5 MIGRATION: re-scored {updated}/{len(rows)} strategies (with fake gates)")
             else:
-                print("✅ Scoring v4: all strategies already have correct scores")
+                print("✅ Scoring v5: all strategies already have correct scores")
     except Exception as e:
         print(f"⚠️ Scoring v4 migration error: {e}")
     
@@ -165,8 +174,7 @@ def _rescore_migration_v2():
     # The old backtester deleted all strategies with WR < 50%, so only "100% WR"
     # strategies survived. Their stored metrics are fake — tiny TP targets that
     # always hit, with losses hidden. These block new honest strategies.
-    # Fix: set score=0 for any strategy with exactly 100% WR (no real strategy
-    # has a perfect win rate over meaningful trade counts).
+    # Fix: set score=0 for any strategy with exactly 100% WR.
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -174,39 +182,95 @@ def _rescore_migration_v2():
             cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v5_purge_fake_wr'")
             row = cursor.fetchone()
             if row:
+                pass  # v5 already done, fall through to v6
+            else:
+                # Use proper JSONB extraction instead of fragile string matching
+                cursor.execute("""
+                    UPDATE learning_strategies 
+                    SET score = 0
+                    WHERE CAST(metrics->>'win_rate' AS FLOAT) >= 99.9
+                      AND score > 0
+                """)
+                purged = cursor.rowcount
+                
+                # Also purge strategies with WR > 95% and fewer than 20 trades
+                cursor.execute("""
+                    UPDATE learning_strategies 
+                    SET score = 0
+                    WHERE CAST(metrics->>'win_rate' AS FLOAT) > 95.0
+                      AND CAST(metrics->>'total_trades' AS INTEGER) < 20
+                      AND score > 0
+                """)
+                purged2 = cursor.rowcount
+                
+                cursor.execute("""
+                    INSERT INTO kv_store (key, value) VALUES ('scoring_v5_purge_fake_wr', 'true')
+                    ON CONFLICT (key) DO UPDATE SET value = 'true'
+                """)
+                
+                if purged + purged2 > 0:
+                    print(f"🧹 PURGE v5: Zeroed {purged} fake-100%-WR + {purged2} suspicious >95%-WR strategies")
+                else:
+                    print("✅ Purge v5: no fake strategies found")
+    except Exception as e:
+        print(f"⚠️ Purge v5 error: {e}")
+    
+    # === v6 MIGRATION: Aggressive purge of ALL unrealistic strategies ===
+    # v5 was insufficient — string matching missed many 100% WR entries.
+    # v6 uses robust JSONB queries and also catches:
+    # - ANY 100% WR strategy (no legitimate strategy is perfect)
+    # - WR >= 90% with < 30 trades (statistically meaningless)
+    # - WR >= 80% with < 10 trades (too few samples)
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v6_aggressive_purge'")
+            row = cursor.fetchone()
+            if row:
                 return  # Already done
             
-            # Set score=0 for strategies with 100% WR (these are guaranteed fake)
+            # 1. Kill ALL 100% WR strategies — no real strategy is perfect
             cursor.execute("""
                 UPDATE learning_strategies 
                 SET score = 0
-                WHERE metrics::text LIKE '%"win_rate": 100.0%'
-                   OR metrics::text LIKE '%"win_rate": 100%'
-                   OR metrics::text LIKE '%"win_rate":100%'
-            """)
-            purged = cursor.rowcount
-            
-            # Also purge strategies with WR > 95% and fewer than 20 trades (statistically meaningless)
-            cursor.execute("""
-                UPDATE learning_strategies 
-                SET score = 0
-                WHERE CAST(metrics->>'win_rate' AS FLOAT) > 95.0
-                  AND CAST(metrics->>'total_trades' AS FLOAT) < 20
+                WHERE CAST(metrics->>'win_rate' AS FLOAT) >= 99.5
                   AND score > 0
             """)
-            purged2 = cursor.rowcount
+            purged_perfect = cursor.rowcount
+            
+            # 2. Kill WR >= 90% with fewer than 30 trades (statistically meaningless)
+            cursor.execute("""
+                UPDATE learning_strategies 
+                SET score = 0
+                WHERE CAST(metrics->>'win_rate' AS FLOAT) >= 90.0
+                  AND CAST(metrics->>'total_trades' AS INTEGER) < 30
+                  AND score > 0
+            """)
+            purged_suspicious = cursor.rowcount
+            
+            # 3. Kill WR >= 80% with fewer than 10 trades (way too few samples)
+            cursor.execute("""
+                UPDATE learning_strategies 
+                SET score = 0
+                WHERE CAST(metrics->>'win_rate' AS FLOAT) >= 80.0
+                  AND CAST(metrics->>'total_trades' AS INTEGER) < 10
+                  AND score > 0
+            """)
+            purged_tiny = cursor.rowcount
             
             cursor.execute("""
-                INSERT INTO kv_store (key, value) VALUES ('scoring_v5_purge_fake_wr', 'true')
+                INSERT INTO kv_store (key, value) VALUES ('scoring_v6_aggressive_purge', 'true')
                 ON CONFLICT (key) DO UPDATE SET value = 'true'
             """)
             
-            if purged + purged2 > 0:
-                print(f"🧹 PURGE v5: Zeroed {purged} fake-100%-WR + {purged2} suspicious >95%-WR strategies")
+            total_purged = purged_perfect + purged_suspicious + purged_tiny
+            if total_purged > 0:
+                print(f"🧹 PURGE v6: Zeroed {purged_perfect} perfect-WR + {purged_suspicious} suspicious-WR + {purged_tiny} tiny-sample strategies")
             else:
-                print("✅ Purge v5: no fake strategies found")
+                print("✅ Purge v6: no unrealistic strategies found")
     except Exception as e:
-        print(f"⚠️ Purge v5 error: {e}")
+        print(f"⚠️ Purge v6 error: {e}")
 
 
 # ─── Write Operations ───
@@ -275,43 +339,38 @@ def get_top_n_strategies(n: int = 3) -> List[Dict]:
 
 
 def _pg_save_strategy(strategy: Dict):
-    """Save strategy to PostgreSQL with deduplication."""
+    """Save strategy to PostgreSQL with deduplication.
+    
+    Counter logic: total_tested increments AFTER successful insert,
+    so deduped/skipped strategies don't inflate the count.
+    """
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             score = strategy.get("score", 0)
             metrics = strategy.get("metrics", {})
             
-            # Increment lifetime counter (never pruned)
-            cursor.execute("""
-                INSERT INTO kv_store (key, value) VALUES ('total_strategies_tested', '1')
-                ON CONFLICT (key) DO UPDATE SET value = (COALESCE(kv_store.value::int, 0) + 1)::text
-            """)
-            # Increment daily counter (resets each day)
-            today_key = f"strategies_tested_{datetime.now().strftime('%Y-%m-%d')}"
-            cursor.execute("""
-                INSERT INTO kv_store (key, value) VALUES (%s, '1')
-                ON CONFLICT (key) DO UPDATE SET value = (COALESCE(kv_store.value::int, 0) + 1)::text
-            """, (today_key,))
-            # Increment hourly counter (for accurate "This Hour" dashboard display)
-            hour_key = f"strategies_tested_{datetime.now().strftime('%Y-%m-%d_%H')}"
-            cursor.execute("""
-                INSERT INTO kv_store (key, value) VALUES (%s, '1')
-                ON CONFLICT (key) DO UPDATE SET value = (COALESCE(kv_store.value::int, 0) + 1)::text
-            """, (hour_key,))
-            
             # DEDUP: Skip if a strategy with very similar score AND same win_rate already exists
-            # Tightened from 5.0 to 1.0 — was blocking diverse strategies from entering
             cursor.execute("""
                 SELECT COUNT(*) FROM learning_strategies
                 WHERE ABS(score - %s) < 1.0
-                AND metrics::text LIKE %s
+                AND ABS(CAST(metrics->>'win_rate' AS FLOAT) - %s) < 0.1
             """, (
                 score,
-                f'%"win_rate": {metrics.get("win_rate", -1)}%'
+                float(metrics.get("win_rate", -1))
             ))
             if cursor.fetchone()[0] > 0:
-                return  # Skip duplicate
+                return  # Skip duplicate — do NOT increment counters
+            
+            # Apply reliability filter before saving: reject fake-looking strategies
+            win_rate = float(metrics.get("win_rate", 0))
+            total_trades = int(metrics.get("total_trades", 0))
+            if win_rate >= 99.5:  # No real strategy is 100% WR
+                score = 0
+            elif win_rate >= 90.0 and total_trades < 30:
+                score = 0  # Statistically meaningless
+            elif win_rate >= 80.0 and total_trades < 10:
+                score = 0  # Way too few samples
             
             cursor.execute("""
                 INSERT INTO learning_strategies (params, metrics, score, applied, data_source)
@@ -323,6 +382,22 @@ def _pg_save_strategy(strategy: Dict):
                 strategy.get("applied", False),
                 strategy.get("data_source", "historical_binance")
             ))
+
+            # Increment counters AFTER successful insert (not before dedup)
+            cursor.execute("""
+                INSERT INTO kv_store (key, value) VALUES ('total_strategies_tested', '1')
+                ON CONFLICT (key) DO UPDATE SET value = (COALESCE(kv_store.value::int, 0) + 1)::text
+            """)
+            today_key = f"strategies_tested_{datetime.now().strftime('%Y-%m-%d')}"
+            cursor.execute("""
+                INSERT INTO kv_store (key, value) VALUES (%s, '1')
+                ON CONFLICT (key) DO UPDATE SET value = (COALESCE(kv_store.value::int, 0) + 1)::text
+            """, (today_key,))
+            hour_key = f"strategies_tested_{datetime.now().strftime('%Y-%m-%d_%H')}"
+            cursor.execute("""
+                INSERT INTO kv_store (key, value) VALUES (%s, '1')
+                ON CONFLICT (key) DO UPDATE SET value = (COALESCE(kv_store.value::int, 0) + 1)::text
+            """, (hour_key,))
 
             # Keep only top 1000 strategies (prune old low-scorers)
             cursor.execute("""

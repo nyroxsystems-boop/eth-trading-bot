@@ -125,21 +125,23 @@ class ContinuousBacktester:
     
     def calculate_score(self, metrics: Dict[str, Any]) -> float:
         """
-        Calculate strategy score — WIN RATE ULTRA-DOMINANT (v4).
+        Calculate strategy score — WIN RATE DOMINANT with RELIABILITY FILTERS (v5).
         
         Philosophy: Win Rate IS the score. ROI is a tiebreaker.
         A 65% WR + 2% ROI strategy MUST beat a 50% WR + 30% ROI strategy.
         
         Formula:
-          KILL GATE: WR < 55% → score = 0  (instantly kill bad strategies)
-          Base:      WR × 10.0             (55% = 550, 65% = 650, 70% = 700)
-          WR Tiers:  +100 if WR>58%, +250 if WR>62%, +500 if WR>66%, +800 if WR>70%
-          ROI:       × 3.0  (tiebreaker only — 10% ROI = 30 pts, trivial vs WR)
-          Sharpe:    × 2.0  (capped at 3.0 raw)
-          Drawdown:  × -2.0 (heavier penalty for risky strategies)
-          Trades:    min(trades/10, 1) × 50 (need ≥10 trades for full credit)
-          
-        RELIABILITY GATE: <5 trades = score ÷ 10
+          FAKE GATE:   WR >= 99.5%                     → score = 0 (no real strategy is perfect)
+          FAKE GATE:   WR >= 90% AND trades < 30       → score = 0 (statistically meaningless)
+          FAKE GATE:   WR >= 80% AND trades < 10       → score = 0 (too few samples)
+          KILL GATE:   WR < 55%                        → score = 0 (bad strategy)
+          RELIABILITY: trades < 10                     → score ÷ 10
+          Base:        WR × 10.0
+          WR Tiers:    +100 if WR>58%, +250 if WR>62%, +500 if WR>66%, +800 if WR>70%
+          ROI:         × 3.0  (tiebreaker only)
+          Sharpe:      × 2.0  (capped at 3.0 raw)
+          Drawdown:    × -2.0 (penalty)
+          Trades:      min(trades/20, 1) × 50 (need ≥20 trades for full credit)
         """
         if not metrics:
             return 0.0
@@ -147,13 +149,21 @@ class ContinuousBacktester:
         win_rate = metrics.get('win_rate', 0)
         total_trades = metrics.get('total_trades', 0)
         
+        # FAKE GATES: reject unrealistically perfect strategies
+        if win_rate >= 99.5:
+            return 0.0  # No real strategy has 100% WR
+        if win_rate >= 90.0 and total_trades < 30:
+            return 0.0  # Statistically meaningless with so few trades
+        if win_rate >= 80.0 and total_trades < 10:
+            return 0.0  # Way too few samples for such high WR
+        
         # KILL GATE: below 55% WR = instant death
         if win_rate < 55.0:
             return 0.0
         
         score = 0.0
         
-        # Win Rate — ULTRA-DOMINANT: this IS the score
+        # Win Rate — DOMINANT: this IS the score
         score += win_rate * 10.0
         
         # Win Rate TIER BONUSES — exponential reward for higher WR
@@ -178,11 +188,11 @@ class ContinuousBacktester:
         max_dd = metrics.get('max_drawdown', 0)
         score -= max_dd * 2.0
         
-        # Trade count reliability bonus (need ≥10 trades for full credit)
-        score += min(total_trades / 10, 1.0) * 50
+        # Trade count reliability bonus (need ≥20 trades for full credit)
+        score += min(total_trades / 20, 1.0) * 50
         
-        # RELIABILITY GATE: <5 trades = divide by 10
-        if total_trades < 5:
+        # RELIABILITY GATE: <10 trades = divide by 10
+        if total_trades < 10:
             score *= 0.1
         
         return score
