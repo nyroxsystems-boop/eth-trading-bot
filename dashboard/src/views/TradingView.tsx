@@ -18,10 +18,10 @@ const TradingView = () => {
     ]
 
     return (
+        <div style={{ padding: '24px' }}>
         <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            style={{ padding: '24px' }}
         >
             {/* Tab Navigation */}
             <div style={{
@@ -65,6 +65,7 @@ const TradingView = () => {
                 {activeTab === 'strategy' && <StrategyLabView />}
             </div>
         </motion.div>
+        </div>
     )
 }
 

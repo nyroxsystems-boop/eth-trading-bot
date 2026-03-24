@@ -64,11 +64,11 @@ export default function PortfolioView() {
     const ethEquivalent = ethPrice > 0 ? capital / ethPrice : 0
 
     return (
-        <motion.div
+        <div style={{ padding: '32px', maxWidth: '1000px', margin: '0 auto' }}>
+          <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            style={{ padding: '32px', maxWidth: '1000px', margin: '0 auto' }}
-        >
+          >
             {/* Wallet Header */}
             <div style={{ marginBottom: '32px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
@@ -388,5 +388,6 @@ export default function PortfolioView() {
                 </motion.div>
             )}
         </motion.div>
+        </div>
     )
 }

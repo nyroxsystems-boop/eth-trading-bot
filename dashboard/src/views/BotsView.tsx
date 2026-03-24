@@ -59,10 +59,10 @@ export default function BotsView() {
     }
 
     return (
+        <div className="flex-1 p-8">
         <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex-1 p-8"
         >
             <div className="mb-6">
                 <h1 className="text-3xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">
@@ -270,5 +270,6 @@ export default function BotsView() {
                 </motion.div>
             </div>
         </motion.div>
+        </div>
     )
 }
