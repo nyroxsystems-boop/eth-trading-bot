@@ -62,7 +62,6 @@ export default function BotsView() {
         <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
             className="flex-1 p-8"
         >
             <div className="mb-6">

@@ -67,7 +67,6 @@ export default function PortfolioView() {
         <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
             style={{ padding: '32px', maxWidth: '1000px', margin: '0 auto' }}
         >
             {/* Wallet Header */}

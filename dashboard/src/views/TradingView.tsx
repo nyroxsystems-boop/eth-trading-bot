@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Bot, Beaker } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import '../styles/premium.css'
 
 // Import existing views
@@ -60,18 +60,10 @@ const TradingView = () => {
             </div>
 
             {/* Tab Content */}
-            <AnimatePresence mode="wait">
-                <motion.div
-                    key={activeTab}
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    transition={{ duration: 0.2 }}
-                >
-                    {activeTab === 'bots' && <BotsView />}
-                    {activeTab === 'strategy' && <StrategyLabView />}
-                </motion.div>
-            </AnimatePresence>
+            <div key={activeTab}>
+                {activeTab === 'bots' && <BotsView />}
+                {activeTab === 'strategy' && <StrategyLabView />}
+            </div>
         </motion.div>
     )
 }
