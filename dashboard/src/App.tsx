@@ -287,10 +287,9 @@ function Dashboard() {
         <main className="app-content">
           <ErrorBoundary>
             <Suspense fallback={<LoadingFallback />}>
-              <AnimatePresence mode="wait">
+              <div key={activePage}>
                 {activePage === 'dashboard' && (
                   <DashboardView
-                    key="dashboard"
                     trades={trades}
                     metrics={metrics}
                     status={status}
@@ -300,25 +299,24 @@ function Dashboard() {
                     setTimeframe={setTimeframe}
                   />
                 )}
-                {activePage === 'portfolio' && <PortfolioView key="portfolio" />}
-                {activePage === 'learning' && <LearningView key="learning" />}
-                {activePage === 'trading' && <TradingView key="trading" />}
-                {activePage === 'analytics' && <AnalyticsView key="analytics" />}
-                {activePage === 'social' && <SocialView key="social" />}
-                {activePage === 'journal' && <TradingJournalView key="journal" />}
-                {activePage === 'account' && <AccountView key="account" />}
-                {activePage === 'admin' && <AdminDashboardView key="admin" />}
-                {/* Legacy routes for direct navigation */}
-                {activePage === 'ml' && <MLMonitorView key="ml" />}
-                {activePage === 'accounts' && <AccountsView key="accounts" />}
-                {activePage === 'bots' && <BotsView key="bots" />}
-                {activePage === 'subscription' && <SubscriptionView key="subscription" />}
-                {activePage === 'pricing' && <PricingView key="pricing" />}
-                {activePage === 'leaderboard' && <LeaderboardView key="leaderboard" />}
-                {activePage === 'earnings' && <EarningsView key="earnings" />}
-                {activePage === 'strategy-lab' && <StrategyLabView key="strategy-lab" />}
-                {activePage === 'settings' && <SettingsView key="settings" />}
-              </AnimatePresence>
+                {activePage === 'portfolio' && <PortfolioView />}
+                {activePage === 'learning' && <LearningView />}
+                {activePage === 'trading' && <TradingView />}
+                {activePage === 'analytics' && <AnalyticsView />}
+                {activePage === 'social' && <SocialView />}
+                {activePage === 'journal' && <TradingJournalView />}
+                {activePage === 'account' && <AccountView />}
+                {activePage === 'admin' && <AdminDashboardView />}
+                {activePage === 'ml' && <MLMonitorView />}
+                {activePage === 'accounts' && <AccountsView />}
+                {activePage === 'bots' && <BotsView />}
+                {activePage === 'subscription' && <SubscriptionView />}
+                {activePage === 'pricing' && <PricingView />}
+                {activePage === 'leaderboard' && <LeaderboardView />}
+                {activePage === 'earnings' && <EarningsView />}
+                {activePage === 'strategy-lab' && <StrategyLabView />}
+                {activePage === 'settings' && <SettingsView />}
+              </div>
             </Suspense>
           </ErrorBoundary>
         </main>
