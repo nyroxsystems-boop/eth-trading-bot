@@ -2,7 +2,9 @@
 import csv, os
 from datetime import datetime, timedelta
 
-CSV="/root/ethbot/logs/trades.csv"
+import pathlib
+_ROOT=pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
+CSV=str(_ROOT/"logs/trades.csv")
 FMT="%Y-%m-%d %H:%M:%S"
 COOLDOWN_MIN=int(os.getenv("LOSS_COOLDOWN_MIN","15"))
 

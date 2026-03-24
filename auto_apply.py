@@ -30,14 +30,15 @@ def get_learning_db():
 class AutoApply:
     def __init__(
         self,
-        db_path: str = "/root/ethbot/logs/learning.db",
-        settings_file: str = "/root/ethbot/logs/bot_settings.json",
+        db_path: str = None,
+        settings_file: str = None,
         api_url: str = "http://localhost:8000",
         telegram_bot_token: str = None,
         telegram_chat_id: str = None
     ):
-        self.db_path = Path(db_path)
-        self.settings_file = Path(settings_file)
+        _root = Path(__file__).resolve().parent
+        self.db_path = Path(db_path) if db_path else (_root / "logs" / "learning.db")
+        self.settings_file = Path(settings_file) if settings_file else (_root / "logs" / "bot_settings.json")
         self.api_url = api_url
         self.telegram_bot_token = telegram_bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
         self.telegram_chat_id = telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID")

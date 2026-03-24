@@ -151,7 +151,7 @@ async def get_current_admin(current_user: dict = Depends(get_current_user)):
 # Configuration
 DASHBOARD_SECRET = os.getenv("DASHBOARD_SECRET", "change_me")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
-LOG_DIR = Path(os.getenv("LOG_DIR", "/root/ethbot/logs"))
+LOG_DIR = Path(os.getenv("LOG_DIR", str(Path(__file__).resolve().parent / "logs")))
 TRADES_CSV = LOG_DIR / "trades.csv"
 CONSOLE_LOG = LOG_DIR / "console.out"
 # DEMO_MODE: false = show real trades, true = generate demo data
@@ -409,16 +409,47 @@ async def get_performance_metrics() -> PerformanceMetrics:
             max_drawdown=0, roi=0
         )
     
-    # Use recorded PnL from SELL trades (not FIFO pairing which breaks with orphaned BUYs)
+    # Use recorded PnL from SELL trades if available, otherwise calculate via FIFO
     today = datetime.now().date().isoformat()
     trade_pnls = []
     today_trade_pnls = []
     
-    for trade in trades:
-        if trade.action.upper() == "SELL" and trade.pnl != 0:
-            trade_pnls.append(trade.pnl)
-            if trade.timestamp.startswith(today):
-                today_trade_pnls.append(trade.pnl)
+    # Check if ANY sell trade has a recorded PnL (non-zero)
+    has_recorded_pnl = any(
+        t.action.upper() == "SELL" and t.pnl != 0
+        for t in trades
+    )
+    
+    if has_recorded_pnl:
+        # Use recorded PnL from SELL trades (PostgreSQL mode)
+        for trade in trades:
+            if trade.action.upper() == "SELL" and trade.pnl != 0:
+                trade_pnls.append(trade.pnl)
+                if trade.timestamp.startswith(today):
+                    today_trade_pnls.append(trade.pnl)
+    else:
+        # FIFO PnL calculation (CSV mode — no pnl column)
+        from collections import deque
+        fifo = deque()
+        for trade in trades:
+            if trade.action.upper() == "BUY" and trade.price > 0:
+                fifo.append([trade.qty, trade.price])
+            elif trade.action.upper() == "SELL" and trade.price > 0 and fifo:
+                remaining = trade.qty
+                pnl_this_trade = 0.0
+                while remaining > 1e-12 and fifo:
+                    buy_qty, buy_price = fifo[0]
+                    take = min(buy_qty, remaining)
+                    pnl_this_trade += (trade.price - buy_price) * take
+                    buy_qty -= take
+                    remaining -= take
+                    if buy_qty <= 1e-12:
+                        fifo.popleft()
+                    else:
+                        fifo[0] = [buy_qty, buy_price]
+                trade_pnls.append(pnl_this_trade)
+                if trade.timestamp.startswith(today):
+                    today_trade_pnls.append(pnl_this_trade)
     
     # Compute stats
     total_pnl = sum(trade_pnls)
@@ -442,11 +473,12 @@ async def get_performance_metrics() -> PerformanceMetrics:
     else:
         sharpe = 0
     
-    # Max Drawdown
+    # Max Drawdown (based on capital, not just PnL curve)
     max_dd = 0
+    initial_capital = float(os.getenv("EQUITY_USDT", "100000"))
     if trade_pnls:
         equity_curve = []
-        running = 0
+        running = initial_capital
         for pnl in trade_pnls:
             running += pnl
             equity_curve.append(running)
@@ -456,9 +488,9 @@ async def get_performance_metrics() -> PerformanceMetrics:
                 peak = val
             dd = (peak - val) / peak if peak > 0 else 0
             max_dd = max(max_dd, dd)
+    max_dd = min(max_dd, 1.0)  # Cap at 100%
     
     # ROI
-    initial_capital = float(os.getenv("EQUITY_USDT", 10000))
     roi = (total_pnl / initial_capital) * 100 if initial_capital > 0 else 0
     
     return PerformanceMetrics(
@@ -927,25 +959,56 @@ async def get_performance_history(days: int = 7):
 
     daily_pnl = {}
 
-    for trade in trades_raw:
-        try:
-            # Parse timestamp
-            ts = trade["timestamp"]
-            if 'T' in ts:
-                date = ts.split('T')[0]
-            else:
-                date = ts.split(' ')[0]
+    # Check if any sell has recorded PnL
+    has_recorded_pnl = any(
+        t["action"] == "SELL" and t.get("pnl", 0) != 0
+        for t in trades_raw
+    )
 
-            if date not in daily_pnl:
-                daily_pnl[date] = {"date": date, "pnl": 0, "trades": 0}
-
-            # Use recorded PnL from SELL trades (not FIFO pairing which breaks with orphaned BUYs)
-            if trade["action"] == "SELL" and trade.get("pnl", 0) != 0:
-                daily_pnl[date]["pnl"] += trade["pnl"]
-                daily_pnl[date]["trades"] += 1
-        except Exception as e:
-            print(f"Error processing trade: {e}")
-            continue
+    if has_recorded_pnl:
+        # PostgreSQL mode: use recorded PnL
+        for trade in trades_raw:
+            try:
+                ts = trade["timestamp"]
+                date = ts.split('T')[0] if 'T' in ts else ts.split(' ')[0]
+                if date not in daily_pnl:
+                    daily_pnl[date] = {"date": date, "pnl": 0, "trades": 0}
+                if trade["action"] == "SELL" and trade.get("pnl", 0) != 0:
+                    daily_pnl[date]["pnl"] += trade["pnl"]
+                    daily_pnl[date]["trades"] += 1
+            except Exception as e:
+                print(f"Error processing trade: {e}")
+                continue
+    else:
+        # CSV mode: calculate PnL via FIFO
+        from collections import deque
+        fifo = deque()
+        for trade in trades_raw:
+            try:
+                ts = trade["timestamp"]
+                date = ts.split('T')[0] if 'T' in ts else ts.split(' ')[0]
+                if date not in daily_pnl:
+                    daily_pnl[date] = {"date": date, "pnl": 0, "trades": 0}
+                if trade["action"] == "BUY" and trade["price"] > 0:
+                    fifo.append([trade["qty"], trade["price"]])
+                elif trade["action"] == "SELL" and trade["price"] > 0 and fifo:
+                    remaining = trade["qty"]
+                    pnl_trade = 0.0
+                    while remaining > 1e-12 and fifo:
+                        buy_qty, buy_price = fifo[0]
+                        take = min(buy_qty, remaining)
+                        pnl_trade += (trade["price"] - buy_price) * take
+                        buy_qty -= take
+                        remaining -= take
+                        if buy_qty <= 1e-12:
+                            fifo.popleft()
+                        else:
+                            fifo[0] = [buy_qty, buy_price]
+                    daily_pnl[date]["pnl"] += pnl_trade
+                    daily_pnl[date]["trades"] += 1
+            except Exception as e:
+                print(f"Error processing trade: {e}")
+                continue
 
     # Convert to sorted list with cumulative P&L
     history = []

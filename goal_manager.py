@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import os, csv, time, json, pathlib, datetime as dt
-ROOT=pathlib.Path("/root/ethbot"); LOGD=ROOT/"logs"; STATED=ROOT/"state"
+ROOT=pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent))); LOGD=ROOT/"logs"; STATED=ROOT/"state"
 TRADES=LOGD/"trades.csv"; RISK_FLAG=STATED/"risk_off.flag"; META=STATED/"goals.json"
 def envf(k,d): 
     v=os.getenv(k); 

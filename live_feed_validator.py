@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-import time, json, pathlib, re
+import os, time, json, pathlib, re
 
-ROOT = pathlib.Path("/root/ethbot")
+ROOT = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
 LOG = ROOT / "logs" / "console.out"
 OUT = ROOT / "cache" / "feed_state.json"
 

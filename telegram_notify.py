@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import os, json, urllib.request, urllib.parse, time, pathlib
 
-ENV = pathlib.Path("/root/ethbot/.env.bot")
+ENV = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent))) / ".env.bot"
 def load_env():
     data={}
     if ENV.exists():

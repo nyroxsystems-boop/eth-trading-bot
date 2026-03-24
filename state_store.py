@@ -1,5 +1,6 @@
 import json, pathlib, time
-ROOT=pathlib.Path("/root/ethbot"); F=ROOT/"state/state.json"
+import os
+ROOT=pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent))); F=ROOT/"state/state.json"
 def load():
     try: return json.loads(F.read_text())
     except: return {"ts":int(time.time()),"open":None}

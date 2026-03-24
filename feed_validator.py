@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-import sys, time, re
+import os, sys, time, re
 from pathlib import Path
 from datetime import datetime, timezone
 
-ROOT = Path("/root/ethbot")
+ROOT = Path(os.getenv("ETHBOT_ROOT", str(Path(__file__).resolve().parent)))
 LOGD = ROOT / "logs"
 LOGD.mkdir(parents=True, exist_ok=True)
 CONSOLE = LOGD / "console.out"

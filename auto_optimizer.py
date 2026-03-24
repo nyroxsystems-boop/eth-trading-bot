@@ -121,8 +121,9 @@ def auto_optimize_parameters():
         try:
             import json
             import os
-            os.makedirs("/root/ethbot/logs", exist_ok=True)
-            with open("/root/ethbot/logs/optimized_params.json", "w") as f:
+            _log_dir = os.path.join(os.getenv("ETHBOT_ROOT", os.path.dirname(os.path.abspath(__file__))), "logs")
+            os.makedirs(_log_dir, exist_ok=True)
+            with open(os.path.join(_log_dir, "optimized_params.json"), "w") as f:
                 json.dump({
                     'timestamp': datetime.now(timezone.utc).isoformat(),
                     'params': current_params,
@@ -226,7 +227,7 @@ def calculate_win_rate():
         import csv
         import os
         
-        trades_file = "/root/ethbot/logs/trades.csv"
+        trades_file = os.path.join(os.getenv("ETHBOT_ROOT", os.path.dirname(os.path.abspath(__file__))), "logs", "trades.csv")
         
         if not os.path.exists(trades_file):
             return 0.0

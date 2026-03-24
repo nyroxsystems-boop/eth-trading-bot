@@ -4,7 +4,7 @@ import os, shutil, subprocess, re, pathlib
 from datetime import datetime, timezone
 from telegram_notify import send
 
-ROOT=pathlib.Path("/root/ethbot")
+ROOT=pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
 LOG =ROOT/"logs"/"sentinel_guard.log"
 ENVF=ROOT/".env.bot"
 

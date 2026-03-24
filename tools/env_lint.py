@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os, sys, stat, re
-envf = "/root/ethbot/.env.bot"
+import pathlib
+envf = str(pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent.parent))) / ".env.bot")
 
 def out(x): print(x, flush=True)
 

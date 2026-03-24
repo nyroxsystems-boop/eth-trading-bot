@@ -2,7 +2,9 @@
 import csv, os, sys
 from datetime import datetime, timezone, timedelta
 
-CSV="/root/ethbot/logs/trades.csv"
+import pathlib
+_ROOT=pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
+CSV=str(_ROOT/"logs/trades.csv")
 FMT="%Y-%m-%d %H:%M:%S"
 TZI=timezone.utc
 

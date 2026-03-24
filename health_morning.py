@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os, subprocess, pathlib, json, time, csv
 from tools.notify import send
-ROOT=pathlib.Path("/root/ethbot")
+ROOT=pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
 
 def sh(cmd): return subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout.strip()
 

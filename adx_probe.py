@@ -18,7 +18,8 @@ def compute_adx_safe(ohlc: pd.DataFrame):
             continue
     return float("nan"), None
 
-path = Path("/root/ethbot/logs/console.out")
+_ROOT = Path(os.getenv("ETHBOT_ROOT", str(Path(__file__).resolve().parent)))
+path = _ROOT / "logs" / "console.out"
 lines = path.read_bytes().decode("utf-8","ignore").splitlines()[-20000:]
 
 rows = []

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import os, json, time, math, re, pathlib
-ROOT=pathlib.Path("/root/ethbot"); LOG=ROOT/"logs/console.out"; OUT=ROOT/"state/profile_hint.json"
+ROOT=pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent))); LOG=ROOT/"logs/console.out"; OUT=ROOT/"state/profile_hint.json"
 def pick(adx: float, rsi: float, last: float, highN: float) -> str:
     if adx is None: return "mr"
     # einfacher, robuster Heuristikmix

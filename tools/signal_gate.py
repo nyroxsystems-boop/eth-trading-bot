@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os, json, time, pathlib
 
-ROOT = pathlib.Path("/root/ethbot")
+ROOT = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent.parent)))
 CACHE = ROOT / "cache"
 LOG   = ROOT / "logs" / "signal_gate.log"
 CACHE.mkdir(parents=True, exist_ok=True)

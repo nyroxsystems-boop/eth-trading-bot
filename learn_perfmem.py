@@ -3,7 +3,7 @@ import csv, json, re, os
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
-ROOT=Path("/root/ethbot")
+ROOT=Path(os.getenv("ETHBOT_ROOT", str(Path(__file__).resolve().parent)))
 LOGS=ROOT/"logs"
 RUNTIME=ROOT/"runtime"
 DECIS=LOGS/"decisions.log"

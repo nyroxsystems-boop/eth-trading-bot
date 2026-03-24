@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import json, time, math, datetime as dt, urllib.request, urllib.error, pathlib, sys
+import os, json, time, math, datetime as dt, urllib.request, urllib.error, pathlib, sys
 
-LOG = pathlib.Path("/root/ethbot/logs/console.out")
+ROOT = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
+LOG = ROOT / "logs" / "console.out"
 SYMBOL   = "ETHUSDT"   # ggf. aus .env lesen, hier fix für Speed
 INTERVAL = "1m"        # 1-Minute-Kerzen
 

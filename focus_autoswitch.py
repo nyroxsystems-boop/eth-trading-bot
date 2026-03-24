@@ -2,10 +2,12 @@
 import os, csv, json, time, sys
 from datetime import datetime, timezone, timedelta
 
-CSV = "/root/ethbot/logs/trades.csv"
-ENV = "/root/ethbot/.env.bot"
-STATEF = "/root/ethbot/logs/focus_state.json"
-LOGF = "/root/ethbot/logs/focus_autoswitch.log"
+import pathlib
+_ROOT = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
+CSV = str(_ROOT / "logs/trades.csv")
+ENV = str(_ROOT / ".env.bot")
+STATEF = str(_ROOT / "logs/focus_state.json")
+LOGF = str(_ROOT / "logs/focus_autoswitch.log")
 FMT = "%Y-%m-%d %H:%M:%S"
 TZ = timezone.utc
 

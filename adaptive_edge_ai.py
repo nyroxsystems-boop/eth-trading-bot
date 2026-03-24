@@ -3,8 +3,8 @@
 import os, re, pathlib, csv, math, subprocess
 from datetime import datetime, timezone, timedelta
 
-ROOT = pathlib.Path("/root/ethbot")
-LOGD = ROOT / "logs"
+ROOT = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
+LOGD = pathlib.Path(os.getenv("LOG_DIR", str(ROOT / "logs")))
 CON = LOGD / "console.out"
 CSVF= LOGD / "trades.csv"
 ENVF= ROOT / ".env.bot"

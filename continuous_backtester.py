@@ -34,7 +34,7 @@ class ContinuousBacktester:
     def __init__(
         self,
         api_url: str = "http://localhost:8000",
-        db_path: str = "/root/ethbot/logs/learning.db",
+        db_path: str = None,
         strategies_per_hour: int = 10
     ):
         self.api_url = api_url

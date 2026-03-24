@@ -1,5 +1,7 @@
 import sys, time, requests, datetime, os
-LOG = "/root/ethbot/logs/console.out"
+import pathlib
+_ROOT = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
+LOG = str(_ROOT / "logs/console.out")
 URL = "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT"
 
 def log_px(px):

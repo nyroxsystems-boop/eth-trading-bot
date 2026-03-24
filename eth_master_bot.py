@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 import os as _os
+
+# === Dynamic path resolution (works on Railway AND local) ===
+BASE_DIR = _os.path.dirname(_os.path.abspath(__file__))
+LOG_DIR = _os.path.join(BASE_DIR, "logs")
+_os.makedirs(LOG_DIR, exist_ok=True)
+
 try:
     import exchange_filters as _xf
 except Exception:
@@ -233,7 +239,7 @@ TG_TOKEN           = _os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT            = _os.getenv("TELEGRAM_CHAT_ID", "")
 
 BINANCE_API_KEY    = _os.getenv("BINANCE_API_KEY")
-BINANCE_API_SECRET = _os.getenv("BINANCE_API_SECRET")
+BINANCE_API_SECRET = _os.getenv("BINANCE_API_SECRET") or _os.getenv("BINANCE_SECRET_KEY")
 
 RSS_FEEDS = [
     "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml",
@@ -540,15 +546,15 @@ def log(msg):
 
     # File-Log
     try:
-        os.makedirs("/root/ethbot/logs", exist_ok=True)
-        with open("/root/ethbot/logs/ethbot.log", "a", encoding="utf-8") as f:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        with open(os.path.join(LOG_DIR, "ethbot.log"), "a", encoding="utf-8") as f:
             f.write(line + "\n")
     except Exception:
         pass
 
     # BUY/SELL -> trades.csv
     try:
-        csv_path = "/root/ethbot/logs/trades.csv"
+        csv_path = os.path.join(LOG_DIR, "trades.csv")
         if not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0:
             with open(csv_path, "w", encoding="utf-8") as f:
                 f.write("timestamp,action,qty,price\n")
@@ -720,17 +726,15 @@ def ml_online_update(df_feat: pd.DataFrame):
                 pass
         
         if not ml_warm:
-            # Use full Pipeline.fit() so StandardScaler gets fitted too!
+            # Initial training: full Pipeline.fit() so StandardScaler gets fitted too
             clf.fit(X[:min(200, len(X))], y[:min(200, len(y))])
+            # Continue with remaining data if available
             if len(X) > 200:
-                X_rest_scaled = clf.named_steps["scaler"].transform(X[200:])
-                clf.named_steps["mlp"].partial_fit(X_rest_scaled, y[200:], classes=ml_classes)
+                clf.fit(X[-200:], y[-200:])  # warm_start=True preserves weights
             ml_warm = True
             log(f"ML warm! Trained on {len(X)} samples ({X.shape[1]} features)")
-        else:
-            # Online update: scaler already fitted, just update MLP
-            X_scaled = clf.named_steps["scaler"].transform(X[-200:])
-            clf.named_steps["mlp"].partial_fit(X_scaled, y[-200:])
+        # else: model already trained — skip per-cycle retraining
+        # (retraining on same kline data adds no value; real updates come via ml_feedback_trade)
         recent = y[-500:] if len(y) >= 500 else y
         ml_conf_boost = float(np.mean(recent))
         # Track real ML stats
@@ -823,9 +827,8 @@ def ml_feedback_trade(entry_row, outcome_win: bool):
             X = np.array([f for f, _ in _trade_feedback_buffer])
             y = np.array([l for _, l in _trade_feedback_buffer])
             
-            X_scaled = clf.named_steps["scaler"].transform(X)
-            sample_weight = np.ones(len(y)) * 3.0  # Real trades worth 3x
-            clf.named_steps["mlp"].partial_fit(X_scaled, y, classes=ml_classes, sample_weight=sample_weight)
+            # Use full fit() with warm_start=True (partial_fit has sklearn compat issues)
+            clf.fit(X, y)
             
             log(f"ML FEEDBACK: retrained on {len(_trade_feedback_buffer)} real trades "
                 f"(wins: {sum(y)}, losses: {len(y)-sum(y)})")
@@ -836,10 +839,7 @@ def ml_feedback_trade(entry_row, outcome_win: bool):
         if _replay_counter >= 10 and len(_experience_replay) >= 10:
             X_replay = np.array([f for f, _ in _experience_replay])
             y_replay = np.array([l for _, l in _experience_replay])
-            X_scaled = clf.named_steps["scaler"].transform(X_replay)
-            # Replay with lower weight (1.5x) — reinforcement, not override
-            weight = np.ones(len(y_replay)) * 1.5
-            clf.named_steps["mlp"].partial_fit(X_scaled, y_replay, classes=ml_classes, sample_weight=weight)
+            clf.fit(X_replay, y_replay)  # warm_start=True preserves weights
             _replay_counter = 0
             wins = sum(y_replay)
             log(f"EXPERIENCE REPLAY: {len(_experience_replay)} trades replayed "
@@ -852,106 +852,50 @@ def ml_feedback_trade(entry_row, outcome_win: bool):
 _last_model_save = 0.0  # Throttle: save at most every 60s
 
 def save_ml_model():
-    """Serialize SGD pipeline weights and sync to web API for persistence."""
+    """Save ML stats to local file (model retrains from klines on startup — faster & more reliable)."""
     global _last_model_save
     if not ml_warm:
         return
     
-    # Throttle saves to avoid API spam
     if time.time() - _last_model_save < 60:
         return
     _last_model_save = time.time()
     
     try:
-        mlp = clf.named_steps["mlp"]
-        scaler = clf.named_steps["scaler"]
-        
         state = {
-            "mlp_coefs": [c.tolist() for c in mlp.coefs_],
-            "mlp_intercepts": [i.tolist() for i in mlp.intercepts_],
-            "mlp_classes": mlp.classes_.tolist(),
-            "mlp_n_layers": mlp.n_layers_,
-            "scaler_mean": scaler.mean_.tolist(),
-            "scaler_scale": scaler.scale_.tolist(),
-            "scaler_var": scaler.var_.tolist(),
-            "scaler_n_samples": int(scaler.n_samples_seen_) if hasattr(scaler, 'n_samples_seen_') else 200,
             "ml_stats": ml_stats,
             "ml_conf_boost": ml_conf_boost,
-            "model_type": "mlp",
             "saved_at": datetime.now().isoformat()
         }
         
-        api_url = os.getenv("RAILWAY_URL", os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
-        if not api_url:
-            api_url = "https://web-production-d57ac.up.railway.app"
-        if api_url and not api_url.startswith("http"):
-            api_url = f"https://{api_url}"
-        
-        resp = requests.post(f"{api_url}/api/ml/model-state", json=state, timeout=10)
-        if resp.status_code == 200:
-            log(f"ML MODEL SAVED: {len(str(state))} bytes, acc={ml_stats.get('accuracy', 0):.1f}%")
-        else:
-            log(f"WARN ml model save failed: HTTP {resp.status_code}")
+        local_path = os.path.join(LOG_DIR, "ml_model_state.json")
+        with open(local_path, "w") as f:
+            json.dump(state, f)
+        log(f"ML STATS SAVED: acc={ml_stats.get('accuracy', 0):.1f}%")
     except Exception as e:
-        log(f"WARN ml model save failed: {e}")
+        log(f"WARN ml stats save failed: {e}")
 
 def load_ml_model():
-    """Load persisted ML model weights from web API on startup."""
-    global ml_warm, ml_conf_boost, ml_stats
+    """Load ML stats from local file. Model is retrained from klines by ml_online_update()."""
+    global ml_conf_boost, ml_stats
     
+    local_path = os.path.join(LOG_DIR, "ml_model_state.json")
     try:
-        api_url = os.getenv("RAILWAY_URL", os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
-        if not api_url:
-            api_url = "https://web-production-d57ac.up.railway.app"
-        if api_url and not api_url.startswith("http"):
-            api_url = f"https://{api_url}"
-        
-        resp = requests.get(f"{api_url}/api/ml/model-state", timeout=10)
-        if resp.status_code != 200:
-            log("ML MODEL: no saved state found (fresh start)")
-            return False
-        
-        state = resp.json()
-        if state.get("status") in ("empty", "error"):
-            log("ML MODEL: no saved state found (fresh start)")
-            return False
-        
-        # Restore scaler
-        scaler = clf.named_steps["scaler"]
-        scaler.mean_ = np.array(state["scaler_mean"])
-        scaler.scale_ = np.array(state["scaler_scale"])
-        scaler.var_ = np.array(state["scaler_var"])
-        scaler.n_features_in_ = len(state["scaler_mean"])
-        scaler.n_samples_seen_ = np.float64(state.get("scaler_n_samples", 200))
-        
-        # Restore MLP (or skip if old SGD format)
-        mlp = clf.named_steps["mlp"]
-        if "mlp_coefs" in state:
-            mlp.coefs_ = [np.array(c) for c in state["mlp_coefs"]]
-            mlp.intercepts_ = [np.array(i) for i in state["mlp_intercepts"]]
-            mlp.classes_ = np.array(state["mlp_classes"])
-            mlp.n_layers_ = state.get("mlp_n_layers", 4)
-            mlp._no_improvement_count = 0
-            mlp.best_loss_ = np.inf
-        elif "sgd_coef" in state:
-            log("ML MODEL: old SGD format detected — skipping load, will retrain")
-            return False
-        
-        # Restore stats
-        if state.get("ml_stats"):
-            ml_stats.update(state["ml_stats"])
-        ml_conf_boost = state.get("ml_conf_boost", 0.0)
-        ml_warm = True
-        
-        saved_at = state.get("saved_at", "unknown")
-        acc = ml_stats.get("accuracy", 0)
-        samples = ml_stats.get("samples", 0)
-        log(f"✅ ML MODEL LOADED: acc={acc:.1f}% samples={samples} saved_at={saved_at}")
-        return True
-        
+        if os.path.exists(local_path):
+            with open(local_path, "r") as f:
+                state = json.load(f)
+            if state.get("ml_stats"):
+                ml_stats.update(state["ml_stats"])
+            ml_conf_boost = state.get("ml_conf_boost", 0.0)
+            saved_at = state.get("saved_at", "unknown")
+            log(f"ML STATS LOADED: acc={ml_stats.get('accuracy', 0):.1f}% saved_at={saved_at}")
+            log("ML MODEL: will retrain from klines on first cycle (~2s)")
+            return True
     except Exception as e:
-        log(f"WARN ml model load failed: {e} (will train from scratch)")
-        return False
+        log(f"WARN ml stats load failed: {e}")
+    
+    log("ML MODEL: fresh start")
+    return False
 
 # ------------------ SENTIMENT ------------------
 def ensure_vader():
@@ -1055,116 +999,139 @@ def _save_open_position():
                     except Exception:
                         pos_copy[k] = str(v)
             state["open_position"] = pos_copy
-        resp = requests.post(f"{_get_api_url()}/api/trade-state", json=state, timeout=5)
-        if resp.status_code == 200:
-            if open_position:
-                log(f"TRADE STATE SAVED: entry={open_position.get('entry', 0):.2f} qty={open_position.get('qty', 0):.6f}")
-        else:
-            log(f"WARN trade state save failed: HTTP {resp.status_code}")
+        # 1) LOCAL FILE (primary — always works)
+        local_path = os.path.join(LOG_DIR, "trade_state.json")
+        with open(local_path, "w") as f:
+            json.dump(state, f)
+        if open_position:
+            log(f"TRADE STATE SAVED (local): entry={open_position.get('entry', 0):.2f} qty={open_position.get('qty', 0):.6f}")
+        
+        # 2) API sync (optional)
+        try:
+            resp = requests.post(f"{_get_api_url()}/api/trade-state", json=state, timeout=5)
+        except Exception:
+            pass  # API sync failure is fine
     except Exception as e:
         log(f"WARN trade state save: {e}")
 
-def _load_open_position():
-    """Restore open_position + TRAIL_STATE from web API on startup.
-    Retries up to 3 times with exponential backoff to handle deploy race conditions."""
+def _restore_trade_state_from_dict(state):
+    """Restore trade state from a dict. Returns True on success."""
     global open_position, _paper_position_locked, _last_trade_ts
     global today_trades, loss_streak, win_streak, bars_in_position
     
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            resp = requests.get(f"{_get_api_url()}/api/trade-state", timeout=10)
-            if resp.status_code != 200:
-                if attempt < max_retries - 1:
-                    delay = 3 * (2 ** attempt)  # 3s, 6s, 12s
-                    log(f"TRADE STATE: API returned {resp.status_code}, retry {attempt+1}/{max_retries} in {delay}s...")
-                    time.sleep(delay)
-                    continue
-                log("TRADE STATE: no saved state (fresh start)")
-                _last_trade_ts = time.time()  # Safe default
+    if state.get("status") in ("empty", "error"):
+        return False
+    
+    pos = state.get("open_position")
+    if pos and pos.get("entry"):
+        open_position = {
+            "entry": float(pos["entry"]),
+            "qty": float(pos.get("qty", 0)),
+            "atr": float(pos.get("atr", 0)),
+        }
+        if "open_bar_time" in pos:
+            try:
+                from pandas import to_datetime
+                open_position["open_bar_time"] = to_datetime(pos["open_bar_time"])
+            except Exception:
+                pass
+        if "entry_row" in pos:
+            open_position["entry_row"] = {k: float(v) if v not in (None, '') else 0.0 for k, v in pos["entry_row"].items() if k != "time"}
+        if "peak_pnl" in pos:
+            open_position["peak_pnl"] = float(pos["peak_pnl"])
+        if "trailing_active" in pos:
+            open_position["trailing_active"] = bool(pos["trailing_active"])
+        if "partial_taken" in pos:
+            open_position["partial_taken"] = bool(pos["partial_taken"])
+        _paper_position_locked = float(state.get("paper_position_locked", pos["entry"] * pos["qty"]))
+        log(f"✅ TRADE STATE RESTORED: entry={open_position['entry']:.2f} qty={open_position['qty']:.6f} locked=${_paper_position_locked:.2f}")
+    else:
+        log("TRADE STATE: no open position")
+    
+    ts = state.get("trail_state", {})
+    if ts:
+        TRAIL_STATE['active'] = bool(ts.get('active', False))
+        TRAIL_STATE['entry'] = float(ts.get('entry', 0))
+        TRAIL_STATE['peak'] = float(ts.get('peak', 0))
+        TRAIL_STATE['qty'] = float(ts.get('qty', 0))
+        TRAIL_STATE['tp_pct'] = float(ts.get('tp_pct', TAKE_PROFIT_PCT))
+        TRAIL_STATE['trail_pct'] = float(ts.get('trail_pct', TRAIL_PCT))
+        TRAIL_STATE['opened_at'] = float(ts.get('opened_at', 0))
+    
+    _last_trade_ts = float(state.get("last_trade_ts", 0)) or time.time()
+    today_trades = int(state.get("today_trades", 0))
+    loss_streak = int(state.get("loss_streak", 0))
+    win_streak = int(state.get("win_streak", 0))
+    bars_in_position = int(state.get("bars_in_position", 0))
+    saved_at = state.get("saved_at", "unknown")
+    log(f"TRADE STATE: counters restored | trades_today={today_trades} loss_streak={loss_streak} win_streak={win_streak} saved_at={saved_at}")
+    return True
+
+def _load_open_position():
+    """Restore trade state: try local file first, then API."""
+    global _last_trade_ts
+    
+    local_path = os.path.join(LOG_DIR, "trade_state.json")
+    try:
+        if os.path.exists(local_path):
+            with open(local_path, "r") as f:
+                state = json.load(f)
+            if _restore_trade_state_from_dict(state):
+                log("TRADE STATE: loaded from local file")
                 return
+    except Exception as e:
+        log(f"WARN local trade state load failed: {e}")
+    
+    try:
+        resp = requests.get(f"{_get_api_url()}/api/trade-state", timeout=5)
+        if resp.status_code == 200:
             state = resp.json()
-            if state.get("status") in ("empty", "error"):
-                log("TRADE STATE: no saved state (fresh start)")
-                _last_trade_ts = time.time()  # Safe default
+            if _restore_trade_state_from_dict(state):
+                log("TRADE STATE: loaded from API")
+                try:
+                    with open(local_path, "w") as f:
+                        json.dump(state, f)
+                except Exception:
+                    pass
                 return
-            # Restore open_position
-            pos = state.get("open_position")
-            if pos and pos.get("entry"):
-                open_position = {
-                    "entry": float(pos["entry"]),
-                    "qty": float(pos.get("qty", 0)),
-                    "atr": float(pos.get("atr", 0)),
-                }
-                if "open_bar_time" in pos:
-                    try:
-                        from pandas import to_datetime
-                        open_position["open_bar_time"] = to_datetime(pos["open_bar_time"])
-                    except Exception:
-                        pass
-                if "entry_row" in pos:
-                    open_position["entry_row"] = {k: float(v) if v not in (None, '') else 0.0 for k, v in pos["entry_row"].items() if k != "time"}
-                if "peak_pnl" in pos:
-                    open_position["peak_pnl"] = float(pos["peak_pnl"])
-                if "trailing_active" in pos:
-                    open_position["trailing_active"] = bool(pos["trailing_active"])
-                if "partial_taken" in pos:
-                    open_position["partial_taken"] = bool(pos["partial_taken"])
-                _paper_position_locked = float(state.get("paper_position_locked", pos["entry"] * pos["qty"]))
-                log(f"✅ TRADE STATE RESTORED: entry={open_position['entry']:.2f} qty={open_position['qty']:.6f} locked=${_paper_position_locked:.2f}")
-            else:
-                log("TRADE STATE: no open position")
-            # Restore TRAIL_STATE
-            ts = state.get("trail_state", {})
-            if ts:
-                TRAIL_STATE['active'] = bool(ts.get('active', False))
-                TRAIL_STATE['entry'] = float(ts.get('entry', 0))
-                TRAIL_STATE['peak'] = float(ts.get('peak', 0))
-                TRAIL_STATE['qty'] = float(ts.get('qty', 0))
-                TRAIL_STATE['tp_pct'] = float(ts.get('tp_pct', TAKE_PROFIT_PCT))
-                TRAIL_STATE['trail_pct'] = float(ts.get('trail_pct', TRAIL_PCT))
-                TRAIL_STATE['opened_at'] = float(ts.get('opened_at', 0))
-            # Restore counters
-            _last_trade_ts = float(state.get("last_trade_ts", 0)) or time.time()
-            today_trades = int(state.get("today_trades", 0))
-            loss_streak = int(state.get("loss_streak", 0))
-            win_streak = int(state.get("win_streak", 0))
-            bars_in_position = int(state.get("bars_in_position", 0))
-            saved_at = state.get("saved_at", "unknown")
-            log(f"TRADE STATE: counters restored | trades_today={today_trades} loss_streak={loss_streak} win_streak={win_streak} saved_at={saved_at}")
-            return  # Success
-        except Exception as e:
-            if attempt < max_retries - 1:
-                delay = 3 * (2 ** attempt)
-                log(f"WARN trade state load attempt {attempt+1}/{max_retries}: {e} — retry in {delay}s")
-                time.sleep(delay)
-            else:
-                log(f"WARN trade state load FAILED after {max_retries} attempts: {e} (starting fresh)")
-                _last_trade_ts = time.time()  # Safe default — prevent aggressive entry
+    except Exception as e:
+        log(f"WARN API trade state load failed: {e}")
+    
+    log("TRADE STATE: no saved state (fresh start)")
+    _last_trade_ts = time.time()
 
 def _load_paper_balance():
-    """Load persisted paper balance from web API.
-    Retries up to 3 times with exponential backoff to handle deploy race conditions."""
+    """Load paper balance: try local file first, then API."""
     global PAPER_BASE_USDT
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            r = requests.get(f"{_get_api_url()}/api/paper-balance", timeout=5)
-            data = r.json()
+    
+    local_path = os.path.join(LOG_DIR, "paper_balance.json")
+    try:
+        if os.path.exists(local_path):
+            with open(local_path, "r") as f:
+                data = json.load(f)
             if data.get("balance") and data["balance"] > 0:
                 PAPER_BASE_USDT = float(data["balance"])
-                log(f"Loaded paper balance from DB: ${PAPER_BASE_USDT:.2f}")
-                return  # Success
-            else:
-                log(f"WARN paper balance API returned no valid balance: {data}")
+                log(f"Loaded paper balance from local file: ${PAPER_BASE_USDT:.2f}")
                 return
-        except Exception as e:
-            if attempt < max_retries - 1:
-                delay = 3 * (2 ** attempt)  # 3s, 6s, 12s
-                log(f"WARN paper balance load attempt {attempt+1}/{max_retries}: {e} — retry in {delay}s")
-                time.sleep(delay)
-            else:
-                log(f"WARN paper balance load FAILED after {max_retries} attempts: {e} — using default ${PAPER_BASE_USDT:.2f}")
+    except Exception as e:
+        log(f"WARN local paper balance load failed: {e}")
+    
+    try:
+        r = requests.get(f"{_get_api_url()}/api/paper-balance", timeout=5)
+        data = r.json()
+        if data.get("balance") and data["balance"] > 0:
+            PAPER_BASE_USDT = float(data["balance"])
+            log(f"Loaded paper balance from API: ${PAPER_BASE_USDT:.2f}")
+            try:
+                with open(local_path, "w") as f:
+                    json.dump({"balance": PAPER_BASE_USDT}, f)
+            except Exception:
+                pass
+            return
+    except Exception as e:
+        log(f"WARN API paper balance load failed: {e}")
+    
+    log(f"Paper balance: using default ${PAPER_BASE_USDT:.2f}")
 
 def usdt_balance() -> float:
     if PAPER_MODE or DRY_RUN:
@@ -1227,22 +1194,22 @@ def place_buy(qty: float, price_hint: float) -> bool:
             return True  # Allow trade on guard failure
     
     # 1) Max-Consecutive-Losses (optional)
-    if not run_guard_safe('/root/ethbot/max_losses_guard.py', 'max_losses_guard'):
+    if not run_guard_safe(os.path.join(BASE_DIR, 'max_losses_guard.py'), 'max_losses_guard'):
         log('[SAFEGUARD] BUY blocked by max consecutive losses')
         return False
     
     # 2) Daily PnL Target (optional)
-    if not run_guard_safe('/root/ethbot/daily_target_guard.py', 'daily_target_guard'):
+    if not run_guard_safe(os.path.join(BASE_DIR, 'daily_target_guard.py'), 'daily_target_guard'):
         log('[SAFEGUARD] BUY blocked by daily profit target reached')
         return False
     
     # 3) Entry Edge (optional) - SKIP for more trades
-    # if not run_guard_safe('/root/ethbot/entry_edge_guard.py', 'entry_edge_guard'):
+    # if not run_guard_safe(os.path.join(BASE_DIR, 'entry_edge_guard.py'), 'entry_edge_guard'):
     #     log('[SAFEGUARD] BUY blocked by weak edge')
     #     return False
     
     # 4) News / Twitter Kill-Switch (optional)
-    if not run_guard_safe('/root/ethbot/news_guard_check.py', 'news_guard'):
+    if not run_guard_safe(os.path.join(BASE_DIR, 'news_guard_check.py'), 'news_guard'):
         log('[SAFEGUARD] BUY blocked by news event')
         return False
 
@@ -2303,13 +2270,13 @@ def main_loop():
     tg("Bot gestartet | DRY_RUN=%s | PAPER_MODE=%s | MaxTrades=%s | Version=%s" % (DRY_RUN, PAPER_MODE, MAX_TRADES_PER_DAY, BOT_VERSION))
     log(f"START ETH Master Bot | DRY_RUN={DRY_RUN} | PAPER_MODE={PAPER_MODE} | MaxTrades={MAX_TRADES_PER_DAY} | Version={BOT_VERSION}")
     
-    # Wait for Web API to be ready before loading state (prevents deploy race condition)
-    _wait_for_api_ready(max_wait=60)
+    # Try Web API (non-blocking — local files are primary now)
+    _wait_for_api_ready(max_wait=5)
     
     if DRY_RUN or PAPER_MODE:
-        _load_paper_balance()  # Load persisted balance from PostgreSQL
+        _load_paper_balance()  # Load from local file or API
         log(f"Paper USDT: {PAPER_BASE_USDT:.2f}")
-    _load_open_position()  # Restore open trade state from PostgreSQL
+    _load_open_position()  # Restore from local file or API
     
     # Force immediate strategy load on startup
     apply_best_strategy()
@@ -2464,10 +2431,10 @@ def __add_open_bar_time(open_pos_dict, row):
 
 # ------------------ PERSISTENT TRADE LOG ------------------
 def log_trade(action: str, qty: float, price: float):
-    """Schreibt Trades nach /root/ethbot/logs/trades.csv (UTC,CSV)."""
+    """Schreibt Trades nach logs/trades.csv (UTC,CSV)."""
     try:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        path = "/root/ethbot/logs/trades.csv"
+        path = os.path.join(LOG_DIR, "trades.csv")
         header_needed = False
         import os
         if not os.path.exists(path):
@@ -2548,35 +2515,15 @@ def _atr_pct(symbol="ETHUSDT", interval="5m", n=48):
     atr=sum(trs)/len(trs) if trs else 0.0
     last=closes[-1]
     return (atr/last) if last>0 else 0.0
-def pre_buy_guards() -> bool:
-    """
-    Führt alle Pre-BUY-Safeguards aus. Rückgabe:
-    True = BUY erlaubt, False = blockiert.
-    """
-    import subprocess
-    # 1) Loss Cooldown
-    g1 = subprocess.run(["/root/ethbot/loss_cooldown.py"], capture_output=True, text=True)
-    if g1.returncode != 0:
-        log("[SAFEGUARD] BUY blocked by loss cooldown"); return False
-    # 2) Max Consecutive Losses
-    g2 = subprocess.run(["/root/ethbot/max_losses_guard.py"], capture_output=True, text=True)
-    if g2.returncode != 0:
-        log("[SAFEGUARD] BUY blocked by max consecutive losses"); return False
-    # 3) Daily Profit Target
-    g3 = subprocess.run(["/root/ethbot/daily_target_guard.py"], capture_output=True, text=True)
-    if g3.returncode != 0:
-        log("[SAFEGUARD] BUY blocked by daily profit target reached"); return False
-    # 4) News / Twitter Kill-Switch
-    g4 = subprocess.run(["/root/ethbot/news_guard_check.py"], capture_output=True, text=True)
-    if g4.returncode != 0:
-        log("[SAFEGUARD] BUY blocked by news event"); return False
-    return True
+# pre_buy_guards() REMOVED — was a duplicate of the logic in place_buy() with run_guard_safe(),
+# but used hardcoded paths and crashed on non-Railway environments.
+# All guard logic is already handled safely in place_buy() via run_guard_safe().
 # ===== LIVE EDGE PARAMS (Auto-Reload from .env.bot) =====
 from pathlib import Path
 
 def get_edge_params():
     """Read latest adaptive thresholds from .env.bot (live reload)."""
-    env_path = Path("/root/ethbot/.env.bot")
+    env_path = Path(BASE_DIR) / ".env.bot"
     adx_min, rsi_lo, rsi_hi, vwap_tol = 18, 30, 58, 1.000  # defaults
     try:
         if env_path.exists():
@@ -2618,15 +2565,17 @@ def _wrap_limit_func(_fn):
     return _w
 
 # === Append-only Trade CSV Logger (DRY & LIVE) ===
-import csv, datetime, os, pathlib
-def log_trade_csv(action:str, qty:float, price:float, path="/root/ethbot/logs/trades.csv"):
+import csv, pathlib
+def log_trade_csv(action:str, qty:float, price:float, path=None):
+    if path is None:
+        path = os.path.join(LOG_DIR, "trades.csv")
     try:
         p = pathlib.Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         header = "timestamp,action,qty,price\n"
         if not p.exists() or p.stat().st_size == 0:
             p.write_text(header)
-        ts = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         with p.open("a", newline="") as f:
             w = csv.writer(f)
             w.writerow([ts, action, f"{qty:.6f}", f"{price:.2f}"])

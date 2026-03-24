@@ -7,7 +7,7 @@ import sqlite3
 import os
 from pathlib import Path
 
-LOG_DIR = Path(os.getenv("LOG_DIR", "/root/ethbot/logs"))
+LOG_DIR = Path(os.getenv("LOG_DIR", str(Path(__file__).resolve().parent / "logs")))
 ACCOUNTS_DB = LOG_DIR / "accounts.db"
 USERS_DB = LOG_DIR / "users.db"
 

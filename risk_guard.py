@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import csv, sys
 from datetime import datetime, timezone
-CSV="/root/ethbot/logs/trades.csv"; FMT="%Y-%m-%d %H:%M:%S"; TZI=timezone.utc
+import os, pathlib
+_ROOT=pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
+CSV=str(_ROOT/"logs/trades.csv"); FMT="%Y-%m-%d %H:%M:%S"; TZI=timezone.utc
 DD=float(sys.argv[1]) if len(sys.argv)>1 else 300.0
 def parse(s): return datetime.strptime(s,FMT).replace(tzinfo=TZI)
 def today_range():

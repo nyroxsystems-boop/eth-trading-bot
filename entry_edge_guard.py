@@ -2,7 +2,10 @@
 import os, re, sys, statistics as stats
 from math import isnan
 
-LOG = "/root/ethbot/logs/console.out"
+import pathlib
+_ETHBOT_ROOT = str(pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent))))
+_ROOT = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
+LOG = str(_ROOT / "logs/console.out")
 
 def load_series(n=200):
     adx, rsi, px = [], [], []
@@ -53,7 +56,7 @@ def vwap_like(series):
     return sum(series)/len(series)
 
 
-def _read_sentiment_score(path="/root/ethbot/logs/sentiment_state.json"):
+def _read_sentiment_score(path=str(_ROOT / "logs/sentiment_state.json")):
     try:
         import json, os
         if os.getenv("TWITTER_SENTIMENT", "0") != "1":
@@ -68,7 +71,7 @@ def read_sentiment_score():
     try:
         import json
         from pathlib import Path
-        p = Path('/root/ethbot/cache/sentiment.json')
+        p = _ROOT / 'cache' / 'sentiment.json'
         if not p.exists():
             return 0.0
         return float(json.loads(p.read_text()).get('score', 0.0))
@@ -80,7 +83,7 @@ def main():
     # --- global risk-off guard ---
     try:
         from pathlib import Path
-        rf = Path('/root/ethbot/state/risk_off.flag')
+        rf = _ROOT / 'state' / 'risk_off.flag'
         if rf.exists():
             print('[EDGE] risk-off active; blocking entries')
             import sys; sys.exit(2)
@@ -89,7 +92,7 @@ def main():
     # --- Live-Guards: Flags aus /root/ethbot/flags ---
     try:
         import os, json, glob
-        for fp in glob.glob('/root/ethbot/flags/*.stop'):
+        for fp in glob.glob(str(_ROOT / 'flags' / '*.stop')):
             try:
                 obj=json.loads(open(fp,'r').read()); reason=obj.get('reason','')
             except Exception:

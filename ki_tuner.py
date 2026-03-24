@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 import os, csv, math, time, json, subprocess, sys
 from datetime import datetime, timezone, timedelta
-CSV  = "/root/ethbot/logs/trades.csv"
-LOG  = "/root/ethbot/logs/console.out"
-ENVF = "/root/ethbot/.env.bot"
-OUT  = "/root/ethbot/logs/ki_tuner_report.txt"
+import pathlib
+_ROOT = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
+CSV  = str(_ROOT / "logs/trades.csv")
+LOG  = str(_ROOT / "logs/console.out")
+ENVF = str(_ROOT / ".env.bot")
+OUT  = str(_ROOT / "logs/ki_tuner_report.txt")
 TZI  = timezone.utc
 FMT  = "%Y-%m-%d %H:%M:%S"
 
@@ -223,7 +225,7 @@ def main():
     })
 
     # Report
-    os.makedirs("/root/ethbot/logs", exist_ok=True)
+    os.makedirs(str(_ROOT / "logs"), exist_ok=True)
     open(OUT,"w",encoding="utf-8").write(
         f"[{now.isoformat()}] regime={regime} perf48={{trades:{perf48['trades']}, winrate:{perf48['winrate']:.2f}, r_avg:{perf48['r_avg']:.4f}, pnl:{perf48['pnl']:.2f}}}\n"
         f"target={json.dumps(targ, indent=2)}\n"

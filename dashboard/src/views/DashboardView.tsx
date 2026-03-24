@@ -42,6 +42,8 @@ const DashboardView = ({ metrics, status }: DashboardViewProps) => {
     const winRate = metrics?.win_rate || 0
     const totalTrades = metrics?.total_trades || 0
     const todayTrades = status?.today_trades || 0
+    const capital = metrics?.roi ? Math.abs(totalPnl / (metrics.roi / 100)) : 100000
+    const roi = metrics?.roi || 0
 
     const [tradingMode, setTradingMode] = useState<TradingModeStatus>({
         mode: 'paper',
@@ -128,10 +130,10 @@ const DashboardView = ({ metrics, status }: DashboardViewProps) => {
                     </div>
                     <div className="stat-value">
                         <span className={`stat-number ${dailyPnl >= 0 ? 'positive' : 'negative'}`}>
-                            {dailyPnl >= 0 ? '+' : ''}${Math.abs(dailyPnl).toFixed(2)}
+                            {dailyPnl >= 0 ? '+' : '-'}${Math.abs(dailyPnl).toFixed(2)}
                         </span>
                         <span className="stat-percentage">
-                            {dailyPnl >= 0 ? '+' : ''}{((dailyPnl / 10000) * 100).toFixed(2)}%
+                            {dailyPnl >= 0 ? '+' : '-'}{Math.abs((dailyPnl / Math.max(capital, 1)) * 100).toFixed(2)}%
                         </span>
                     </div>
                     <div className="stat-footer">
@@ -285,8 +287,8 @@ const DashboardView = ({ metrics, status }: DashboardViewProps) => {
                             </div>
                             <div className="chart-stat">
                                 <span className="chart-stat-label">ROI</span>
-                                <span className="chart-stat-value positive">
-                                    {((totalPnl / 10000) * 100).toFixed(2)}%
+                                <span className={`chart-stat-value ${roi >= 0 ? 'positive' : 'negative'}`}>
+                                    {roi >= 0 ? '+' : ''}{roi.toFixed(2)}%
                                 </span>
                             </div>
                         </div>

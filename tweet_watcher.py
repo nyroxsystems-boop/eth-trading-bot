@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import os, sys, time, json, urllib.request, urllib.parse, xml.etree.ElementTree as ET
 
-OUT="/root/ethbot/run/news_block.json"
+import pathlib
+_ROOT=pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
+OUT=str(_ROOT/"run/news_block.json")
 KEYWORDS = [
   "tariff", "ban", "sanction", "tax", "halt", "freeze", "ban crypto", "ban mining",
   "ETF delay", "SEC delays", "hack", "exploit", "outage", "halt trading", "emergency",

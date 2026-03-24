@@ -2,7 +2,7 @@
 import csv, pathlib, datetime as dt, math, os
 from tools.notify import send
 
-ROOT = pathlib.Path("/root/ethbot")
+ROOT = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
 TRADES = ROOT/"logs"/"trades.csv"
 
 def today_utc_range():

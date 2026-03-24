@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import os, json, time, urllib.parse, urllib.request, ssl, subprocess, pathlib
 
-ROOT   = pathlib.Path("/root/ethbot")
+ROOT   = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
 STATE  = ROOT / "state" / "mode.json"
 LOGF   = ROOT / "logs" / "toggle.log"
 

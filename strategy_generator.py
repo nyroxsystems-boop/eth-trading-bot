@@ -10,7 +10,10 @@ from typing import List, Dict, Any
 from pathlib import Path
 
 class StrategyGenerator:
-    def __init__(self, learning_db_path: str = "/root/ethbot/logs/learning.db"):
+    def __init__(self, learning_db_path: str = None):
+        if learning_db_path is None:
+            import pathlib
+            learning_db_path = str(pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent))) / "logs" / "learning.db")
         self.db_path = Path(learning_db_path)
         self.parameter_ranges = {
             'ml_threshold': (0.50, 0.70),      # Higher confidence only (was 0.45)

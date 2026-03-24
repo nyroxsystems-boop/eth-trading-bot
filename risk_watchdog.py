@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os, sys, time, json, pathlib, csv, math, re
-ROOT = pathlib.Path("/root/ethbot")
-LOGS = ROOT / "logs"
+ROOT = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
+LOGS = pathlib.Path(os.getenv("LOG_DIR", str(ROOT / "logs")))
 FLAGS = ROOT / "flags"
 RUNTIME = ROOT / "runtime"
 COUT = LOGS / "console.out"

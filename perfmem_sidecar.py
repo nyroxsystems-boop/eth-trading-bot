@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-import re, json, time
+import os, re, json, time
 from pathlib import Path
 from datetime import datetime, timezone
 
-ROOT = Path("/root/ethbot")
+ROOT = Path(os.getenv("ETHBOT_ROOT", str(Path(__file__).resolve().parent)))
 LOGC = ROOT/"logs/console.out"
 OUT  = ROOT/"logs/decisions.log"         # append-only, csv-like
 STATE= ROOT/"runtime/perfmem_state.json"  # remember last processed byte

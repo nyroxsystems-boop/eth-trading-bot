@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import os, json, pathlib, time, sys, re, random, subprocess, shlex, math, urllib.request, urllib.parse
 
-ROOT = pathlib.Path("/root/ethbot")
+ROOT = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent)))
 LOGD, CACHED, CONFD = ROOT/"logs", ROOT/"cache", ROOT/"config"
 LOGD.mkdir(parents=True, exist_ok=True); CACHED.mkdir(parents=True, exist_ok=True)
 CACHE_FILE = CACHED/"sentiment.json"; LOG_FILE = LOGD/"twitter_sentiment.log"
@@ -14,7 +14,7 @@ TWITTER_SENTIMENT  = os.getenv("TWITTER_SENTIMENT","0").strip()   # 1 = an
 TW_MAX_READS       = int(os.getenv("TW_MAX_READS","20"))          # Limit pro Run (abgesenkt)
 TW_NEEDLE          = os.getenv("TW_NEEDLE","(eth OR ethereum)")
 TW_SCRAPE_FALLBACK = os.getenv("TW_SCRAPE_FALLBACK","1").strip()
-SNS_BIN            = str(ROOT/".venv/bin/snscrape")
+SNS_BIN            = str(ROOT/".venv/bin/snscrape") if (ROOT/".venv/bin/snscrape").exists() else "snscrape" if (ROOT/".venv/bin/snscrape").exists() else "snscrape"
 
 # Gewichtung
 TW_WEIGHTED   = os.getenv("TW_WEIGHTED","1").strip() == "1"

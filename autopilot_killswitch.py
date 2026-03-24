@@ -30,8 +30,8 @@ MIN_ML_CONFIDENCE = 0.65  # 65% ML confidence minimum
 CONSISTENCY_THRESHOLD = 0.8  # 80% of days must hit target
 
 # Paths
-STATE_DIR = Path(os.getenv("STATE_DIR", "/root/ethbot/state"))
-TRADES_CSV = Path(os.getenv("LOG_DIR", "/root/ethbot/logs")) / "trades.csv"
+STATE_DIR = Path(os.getenv("STATE_DIR", str(Path(__file__).resolve().parent / "state")))
+TRADES_CSV = Path(os.getenv("LOG_DIR", str(Path(__file__).resolve().parent / "logs"))) / "trades.csv"
 AUTOPILOT_STATE = STATE_DIR / "autopilot_state.json"
 PERFORMANCE_LOG = STATE_DIR / "performance_log.json"
 
