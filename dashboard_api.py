@@ -227,6 +227,10 @@ class Trade(BaseModel):
     qty: float
     price: float
     pnl: Optional[float] = None
+    entry_type: Optional[str] = None
+    signals: Optional[List[str]] = None
+    ml_confidence: Optional[float] = None
+    entry_score: Optional[float] = None
 
 class PerformanceMetrics(BaseModel):
     total_trades: int
@@ -314,12 +318,19 @@ async def read_trades_csv() -> List[Trade]:
             with open(TRADES_CSV, 'r') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
+                    # Parse signal fields (backward compatible with old CSVs)
+                    signals_raw = row.get('signals', '')
+                    signals_list = signals_raw.split('|') if signals_raw else None
                     trades.append(Trade(
                         timestamp=row['timestamp'],
                         action=row['action'],
                         qty=float(row['qty']),
                         price=float(row['price']),
-                        pnl=float(row.get('pnl', 0))
+                        pnl=float(row.get('pnl', 0)),
+                        entry_type=row.get('entry_type', None) or None,
+                        signals=signals_list if signals_list and signals_list != [''] else None,
+                        ml_confidence=float(row['ml_confidence']) if row.get('ml_confidence') else None,
+                        entry_score=float(row['entry_score']) if row.get('entry_score') else None
                     ))
     except Exception as e:
         print(f"Error reading trades CSV: {e}")
@@ -624,16 +635,30 @@ async def get_trade_journal(limit: int = 200):
             "price": trade.price,
             "pnl": None,
             "pnl_pct": None,
-            "mode": "paper"  # Will be "live" when live trading
+            "mode": "paper",
+            "entry_type": None,
+            "signals": None,
+            "ml_confidence": None,
+            "entry_score": None
         }
         
         if trade.action == "BUY":
             last_buy = trade
+            # Store signal data from BUY for the pair
+            entry["entry_type"] = trade.entry_type
+            entry["signals"] = trade.signals
+            entry["ml_confidence"] = trade.ml_confidence
+            entry["entry_score"] = trade.entry_score
         elif trade.action == "SELL" and last_buy:
             pnl = (trade.price - last_buy.price) * trade.qty
             pnl_pct = ((trade.price - last_buy.price) / last_buy.price) * 100
             entry["pnl"] = round(pnl, 2)
             entry["pnl_pct"] = round(pnl_pct, 2)
+            # Carry over signal data from the matching BUY
+            entry["entry_type"] = last_buy.entry_type
+            entry["signals"] = last_buy.signals
+            entry["ml_confidence"] = last_buy.ml_confidence
+            entry["entry_score"] = last_buy.entry_score
             last_buy = None
         
         journal.append(entry)
@@ -717,7 +742,8 @@ async def get_trades(limit: int = 100):
 @app.post("/api/trades/record")
 async def record_trade(trade: dict = None, request: Request = None):
     """Record a paper trade from the Worker bot.
-    Called by eth_master_bot on every entry/exit."""
+    Called by eth_master_bot on every entry/exit.
+    Now also stores signal data: entry_type, signals[], ml_confidence, entry_score."""
     try:
         if trade is None and request:
             trade = await request.json()
@@ -725,20 +751,26 @@ async def record_trade(trade: dict = None, request: Request = None):
         if not trade:
             return {"status": "error", "message": "No trade data"}
         
+        ts = trade.get("timestamp", datetime.now().isoformat())
+        action = trade.get("action", "BUY")
+        qty = trade.get("qty", 0)
+        price = trade.get("price", 0)
+        pnl = trade.get("pnl", 0)
+        entry_type = trade.get("entry_type", "")
+        signals = trade.get("signals", [])
+        ml_confidence = trade.get("ml_confidence", 0)
+        entry_score = trade.get("entry_score", 0)
+        signals_str = "|".join(signals) if isinstance(signals, list) else str(signals)
+        
         # Ensure CSV exists with header
         if not TRADES_CSV.exists():
             TRADES_CSV.parent.mkdir(parents=True, exist_ok=True)
             with open(TRADES_CSV, 'w') as f:
-                f.write("timestamp,action,qty,price,pnl\n")
+                f.write("timestamp,action,qty,price,pnl,entry_type,signals,ml_confidence,entry_score\n")
         
-        # Append trade to CSV
+        # Append trade to CSV (backward compatible — extra fields appended)
         with open(TRADES_CSV, 'a') as f:
-            ts = trade.get("timestamp", datetime.now().isoformat())
-            action = trade.get("action", "BUY")
-            qty = trade.get("qty", 0)
-            price = trade.get("price", 0)
-            pnl = trade.get("pnl", 0)
-            f.write(f"{ts},{action},{qty},{price},{pnl}\n")
+            f.write(f"{ts},{action},{qty},{price},{pnl},{entry_type},{signals_str},{ml_confidence},{entry_score}\n")
         
         # Also persist to PostgreSQL (survives deploys)
         if USE_POSTGRES:
@@ -753,7 +785,7 @@ async def record_trade(trade: dict = None, request: Request = None):
             except Exception as e:
                 print(f"⚠️ PG trade save error: {e}")
         
-        return {"status": "recorded", "action": trade.get("action")}
+        return {"status": "recorded", "action": action, "signals": signals}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

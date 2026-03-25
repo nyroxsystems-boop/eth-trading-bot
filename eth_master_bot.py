@@ -1148,9 +1148,10 @@ def usdt_balance() -> float:
     except Exception as e:
         log(f"WARN balance fetch: {e}")
         return 0.0
-def sync_paper_trade(action: str, qty: float, price: float, pnl: float = 0):
+def sync_paper_trade(action: str, qty: float, price: float, pnl: float = 0, signals: dict = None):
     """Sync paper trade to Web container Dashboard.
-    Posts to /api/trades/record so trades appear on the UI."""
+    Posts to /api/trades/record so trades appear on the UI.
+    signals dict: {entry_type, active_signals[], ml_confidence, entry_score}"""
     try:
         api_url = _os.getenv("RAILWAY_URL", _os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
         if not api_url:
@@ -1165,8 +1166,15 @@ def sync_paper_trade(action: str, qty: float, price: float, pnl: float = 0):
             "price": round(price, 2),
             "pnl": round(pnl, 2)
         }
+        # Attach signal data if provided (BUY entries)
+        if signals:
+            trade_data["entry_type"] = signals.get("entry_type", "UNKNOWN")
+            trade_data["signals"] = signals.get("active_signals", [])
+            trade_data["ml_confidence"] = round(signals.get("ml_confidence", 0), 3)
+            trade_data["entry_score"] = round(signals.get("entry_score", 0), 3)
         requests.post(f"{api_url}/api/trades/record", json=trade_data, timeout=5)
-        log(f"PAPER-TRADE synced: {action} {qty:.5f} @ {price:.2f} PnL={pnl:.2f}")
+        sig_str = f" signals={signals.get('active_signals', [])}" if signals else ""
+        log(f"PAPER-TRADE synced: {action} {qty:.5f} @ {price:.2f} PnL={pnl:.2f}{sig_str}")
     except Exception as e:
         log(f"WARN paper trade sync failed: {e}")
 
@@ -2093,7 +2101,8 @@ def decide_and_trade():
                 today_trades += 1
                 bars_in_position = 0
                 _last_trade_ts = time.time()  # Reset adaptive threshold timer
-                sync_paper_trade("BUY", qty, px)
+                _active_sigs = [s for s, ok in [("OVERSOLD", True), ("DRAWDOWN", drawdown_ok), ("BB_BOUNCE", bb_bounce_ok), ("RSI", rsi_ok_band), ("TREND", trend_ok), ("ML", p_ml >= SEC_PML_MIN)] if ok]
+                sync_paper_trade("BUY", qty, px, signals={"entry_type": "OS-FAST", "active_signals": _active_sigs, "ml_confidence": p_ml, "entry_score": entry_score})
                 _save_open_position()  # Persist trade state
                 tg(f"▶️ LONG {BASE_ASSET} (OS-FAST) @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | adx={regime['adx']:.1f} | rsi={rsi14:.1f} | vol={vol_ok} 15m={trend_15m_ok}")
                 return
@@ -2230,7 +2239,8 @@ def decide_and_trade():
             today_trades += 1
             bars_in_position = 0
             _last_trade_ts = time.time()  # Reset adaptive threshold timer
-            sync_paper_trade("BUY", qty, px)
+            _active_sigs = [s for s, ok in [("BREAKOUT", breakout_ok), ("TREND", trend_ok), ("OVERSOLD", oversold_ok), ("EMA_BOUNCE", ema_bounce_ok), ("BB_BOUNCE", bb_bounce_ok), ("MACD_CROSS", macd_cross_ok), ("RANGE_SUP", range_support_ok), ("ML", p_ml >= SEC_PML_MIN), ("VOL", vol_ok), ("15M_TREND", trend_15m_ok)] if ok]
+            sync_paper_trade("BUY", qty, px, signals={"entry_type": "NORMAL", "active_signals": _active_sigs, "ml_confidence": p_ml, "entry_score": entry_score})
             _save_open_position()  # Persist trade state
             tg(f"▶️ LONG {BASE_ASSET} @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | p_ml={p_ml:.2f} | adx={regime['adx']:.1f} | vol={vol_ok} 15m={trend_15m_ok} risk={r_factor:.1f}x")
     else:

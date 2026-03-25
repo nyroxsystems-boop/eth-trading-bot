@@ -28,6 +28,10 @@ interface RawTrade {
     price: number
     pnl: number
     mode?: string
+    entry_type?: string
+    signals?: string[]
+    ml_confidence?: number
+    entry_score?: number
 }
 
 interface DaySummary {
@@ -104,8 +108,8 @@ const TradingJournalView = () => {
                     pnl: pnl,
                     pnl_pct: lastBuy.price > 0 ? ((t.price - lastBuy.price) / lastBuy.price) * 100 : 0,
                     duration_minutes: Math.max(durationMin, 1),
-                    signals_used: ['RSI', 'MACD', 'ML'],
-                    ml_confidence: 0.7
+                    signals_used: lastBuy.signals && lastBuy.signals.length > 0 ? lastBuy.signals : ['LEGACY'],
+                    ml_confidence: lastBuy.ml_confidence || 0
                 })
                 lastBuy = null
             }
@@ -124,8 +128,8 @@ const TradingJournalView = () => {
                 pnl: 0,
                 pnl_pct: 0,
                 duration_minutes: 0,
-                signals_used: ['RSI', 'MACD', 'ML'],
-                ml_confidence: 0.7
+                signals_used: lastBuy.signals && lastBuy.signals.length > 0 ? lastBuy.signals : ['PENDING'],
+                ml_confidence: lastBuy.ml_confidence || 0
             })
         }
 
