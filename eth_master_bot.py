@@ -341,8 +341,12 @@ def apply_best_strategy():
         # WIN RATE GATE: only use strategies with WR >= 55%
         top_strategies = [s for s in top_strategies 
                          if s.get('metrics', {}).get('win_rate', 0) >= 55.0]
+        # PROFITABILITY GATE: reject strategies that LOSE money
+        top_strategies = [s for s in top_strategies
+                         if s.get('metrics', {}).get('profit_factor', 0) >= 0.8
+                         and s.get('metrics', {}).get('roi', -999) > -5.0]
         if not top_strategies:
-            log("ENSEMBLE: No strategies with WR >= 55% found, keeping current params")
+            log("ENSEMBLE: No profitable strategies found (WR>=55%, PF>=0.8, ROI>-5%), keeping current params")
             return
         
         # Ensemble weights: 50% / 30% / 20%
@@ -389,7 +393,8 @@ def apply_best_strategy():
         if "rsi_overbought" in blended:
             RSI_MAX = blended["rsi_overbought"]
         if "max_trades_per_day" in blended:
-            MAX_TRADES_PER_DAY = int(round(blended["max_trades_per_day"]))
+            _env_max = int(_os.getenv("MAX_TRADES_PER_DAY", "3"))
+            MAX_TRADES_PER_DAY = min(int(round(blended["max_trades_per_day"])), _env_max)  # Never exceed .env.bot value
         if "entry_score_min" in blended:
             _ENTRY_CEILING = max(0.20, min(0.35, blended["entry_score_min"]))  # Raised floor 0.15→0.20
         
@@ -1961,6 +1966,20 @@ def decide_and_trade():
     p_ml         = ml_predict_row(row)
     # ML check is ALWAYS required — paper mode must trade like live mode for valid results
     secondary_ok = trend_ok and (rsi14 >= RSI_MIN) and (p_ml >= SEC_PML_MIN) and (px > ema20)
+
+    # Sync regime/ML to kv_store so dashboard can display real values
+    try:
+        _regime_str = "trending" if regime["adx"] > 20 else "ranging"
+        api_url = _os.getenv("RAILWAY_URL", _os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
+        if api_url and not api_url.startswith("http"):
+            api_url = f"https://{api_url}"
+        if api_url:
+            requests.post(f"{api_url}/api/trade-state", json={
+                "regime": _regime_str, "adx": regime["adx"],
+                "ml_confidence": round(p_ml, 3), "price": px
+            }, timeout=3)
+    except Exception:
+        pass
 
     adx_bonus = 0.0
     if regime["trend_ok"]:

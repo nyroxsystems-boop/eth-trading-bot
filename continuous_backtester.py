@@ -125,23 +125,13 @@ class ContinuousBacktester:
     
     def calculate_score(self, metrics: Dict[str, Any]) -> float:
         """
-        Calculate strategy score — WIN RATE DOMINANT with RELIABILITY FILTERS (v5).
+        Calculate strategy score — WIN RATE + PROFITABILITY (v6).
         
-        Philosophy: Win Rate IS the score. ROI is a tiebreaker.
-        A 65% WR + 2% ROI strategy MUST beat a 50% WR + 30% ROI strategy.
-        
-        Formula:
-          FAKE GATE:   WR >= 99.5%                     → score = 0 (no real strategy is perfect)
-          FAKE GATE:   WR >= 90% AND trades < 30       → score = 0 (statistically meaningless)
-          FAKE GATE:   WR >= 80% AND trades < 10       → score = 0 (too few samples)
-          KILL GATE:   WR < 55%                        → score = 0 (bad strategy)
-          RELIABILITY: trades < 10                     → score ÷ 10
-          Base:        WR × 10.0
-          WR Tiers:    +100 if WR>58%, +250 if WR>62%, +500 if WR>66%, +800 if WR>70%
-          ROI:         × 3.0  (tiebreaker only)
-          Sharpe:      × 2.0  (capped at 3.0 raw)
-          Drawdown:    × -2.0 (penalty)
-          Trades:      min(trades/20, 1) × 50 (need ≥20 trades for full credit)
+        v6 changes vs v5:
+          - PROFITABILITY GATE: profit_factor < 0.8 → score halved
+          - NEGATIVE ROI PENALTY: ROI × 15.0 instead of 3.0 (makes losses hurt)
+          - PROFIT FACTOR BONUS: up to +200 for PF > 1.2
+          - This prevents strategies that win often but lose big from being selected
         """
         if not metrics:
             return 0.0
@@ -176,17 +166,29 @@ class ContinuousBacktester:
         if win_rate > 70:
             score += 800.0   # Breaking 70% = exceptional
         
-        # ROI — tiebreaker only (not dominant)
+        # ROI — SIGNIFICANT weight (was 3.0, now 15.0 — makes losses costly)
         roi = metrics.get('roi', 0)
-        score += roi * 3.0
+        score += roi * 15.0
+        
+        # PROFIT FACTOR — critical indicator (avg_win / avg_loss)
+        pf = metrics.get('profit_factor', 0)
+        if pf >= 1.5:
+            score += 200.0   # Great risk/reward
+        elif pf >= 1.2:
+            score += 100.0   # Good risk/reward
+        elif pf >= 1.0:
+            score += 30.0    # At least not losing
+        # PF < 1.0 = losing money on average → penalty
+        elif pf < 0.8:
+            score *= 0.5     # HALVE the score for deeply unprofitable strategies
         
         # Sharpe Ratio — capped and minor
         sharpe = metrics.get('sharpe_ratio', 0)
-        score += min(sharpe, 3.0) * 2.0
+        score += min(sharpe, 3.0) * 5.0
         
         # Max Drawdown — heavy penalty
         max_dd = metrics.get('max_drawdown', 0)
-        score -= max_dd * 2.0
+        score -= max_dd * 5.0
         
         # Trade count reliability bonus (need ≥20 trades for full credit)
         score += min(total_trades / 20, 1.0) * 50

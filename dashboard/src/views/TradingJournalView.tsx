@@ -356,22 +356,36 @@ const TradingJournalView = () => {
                 )}
             </div>
 
-            {/* AI Insights */}
+            {/* AI Insights — computed from real trade data */}
             <div className="glass-card" style={{ padding: '24px', marginTop: '24px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
                     <Brain size={20} color="var(--primary-purple)" />
                     <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>{t('journal.aiInsights')}</h3>
                 </div>
                 <div style={{ padding: '16px', background: 'rgba(139, 92, 246, 0.05)', borderRadius: '12px', border: '1px solid rgba(139, 92, 246, 0.1)' }}>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: '1.6' }}>
-                        📊 <strong>Pattern Detected:</strong> Your win rate is highest during the first 4 hours of the trading day (65% vs 48% overall).
-                    </p>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: '1.6', marginTop: '12px' }}>
-                        💡 <strong>Suggestion:</strong> Consider reducing position sizes after 16:00 UTC when your performance tends to decline.
-                    </p>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: '1.6', marginTop: '12px' }}>
-                        🎯 <strong>Best Signal Combo:</strong> RSI + MACD together has produced 72% win rate in the past week.
-                    </p>
+                    {trades.length === 0 ? (
+                        <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
+                            No trades yet — insights will appear after your first trades.
+                        </p>
+                    ) : (
+                        <>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: '1.6' }}>
+                                📊 <strong>Performance:</strong> {trades.length} trades total | Win Rate: {winRate.toFixed(1)}% | Avg Trade: {avgTrade >= 0 ? '+' : ''}{avgTrade.toFixed(2)} USDT
+                            </p>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: '1.6', marginTop: '12px' }}>
+                                {totalPnl >= 0 ? '✅' : '⚠️'} <strong>Total PnL:</strong> {totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)} USDT — {totalPnl >= 0 ? 'Strategy is profitable' : 'Strategy needs optimization'}
+                            </p>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: '1.6', marginTop: '12px' }}>
+                                🎯 <strong>Signals Used:</strong> {(() => {
+                                    const allSignals = trades.flatMap(t => t.signals_used).filter(s => s !== 'LEGACY' && s !== 'PENDING')
+                                    const signalCounts: Record<string, number> = {}
+                                    allSignals.forEach(s => { signalCounts[s] = (signalCounts[s] || 0) + 1 })
+                                    const sorted = Object.entries(signalCounts).sort((a, b) => b[1] - a[1]).slice(0, 3)
+                                    return sorted.length > 0 ? sorted.map(([s, c]) => `${s} (${c}x)`).join(', ') : 'Signal tracking active — data will appear after new trades'
+                                })()}
+                            </p>
+                        </>
+                    )}
                 </div>
             </div>
         </div>

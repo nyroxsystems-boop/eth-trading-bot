@@ -97,7 +97,7 @@ def _rescore_migration_v2():
             cursor = conn.cursor()
             
             # Check if already migrated (v5 key — forces re-score from v4)
-            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v5_migrated'")
+            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v6_profitability_migrated'")
             row = cursor.fetchone()
             if row:
                 return  # Already done
@@ -138,12 +138,18 @@ def _rescore_migration_v2():
                     if win_rate > 62: new_score += 250.0
                     if win_rate > 66: new_score += 500.0
                     if win_rate > 70: new_score += 800.0
-                    # ROI tiebreaker
-                    new_score += metrics.get('roi', 0) * 3.0
-                    # Sharpe capped
-                    new_score += min(metrics.get('sharpe_ratio', 0), 3.0) * 2.0
-                    # Drawdown penalty
-                    new_score -= metrics.get('max_drawdown', 0) * 2.0
+                    # ROI — significant weight (v6: was 3.0, now 15.0)
+                    new_score += metrics.get('roi', 0) * 15.0
+                    # Profit factor bonus/penalty (v6)
+                    pf = metrics.get('profit_factor', 0)
+                    if pf >= 1.5: new_score += 200.0
+                    elif pf >= 1.2: new_score += 100.0
+                    elif pf >= 1.0: new_score += 30.0
+                    elif pf < 0.8: new_score *= 0.5
+                    # Sharpe capped (v6: was 2.0, now 5.0)
+                    new_score += min(metrics.get('sharpe_ratio', 0), 3.0) * 5.0
+                    # Drawdown penalty (v6: was 2.0, now 5.0)
+                    new_score -= metrics.get('max_drawdown', 0) * 5.0
                     # Trade count bonus (need ≥20 for full credit)
                     new_score += min(total_trades / 20, 1.0) * 50
                     # Reliability gate: <10 trades = divide by 10
@@ -159,7 +165,7 @@ def _rescore_migration_v2():
             
             # Mark migration as done
             cursor.execute("""
-                INSERT INTO kv_store (key, value) VALUES ('scoring_v5_migrated', 'true')
+                INSERT INTO kv_store (key, value) VALUES ('scoring_v6_profitability_migrated', 'true')
                 ON CONFLICT (key) DO UPDATE SET value = 'true'
             """)
             

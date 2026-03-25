@@ -563,6 +563,25 @@ async def get_bot_status() -> BotStatus:
             ml_conf = 0.5
             sentiment = 0.0
             regime = "unknown"
+        
+        # Fallback: try kv_store trade-state if console.out didn't have data
+        if regime == "unknown" and USE_POSTGRES:
+            try:
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT value FROM kv_store WHERE key = 'open_trade_state'")
+                    row = cursor.fetchone()
+                    if row:
+                        import json as _json
+                        state = _json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                        if state.get("regime"):
+                            regime = state["regime"]
+                        if state.get("ml_confidence"):
+                            ml_conf = float(state["ml_confidence"])
+            except:
+                pass
+        if regime == "unknown":
+            regime = "paper"  # Better than "unknown" — user knows it's paper mode
     
     # Count today's trades
     trades = await read_trades_csv()
