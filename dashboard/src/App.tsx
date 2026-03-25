@@ -1,6 +1,6 @@
 import { useState, useEffect, lazy, Suspense, Component, ErrorInfo } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { AnimatePresence } from 'framer-motion'
+
 import './App.css'
 import './styles/premium.css'
 
