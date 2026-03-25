@@ -399,6 +399,12 @@ def apply_best_strategy():
         current_params['risk_pct'] = RISK_PCT_PER_TRADE
         current_params['ml_threshold'] = SEC_PML_MIN
         
+        # Mark the top strategy as "applied" so dashboard shows it
+        try:
+            learning_store.set_current_strategy(top_strategies[0])
+        except Exception:
+            pass
+        
         scores = [s.get("score", 0) for s in top_strategies]
         if old_tp != TP_MAX or old_stop != STOP_FLOOR:
             log(f"ENSEMBLE-APPLY ({len(top_strategies)} strategies, scores={[f'{s:.0f}' for s in scores]}): "
