@@ -2838,7 +2838,13 @@ async def run_backtest(params: BacktestParams):
             macd_val = float(row["macd"])
             macd_sig_val = float(row["macd_sig"])
             macd_gain = macd_val - macd_sig_val
-            p_ml = 0.5 + np.tanh(macd_gain) * 0.2
+            # v7: improved ML proxy — multi-signal like GradientBoosting model
+            # (combines RSI + EMA trend + MACD + ADX instead of just MACD)
+            rsi_sig = 0.5 + (rsi14 - 50) / 200.0  # 0.25-0.75
+            trend_sig = 0.55 if px > ema20 and ema20 > ema50 else 0.45
+            macd_sig_proxy = 0.5 + np.tanh(macd_gain * 100) * 0.1
+            adx_sig = 0.5 + min(0.1, (adx_now - 20) / 200.0) if adx_now > 20 else 0.45
+            p_ml = (rsi_sig * 0.3 + trend_sig * 0.25 + macd_sig_proxy * 0.25 + adx_sig * 0.2)
             secondary_ok = trend_ok and (rsi14 >= params.rsi_oversold) and (p_ml >= params.ml_threshold) and (px > ema20)
             
             oversold_ok = (rsi14 <= max(40.0, params.rsi_oversold)) and drawdown_ok and (px >= bb_lo * 1.0005)

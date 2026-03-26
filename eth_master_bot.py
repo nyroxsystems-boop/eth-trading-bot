@@ -58,9 +58,8 @@ import requests
 import numpy as np
 import pandas as pd
 
-# ML — upgraded from SGDClassifier to MLPClassifier (neural network)
-from sklearn.neural_network import MLPClassifier
-from sklearn.linear_model import SGDClassifier  # Fallback
+# ML — GradientBoosting (upgraded from MLP: handles small datasets better, feature importance)
+from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 
@@ -265,25 +264,25 @@ daily_trade_results = []            # List of trade P&Ls today
 circuit_breaker_active = False      # True = NO MORE TRADING until midnight
 circuit_breaker_reason = ""
 
-# ML — MLP Neural Network (2 hidden layers: 64, 32 neurons)
+# ML — GradientBoosting: 100 trees, depth 4, warm_start for incremental learning
 clf = Pipeline([
     ("scaler", StandardScaler(with_mean=True)),
-    ("mlp", MLPClassifier(
-        hidden_layer_sizes=(64, 32),
-        activation="relu",
-        solver="adam",
-        alpha=1e-4,
-        learning_rate="adaptive",
-        learning_rate_init=0.001,
-        max_iter=50,
-        warm_start=True,  # Incremental learning — keeps weights between fits
-        early_stopping=False,
+    ("gbc", GradientBoostingClassifier(
+        n_estimators=100,
+        max_depth=4,
+        learning_rate=0.1,
+        subsample=0.8,
+        min_samples_leaf=10,
+        warm_start=True,  # Incremental: keeps trees between fits, adds more
+        validation_fraction=0.15,
+        n_iter_no_change=10,
         tol=1e-4
     ))
 ])
 ml_warm = False
 ml_classes = np.array([0,1])
 ml_conf_boost = 0.0
+_ml_retrain_counter = 0  # Periodic retrain every 100 loops (~8h)
 # Real ML stats for dashboard display
 ml_stats = {
     "accuracy": 0.0,
@@ -730,7 +729,7 @@ def ml_prepare(df_feat: pd.DataFrame):
     return X, y
 
 def ml_online_update(df_feat: pd.DataFrame):
-    global ml_warm, ml_conf_boost, ml_stats
+    global ml_warm, ml_conf_boost, ml_stats, _ml_retrain_counter
     try:
         X, y = ml_prepare(df_feat)
         if X.shape[0] < 60:
@@ -746,27 +745,43 @@ def ml_online_update(df_feat: pd.DataFrame):
             except Exception:
                 pass
         
-        if not ml_warm:
-            # Initial training: full Pipeline.fit() so StandardScaler gets fitted too
-            clf.fit(X[:min(200, len(X))], y[:min(200, len(y))])
-            # Continue with remaining data if available
-            if len(X) > 200:
-                clf.fit(X[-200:], y[-200:])  # warm_start=True preserves weights
+        _ml_retrain_counter += 1
+        
+        # Use up to 2000 bars for training (was 200 — 10x more data)
+        train_size = min(2000, len(X))
+        
+        if not ml_warm or _ml_retrain_counter >= 100:
+            # Initial or periodic retrain: full fit on last 2000 bars
+            clf.fit(X[-train_size:], y[-train_size:])
             ml_warm = True
-            log(f"ML warm! Trained on {len(X)} samples ({X.shape[1]} features)")
-        # else: model already trained — skip per-cycle retraining
-        # (retraining on same kline data adds no value; real updates come via ml_feedback_trade)
+            if _ml_retrain_counter >= 100:
+                log(f"ML RETRAIN: periodic refresh on {train_size} samples ({X.shape[1]} features)")
+                _ml_retrain_counter = 0
+            else:
+                log(f"ML warm! Trained on {train_size} samples ({X.shape[1]} features)")
+        
+        # Accuracy measurement on recent data
         recent = y[-500:] if len(y) >= 500 else y
         ml_conf_boost = float(np.mean(recent))
-        # Track real ML stats
         try:
             acc = clf.score(X[-200:], y[-200:]) * 100
         except Exception:
             acc = ml_conf_boost * 100
         ml_stats["accuracy"] = round(acc, 1)
-        ml_stats["samples"] = int(X.shape[0])
+        ml_stats["samples"] = int(train_size)
         ml_stats["last_trained"] = datetime.now().isoformat()
         ml_stats["warm"] = ml_warm
+        
+        # Log feature importance (GBC provides this natively)
+        try:
+            gbc = clf.named_steps["gbc"]
+            if hasattr(gbc, "feature_importances_"):
+                importances = gbc.feature_importances_
+                top_idx = np.argsort(importances)[-3:][::-1]  # Top 3
+                top_features = [(ML_FEATURES[i], round(importances[i], 3)) for i in top_idx]
+                ml_stats["top_features"] = top_features
+        except Exception:
+            pass
         # Persist to JSON for dashboard API
         try:
             import json
@@ -823,7 +838,7 @@ def ml_predict_row(row) -> float:
 
 # --- Trade Outcome Feedback + Experience Replay ---
 _trade_feedback_buffer = []
-_experience_replay = deque(maxlen=100)  # Persistent memory of last 100 trades
+_experience_replay = deque(maxlen=200)  # Persistent memory of last 200 trades (was 100)
 _replay_counter = 0
 
 def ml_feedback_trade(entry_row, outcome_win: bool):
