@@ -234,47 +234,47 @@ def _rescore_migration_v2():
             cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v6_aggressive_purge'")
             row = cursor.fetchone()
             if row:
-                return  # Already done
-            
-            # 1. Kill ALL 100% WR strategies — no real strategy is perfect
-            cursor.execute("""
-                UPDATE learning_strategies 
-                SET score = 0
-                WHERE CAST(metrics->>'win_rate' AS FLOAT) >= 99.5
-                  AND score > 0
-            """)
-            purged_perfect = cursor.rowcount
-            
-            # 2. Kill WR >= 90% with fewer than 30 trades (statistically meaningless)
-            cursor.execute("""
-                UPDATE learning_strategies 
-                SET score = 0
-                WHERE CAST(metrics->>'win_rate' AS FLOAT) >= 90.0
-                  AND CAST(metrics->>'total_trades' AS INTEGER) < 30
-                  AND score > 0
-            """)
-            purged_suspicious = cursor.rowcount
-            
-            # 3. Kill WR >= 80% with fewer than 10 trades (way too few samples)
-            cursor.execute("""
-                UPDATE learning_strategies 
-                SET score = 0
-                WHERE CAST(metrics->>'win_rate' AS FLOAT) >= 80.0
-                  AND CAST(metrics->>'total_trades' AS INTEGER) < 10
-                  AND score > 0
-            """)
-            purged_tiny = cursor.rowcount
-            
-            cursor.execute("""
-                INSERT INTO kv_store (key, value) VALUES ('scoring_v6_aggressive_purge', 'true')
-                ON CONFLICT (key) DO UPDATE SET value = 'true'
-            """)
-            
-            total_purged = purged_perfect + purged_suspicious + purged_tiny
-            if total_purged > 0:
-                print(f"🧹 PURGE v6: Zeroed {purged_perfect} perfect-WR + {purged_suspicious} suspicious-WR + {purged_tiny} tiny-sample strategies")
+                pass  # Already done — fall through to v7/v8
             else:
-                print("✅ Purge v6: no unrealistic strategies found")
+                # 1. Kill ALL 100% WR strategies — no real strategy is perfect
+                cursor.execute("""
+                    UPDATE learning_strategies 
+                    SET score = 0
+                    WHERE CAST(metrics->>'win_rate' AS FLOAT) >= 99.5
+                      AND score > 0
+                """)
+                purged_perfect = cursor.rowcount
+                
+                # 2. Kill WR >= 90% with fewer than 30 trades (statistically meaningless)
+                cursor.execute("""
+                    UPDATE learning_strategies 
+                    SET score = 0
+                    WHERE CAST(metrics->>'win_rate' AS FLOAT) >= 90.0
+                      AND CAST(metrics->>'total_trades' AS INTEGER) < 30
+                      AND score > 0
+                """)
+                purged_suspicious = cursor.rowcount
+                
+                # 3. Kill WR >= 80% with fewer than 10 trades (way too few samples)
+                cursor.execute("""
+                    UPDATE learning_strategies 
+                    SET score = 0
+                    WHERE CAST(metrics->>'win_rate' AS FLOAT) >= 80.0
+                      AND CAST(metrics->>'total_trades' AS INTEGER) < 10
+                      AND score > 0
+                """)
+                purged_tiny = cursor.rowcount
+                
+                cursor.execute("""
+                    INSERT INTO kv_store (key, value) VALUES ('scoring_v6_aggressive_purge', 'true')
+                    ON CONFLICT (key) DO UPDATE SET value = 'true'
+                """)
+                
+                total_purged = purged_perfect + purged_suspicious + purged_tiny
+                if total_purged > 0:
+                    print(f"🧹 PURGE v6: Zeroed {purged_perfect} perfect-WR + {purged_suspicious} suspicious-WR + {purged_tiny} tiny-sample strategies")
+                else:
+                    print("✅ Purge v6: no unrealistic strategies found")
     except Exception as e:
         print(f"⚠️ Purge v6 error: {e}")
 
@@ -317,15 +317,14 @@ def _rescore_migration_v2():
     except Exception as e:
         print(f"⚠️ Purge v7 error: {e}")
 
-    # === v8 MIGRATION: Full reset after backtest engine sync ===
-    # We synced the backtest scoring weights, ADX, and ML logic to exactly match
-    # the live bot. ALL previously tested strategies used different weights/logic,
-    # so their scores are NOT comparable. Zero them all and start fresh.
+    # === v9 MIGRATION: Full reset — ML upgraded to GBC + backtest synced ===
+    # v8 key was set by the Web service before the Worker could execute it.
+    # This v9 forces a proper full reset with a new key.
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
-            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v8_backtest_sync'")
+            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v9_full_reset_ml_gbc'")
             row = cursor.fetchone()
             if row:
                 pass  # Already done
@@ -338,16 +337,16 @@ def _rescore_migration_v2():
                 purged_all = cursor.rowcount
                 
                 cursor.execute("""
-                    INSERT INTO kv_store (key, value) VALUES ('scoring_v8_backtest_sync', 'true')
+                    INSERT INTO kv_store (key, value) VALUES ('scoring_v9_full_reset_ml_gbc', 'true')
                     ON CONFLICT (key) DO UPDATE SET value = 'true'
                 """)
                 
                 if purged_all > 0:
-                    print(f"🧹 PURGE v8: Zeroed ALL {purged_all} strategies (backtest engine synced with live bot — full reset)")
+                    print(f"🧹 PURGE v9: Zeroed ALL {purged_all} strategies (ML upgraded to GBC + backtest synced — full reset)")
                 else:
-                    print("✅ Purge v8: no strategies to reset")
+                    print("✅ Purge v9: no strategies to reset")
     except Exception as e:
-        print(f"⚠️ Purge v8 error: {e}")
+        print(f"⚠️ Purge v9 error: {e}")
 
 
 # ─── Write Operations ───
