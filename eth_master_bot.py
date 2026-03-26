@@ -2550,6 +2550,30 @@ def main():
     import re  # noqa: F401
     init_env()
     
+    # === v9 PURGE: Worker-only — bypass race condition with Web service ===
+    # learning_store._rescore_migration_v2() runs in BOTH Web and Worker.
+    # Web starts first → sets the kv key → Worker finds it set → skips purge.
+    # Fix: run the purge HERE, which only executes in the Worker process.
+    try:
+        from db_adapter import get_db_connection, USE_POSTGRES
+        if USE_POSTGRES:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT value FROM kv_store WHERE key = 'worker_v9_purge_done'")
+                if not cursor.fetchone():
+                    cursor.execute("UPDATE learning_strategies SET score = 0 WHERE score > 0")
+                    purged = cursor.rowcount
+                    cursor.execute("""
+                        INSERT INTO kv_store (key, value) VALUES ('worker_v9_purge_done', 'true')
+                        ON CONFLICT (key) DO UPDATE SET value = 'true'
+                    """)
+                    if purged > 0:
+                        log(f"🧹 WORKER v9 PURGE: Zeroed {purged} old strategies (ML→GBC + backtest synced)")
+                    else:
+                        log("✅ Worker v9: no strategies to purge")
+    except Exception as e:
+        log(f"⚠️ Worker v9 purge: {e}")
+    
     # Restore ML model from last session (survives Railway deploys)
     load_ml_model()
     _load_paper_balance()
