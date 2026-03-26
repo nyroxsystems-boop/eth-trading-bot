@@ -278,6 +278,45 @@ def _rescore_migration_v2():
     except Exception as e:
         print(f"⚠️ Purge v6 error: {e}")
 
+    # === v7 MIGRATION: Purge strategies with outdated/unsafe params ===
+    # Old strategies from before the parameter range tightening still dominate
+    # because they have high scores from the old formula. These have params like
+    # ml_threshold=0.47 (below 0.50 floor) or max_trades=25 (way over env cap).
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v7_param_purge'")
+            row = cursor.fetchone()
+            if row:
+                pass  # Already done
+            else:
+                # Zero-score strategies with params outside valid ranges
+                cursor.execute("""
+                    UPDATE learning_strategies 
+                    SET score = 0
+                    WHERE score > 0
+                    AND (
+                        CAST(params->>'ml_threshold' AS FLOAT) < 0.50
+                        OR CAST(params->>'max_trades_per_day' AS FLOAT) > 15
+                        OR CAST(params->>'risk_per_trade' AS FLOAT) > 0.015
+                        OR CAST(params->>'tp_max' AS FLOAT) > 0.05
+                    )
+                """)
+                purged_params = cursor.rowcount
+                
+                cursor.execute("""
+                    INSERT INTO kv_store (key, value) VALUES ('scoring_v7_param_purge', 'true')
+                    ON CONFLICT (key) DO UPDATE SET value = 'true'
+                """)
+                
+                if purged_params > 0:
+                    print(f"🧹 PURGE v7: Zeroed {purged_params} strategies with outdated params (ml<0.50, trades>15, risk>1.5%)")
+                else:
+                    print("✅ Purge v7: all strategy params within valid ranges")
+    except Exception as e:
+        print(f"⚠️ Purge v7 error: {e}")
+
 
 # ─── Write Operations ───
 

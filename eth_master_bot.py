@@ -297,6 +297,7 @@ ml_stats = {
 nltk_downloaded = False
 sia = None
 sent_score = 0.0
+SENT_ENTRY_MIN = -0.20  # Sentiment gate — dynamic, optimized by backtester (clamp -0.40 to 0.10)
 last_rss_pull = 0.0
 
 # --- Auto-Optimization State ---
@@ -326,7 +327,7 @@ def apply_best_strategy():
     global _last_strategy_load, SEC_PML_MIN
     global RSI_MIN, RSI_MAX, MAX_TRADES_PER_DAY, _ENTRY_CEILING
     global BREAKOUT_WEIGHT, TREND_WEIGHT
-    global ADX_MIN_TREND
+    global ADX_MIN_TREND, SENT_ENTRY_MIN
     
     # Only reload every 5 minutes
     if time.time() - _last_strategy_load < _STRATEGY_RELOAD_INTERVAL:
@@ -402,12 +403,16 @@ def apply_best_strategy():
         # === Dynamic Market Filters (NEW — was fixed) ===
         if "adx_min" in blended:
             ADX_MIN_TREND = max(8.0, min(25.0, blended["adx_min"]))  # Clamp 8-25
+        if "sentiment_gate" in blended:
+            SENT_ENTRY_MIN = max(-0.40, min(0.10, blended["sentiment_gate"]))  # Clamp -0.40 to 0.10
         
         # Update current_params dict for tracking
         current_params['tp_min'] = TP_MIN
         current_params['tp_max'] = TP_MAX
         current_params['risk_pct'] = RISK_PCT_PER_TRADE
         current_params['ml_threshold'] = SEC_PML_MIN
+        current_params['adx_min'] = ADX_MIN_TREND
+        current_params['sentiment_gate'] = SENT_ENTRY_MIN
         
         # Mark the top strategy as "applied" so dashboard shows it
         try:
@@ -1972,17 +1977,22 @@ def decide_and_trade():
     # ML check is ALWAYS required — paper mode must trade like live mode for valid results
     secondary_ok = trend_ok and (rsi14 >= RSI_MIN) and (p_ml >= SEC_PML_MIN) and (px > ema20)
 
-    # Sync regime/ML to kv_store so dashboard can display real values
+    # Sync regime/ML to kv_store directly (no HTTP self-call — fails on Railway)
     try:
         _regime_str = "trending" if regime["adx"] > 20 else "ranging"
-        api_url = _os.getenv("RAILWAY_URL", _os.getenv("RAILWAY_PUBLIC_DOMAIN", ""))
-        if api_url and not api_url.startswith("http"):
-            api_url = f"https://{api_url}"
-        if api_url:
-            requests.post(f"{api_url}/api/trade-state", json={
+        from db_adapter import get_db_connection as _get_db, USE_POSTGRES as _USE_PG
+        if _USE_PG:
+            import json as _rjson
+            _regime_data = _rjson.dumps({
                 "regime": _regime_str, "adx": regime["adx"],
                 "ml_confidence": round(p_ml, 3), "price": px
-            }, timeout=3)
+            })
+            with _get_db() as _rconn:
+                _rcur = _rconn.cursor()
+                _rcur.execute("""
+                    INSERT INTO kv_store (key, value) VALUES ('open_trade_state', %s)
+                    ON CONFLICT (key) DO UPDATE SET value = %s
+                """, (_regime_data, _regime_data))
     except Exception:
         pass
 
@@ -2101,6 +2111,11 @@ def decide_and_trade():
     effective_entry_min = max(effective_entry_min, 0.20)
     
     entry_score = base_score
+    
+    # === SENTIMENT GATE: block entry if sentiment is too negative ===
+    if sent_score < SENT_ENTRY_MIN:
+        log(f"SENT GATE: sentiment={sent_score:.2f} < {SENT_ENTRY_MIN:.2f} → entry blocked")
+        return
 
     # --- QUALITY FILTERS: volume + 15m trend ---
     vol_ok = check_volume_filter(df_feat)
