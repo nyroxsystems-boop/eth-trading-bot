@@ -398,7 +398,7 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     std_pnl = (sum((p - avg_pnl) ** 2 for p in pnls) / len(pnls)) ** 0.5
     sharpe = (avg_pnl / std_pnl * (len(trades) ** 0.5)) if std_pnl > 0 else 0
     
-    # === SCORING: v5 WIN-RATE DOMINANT with RELIABILITY FILTERS ===
+    # === SCORING: v6 WIN-RATE DOMINANT + PROFITABILITY (synced with continuous_backtester) ===
     n_trades = len(trades)
     
     # FAKE GATES: reject unrealistically perfect strategies
@@ -418,12 +418,21 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
         if win_rate > 62: score += 250.0
         if win_rate > 66: score += 500.0
         if win_rate > 70: score += 800.0
-        # ROI tiebreaker
-        score += roi * 3.0
-        # Sharpe
-        score += min(sharpe, 3.0) * 2.0
-        # Drawdown penalty
-        score -= max_drawdown * 100 * 2.0
+        # ROI — SIGNIFICANT weight (v6: 15.0)
+        score += roi * 15.0
+        # PROFIT FACTOR — critical indicator (v6)
+        if profit_factor >= 1.5:
+            score += 200.0
+        elif profit_factor >= 1.2:
+            score += 100.0
+        elif profit_factor >= 1.0:
+            score += 30.0
+        elif profit_factor < 0.8:
+            score *= 0.5  # HALVE for deeply unprofitable
+        # Sharpe (v6: 5.0)
+        score += min(sharpe, 3.0) * 5.0
+        # Drawdown penalty (v6: 5.0, max_drawdown already in %)
+        score -= max_drawdown * 5.0
         # Trade count bonus (need ≥20 trades for full credit)
         score += min(n_trades / 20, 1.0) * 50
         # Reliability gate: <10 trades = divide by 10
@@ -639,8 +648,12 @@ async def run_single_backtest():
             return
         
         # Use TEST score as the final score (out-of-sample validation)
-        # Average with train score to reduce variance, but weight test higher
-        oos_score = test_metrics["score"] * 0.7 + train_metrics["score"] * 0.3
+        # CRITICAL: if kill-gate zeroed the test score, keep it at 0!
+        # Don't let a high train score rescue a dead test strategy.
+        if test_metrics["score"] <= 0:
+            oos_score = 0.0  # Kill-gate says NO → final answer is NO
+        else:
+            oos_score = test_metrics["score"] * 0.7 + train_metrics["score"] * 0.3
         test_metrics["score"] = round(oos_score, 2)
         test_metrics["train_score"] = train_metrics["score"]
         test_metrics["data_source"] = "historical_binance"

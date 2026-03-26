@@ -1561,7 +1561,11 @@ async def auto_learning_background():
                     test_metrics = run_backtest(test_candles, params)
                     if test_metrics:
                         # Out-of-sample score: 70% test + 30% train
-                        oos_score = test_metrics["score"] * 0.7 + train_metrics["score"] * 0.3
+                        # CRITICAL: if kill-gate zeroed test score, keep it at 0
+                        if test_metrics["score"] <= 0:
+                            oos_score = 0.0
+                        else:
+                            oos_score = test_metrics["score"] * 0.7 + train_metrics["score"] * 0.3
                         test_metrics["score"] = round(oos_score, 2)
                         test_metrics["data_source"] = "historical_binance"
                         
