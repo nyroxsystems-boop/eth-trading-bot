@@ -317,6 +317,38 @@ def _rescore_migration_v2():
     except Exception as e:
         print(f"⚠️ Purge v7 error: {e}")
 
+    # === v8 MIGRATION: Full reset after backtest engine sync ===
+    # We synced the backtest scoring weights, ADX, and ML logic to exactly match
+    # the live bot. ALL previously tested strategies used different weights/logic,
+    # so their scores are NOT comparable. Zero them all and start fresh.
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT value FROM kv_store WHERE key = 'scoring_v8_backtest_sync'")
+            row = cursor.fetchone()
+            if row:
+                pass  # Already done
+            else:
+                cursor.execute("""
+                    UPDATE learning_strategies 
+                    SET score = 0
+                    WHERE score > 0
+                """)
+                purged_all = cursor.rowcount
+                
+                cursor.execute("""
+                    INSERT INTO kv_store (key, value) VALUES ('scoring_v8_backtest_sync', 'true')
+                    ON CONFLICT (key) DO UPDATE SET value = 'true'
+                """)
+                
+                if purged_all > 0:
+                    print(f"🧹 PURGE v8: Zeroed ALL {purged_all} strategies (backtest engine synced with live bot — full reset)")
+                else:
+                    print("✅ Purge v8: no strategies to reset")
+    except Exception as e:
+        print(f"⚠️ Purge v8 error: {e}")
+
 
 # ─── Write Operations ───
 
