@@ -25,7 +25,9 @@ class StrategyGenerator:
             'rsi_oversold': (28, 42),           # Tighter RSI (was 25-45)
             'rsi_overbought': (62, 78),         # Tighter RSI (was 60-85)
             'entry_score_min': (0.20, 0.35),    # Floor raised to 0.20 (was 0.18)
-            'breakout_pct': (0.00005, 0.0008)   # Tighter breakout (was 0.00001)
+            'breakout_pct': (0.00005, 0.0008),  # Tighter breakout (was 0.00001)
+            'adx_min': (8, 25),                 # ADX trend filter — dynamic (was fixed 14)
+            'sentiment_gate': (-0.40, 0.10),    # Sentiment threshold — dynamic (was fixed -0.20)
         }
         
         # Conservative ranges biased toward high win rates
@@ -39,7 +41,9 @@ class StrategyGenerator:
             'rsi_oversold': (30, 40),           # Conservative entries
             'rsi_overbought': (65, 75),         # Exit before overbought
             'entry_score_min': (0.22, 0.35),    # HIGH entry quality bar
-            'breakout_pct': (0.0001, 0.0005)
+            'breakout_pct': (0.0001, 0.0005),
+            'adx_min': (12, 22),                # Moderate trend filter
+            'sentiment_gate': (-0.25, 0.05),    # Slightly stricter sentiment
         }
         
         # Ultra-conservative: maximum selectivity for peak WR
@@ -53,7 +57,9 @@ class StrategyGenerator:
             'rsi_oversold': (32, 38),           # Narrow oversold window
             'rsi_overbought': (68, 75),         # Narrow overbought window
             'entry_score_min': (0.25, 0.40),    # Very high entry bar
-            'breakout_pct': (0.0002, 0.0006)
+            'breakout_pct': (0.0002, 0.0006),
+            'adx_min': (14, 20),                # Conservative — needs clear trend
+            'sentiment_gate': (-0.15, 0.05),    # Strict sentiment — no negative news
         }
     
     def generate_random_strategy(self) -> Dict[str, Any]:
@@ -68,7 +74,9 @@ class StrategyGenerator:
             'rsi_oversold': random.uniform(*self.parameter_ranges['rsi_oversold']),
             'rsi_overbought': random.uniform(*self.parameter_ranges['rsi_overbought']),
             'entry_score_min': random.uniform(*self.parameter_ranges['entry_score_min']),
-            'breakout_pct': random.uniform(*self.parameter_ranges['breakout_pct'])
+            'breakout_pct': random.uniform(*self.parameter_ranges['breakout_pct']),
+            'adx_min': random.uniform(*self.parameter_ranges['adx_min']),
+            'sentiment_gate': random.uniform(*self.parameter_ranges['sentiment_gate']),
         }
     
     def generate_high_winrate_strategy(self) -> Dict[str, Any]:
@@ -83,7 +91,9 @@ class StrategyGenerator:
             'rsi_oversold': random.uniform(*self.high_wr_ranges['rsi_oversold']),
             'rsi_overbought': random.uniform(*self.high_wr_ranges['rsi_overbought']),
             'entry_score_min': random.uniform(*self.high_wr_ranges['entry_score_min']),
-            'breakout_pct': random.uniform(*self.high_wr_ranges['breakout_pct'])
+            'breakout_pct': random.uniform(*self.high_wr_ranges['breakout_pct']),
+            'adx_min': random.uniform(*self.high_wr_ranges['adx_min']),
+            'sentiment_gate': random.uniform(*self.high_wr_ranges['sentiment_gate']),
         }
     
     def generate_ultra_conservative_strategy(self) -> Dict[str, Any]:
@@ -99,7 +109,9 @@ class StrategyGenerator:
             'rsi_oversold': random.uniform(*self.ultra_conservative_ranges['rsi_oversold']),
             'rsi_overbought': random.uniform(*self.ultra_conservative_ranges['rsi_overbought']),
             'entry_score_min': random.uniform(*self.ultra_conservative_ranges['entry_score_min']),
-            'breakout_pct': random.uniform(*self.ultra_conservative_ranges['breakout_pct'])
+            'breakout_pct': random.uniform(*self.ultra_conservative_ranges['breakout_pct']),
+            'adx_min': random.uniform(*self.ultra_conservative_ranges['adx_min']),
+            'sentiment_gate': random.uniform(*self.ultra_conservative_ranges['sentiment_gate']),
         }
     
     def mutate_strategy(self, strategy: Dict[str, Any], mutation_rate: float = 0.20) -> Dict[str, Any]:

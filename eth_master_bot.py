@@ -326,6 +326,7 @@ def apply_best_strategy():
     global _last_strategy_load, SEC_PML_MIN
     global RSI_MIN, RSI_MAX, MAX_TRADES_PER_DAY, _ENTRY_CEILING
     global BREAKOUT_WEIGHT, TREND_WEIGHT
+    global ADX_MIN_TREND
     
     # Only reload every 5 minutes
     if time.time() - _last_strategy_load < _STRATEGY_RELOAD_INTERVAL:
@@ -354,7 +355,7 @@ def apply_best_strategy():
         
         # Blend parameters from top strategies
         blend_keys = ["tp_min", "tp_max", "stop_floor", "ml_threshold", "rsi_oversold", "rsi_overbought",
-                      "max_trades_per_day", "entry_score_min"]
+                      "max_trades_per_day", "entry_score_min", "adx_min", "sentiment_gate"]
         blended = {}
         total_weight = 0.0
         
@@ -397,6 +398,10 @@ def apply_best_strategy():
             MAX_TRADES_PER_DAY = min(int(round(blended["max_trades_per_day"])), _env_max)  # Never exceed .env.bot value
         if "entry_score_min" in blended:
             _ENTRY_CEILING = max(0.20, min(0.35, blended["entry_score_min"]))  # Raised floor 0.15→0.20
+        
+        # === Dynamic Market Filters (NEW — was fixed) ===
+        if "adx_min" in blended:
+            ADX_MIN_TREND = max(8.0, min(25.0, blended["adx_min"]))  # Clamp 8-25
         
         # Update current_params dict for tracking
         current_params['tp_min'] = TP_MIN
