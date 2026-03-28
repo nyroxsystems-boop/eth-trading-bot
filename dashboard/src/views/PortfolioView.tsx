@@ -23,7 +23,7 @@ export default function PortfolioView() {
 
     useEffect(() => {
         fetchData()
-        const interval = setInterval(fetchData, 15000)
+        const interval = setInterval(fetchData, 30000)
         return () => clearInterval(interval)
     }, [])
 

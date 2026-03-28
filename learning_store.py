@@ -564,67 +564,46 @@ def _pg_get_current() -> Optional[Dict]:
 
 
 def _pg_get_stats() -> Dict:
-    """Get aggregated stats from PostgreSQL."""
+    """Get aggregated stats from PostgreSQL — OPTIMIZED: 1 combined query."""
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
 
-            # Total — use lifetime counter from kv_store if available
+            # === SINGLE COMBINED QUERY: replaces 5+ separate queries ===
+            cursor.execute("""
+                SELECT 
+                    COALESCE(MAX(score), 0) as best_score,
+                    COUNT(*) FILTER (WHERE applied = TRUE) as applied_count,
+                    COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE) as today_count,
+                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour') as hour_count
+                FROM learning_strategies
+            """)
+            row = cursor.fetchone()
+            best_score = row[0] or 0
+            total_applied = row[1] or 0
+            today_tested_db = row[2] or 0
+            this_hour_db = row[3] or 0
+
+            # Fetch ALL kv_store counters in ONE query
             total_tested = 0
-            try:
-                cursor.execute("SELECT value FROM kv_store WHERE key = 'total_strategies_tested'")
-                kv_row = cursor.fetchone()
-                if kv_row:
-                    total_tested = int(kv_row[0])
-            except Exception:
-                pass
-            if total_tested == 0:
-                cursor.execute("SELECT COUNT(*) FROM learning_strategies")
-                total_tested = cursor.fetchone()[0] or 0
-            
-            cursor.execute("SELECT COALESCE(MAX(score), 0) FROM learning_strategies")
-            best_score = cursor.fetchone()[0] or 0  # No cap — reliability multiplier handles inflated scores
-
-            # Applied count
-            cursor.execute("SELECT COUNT(*) FROM learning_strategies WHERE applied = TRUE")
-            applied_row = cursor.fetchone()
-            total_applied = applied_row[0] or 0
-
-            # Today's count — use daily kv_store counter
-            today_tested = 0
+            today_tested = today_tested_db
+            this_hour_tested = this_hour_db
             try:
                 today_key = f"strategies_tested_{datetime.now().strftime('%Y-%m-%d')}"
-                cursor.execute("SELECT value FROM kv_store WHERE key = %s", (today_key,))
-                today_kv = cursor.fetchone()
-                if today_kv:
-                    today_tested = int(today_kv[0])
-            except Exception:
-                pass
-            if today_tested == 0:
-                cursor.execute("""
-                    SELECT COUNT(*) FROM learning_strategies
-                    WHERE created_at >= CURRENT_DATE
-                """)
-                today_tested = cursor.fetchone()[0] or 0
-
-            # This hour's count — use kv_store hourly counter (counts ALL tested, not just saved)
-            this_hour_tested = 0
-            try:
                 hour_key = f"strategies_tested_{datetime.now().strftime('%Y-%m-%d_%H')}"
-                cursor.execute("SELECT value FROM kv_store WHERE key = %s", (hour_key,))
-                hour_kv = cursor.fetchone()
-                if hour_kv:
-                    this_hour_tested = int(hour_kv[0])
+                cursor.execute(
+                    "SELECT key, value FROM kv_store WHERE key IN (%s, %s, %s)",
+                    ('total_strategies_tested', today_key, hour_key)
+                )
+                for kv_row in cursor.fetchall():
+                    if kv_row[0] == 'total_strategies_tested':
+                        total_tested = int(kv_row[1])
+                    elif kv_row[0] == today_key:
+                        today_tested = int(kv_row[1])
+                    elif kv_row[0] == hour_key:
+                        this_hour_tested = int(kv_row[1])
             except Exception:
                 pass
-            if this_hour_tested == 0:
-                # Fallback: count DB rows created this hour
-                cursor.execute("""
-                    SELECT COUNT(*) FROM learning_strategies
-                    WHERE created_at >= NOW() - INTERVAL '1 hour'
-                """)
-                hour_row = cursor.fetchone()
-                this_hour_tested = hour_row[0] or 0
 
             # Top 10 strategies for display
             cursor.execute("""

@@ -1470,6 +1470,37 @@ async def startup_event():
     # Start auto-learning background service
     asyncio.create_task(auto_learning_background())
     print("🧠 Auto-Learning Background Service started!")
+    
+    # Start cache warmer — pre-fetches slow endpoints so users never wait
+    asyncio.create_task(_cache_warmer())
+    print("🔥 Cache Warmer started (learning_stats every 45s)")
+
+
+async def _cache_warmer():
+    """Background task: pre-fetches slow endpoints so users always get cached results."""
+    await asyncio.sleep(5)  # Let server fully initialize
+    while True:
+        try:
+            result = learning_store.get_learning_stats()
+            # Cross-reference applied strategy (same logic as get_learning_stats endpoint)
+            current = result.get("current_strategy")
+            if current and "strategies" in result:
+                current_score = current.get("score", -999)
+                best_idx = -1
+                best_diff = 999
+                for i, strat in enumerate(result["strategies"]):
+                    diff = abs(strat.get("score", 0) - current_score)
+                    if diff < best_diff:
+                        best_diff = diff
+                        best_idx = i
+                for i, strat in enumerate(result["strategies"]):
+                    strat["applied"] = (i == best_idx and best_diff < 1.0)
+                if result.get("stats"):
+                    result["stats"]["total_applied"] = max(result["stats"].get("total_applied", 0), 1)
+            _set_cache("learning_stats", result)
+        except Exception as e:
+            print(f"Cache warmer error: {e}")
+        await asyncio.sleep(45)  # Refresh every 45s (cache TTL = 60s)
 
 
 async def auto_learning_background():
@@ -2997,8 +3028,8 @@ async def run_backtest(params: BacktestParams):
 
 @app.get("/api/learning/stats")
 async def get_learning_stats():
-    """Get auto-learning statistics and strategies (PostgreSQL-backed) — cached 30s"""
-    cached = _cached("learning_stats", ttl=30)
+    """Get auto-learning statistics and strategies (PostgreSQL-backed) — cached 60s"""
+    cached = _cached("learning_stats", ttl=60)
     if cached:
         return cached
     try:

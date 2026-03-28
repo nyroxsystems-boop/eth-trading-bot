@@ -40,7 +40,7 @@ export default function BotsView() {
             }
         }
         fetchStatus()
-        const interval = setInterval(fetchStatus, 15000)
+        const interval = setInterval(fetchStatus, 30000)
         return () => clearInterval(interval)
     }, [])
 

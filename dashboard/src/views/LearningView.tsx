@@ -172,7 +172,7 @@ const LearningView = () => {
         const interval = setInterval(() => {
             fetchLearningData()
             fetchTrainingProgress()
-        }, 5000) // Update every 5 seconds
+        }, 30000) // Update every 30 seconds (cache-warmer keeps data fresh server-side)
         return () => clearInterval(interval)
     }, [])
 
