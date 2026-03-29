@@ -123,7 +123,11 @@ class OrderExecutor:
         return round(qty, 8)
     
     def _log_paper_trade(self, action: str, qty: float, price: float, exec_price: float):
-        """Log paper trade to CSV for P&L dashboard chart."""
+        """Log paper trade to CSV for P&L dashboard chart.
+        
+        Uses canonical format: timestamp,action,qty,price (same as eth_master_bot).
+        Extra columns appended for richer analytics but guards only read first 4.
+        """
         try:
             self._trade_log_path.parent.mkdir(parents=True, exist_ok=True)
             
@@ -134,8 +138,12 @@ class OrderExecutor:
                     writer.writerow(['timestamp', 'action', 'qty', 'price', 'exec_price',
                                      'balance_usdt', 'balance_eth', 'fees_paid'])
                 
+                # Use fixed timestamp format matching guards parser (%Y-%m-%d %H:%M:%S)
+                from datetime import timezone
+                ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+                
                 writer.writerow([
-                    datetime.now().isoformat(),
+                    ts,
                     action, round(qty, 6), round(price, 2), round(exec_price, 2),
                     round(self.paper_balance_usdt, 2), round(self.paper_balance_eth, 6),
                     round(self.total_fees_paid, 2)

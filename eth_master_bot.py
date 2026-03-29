@@ -428,7 +428,7 @@ def apply_best_strategy():
                 f"TP={TP_MIN*100:.2f}-{TP_MAX*100:.2f}% Stop={STOP_FLOOR*100:.2f}% "
                 f"ML={SEC_PML_MIN:.2f} RSI={RSI_MIN:.0f}-{RSI_MAX:.0f} MaxTrades={MAX_TRADES_PER_DAY}")
     except Exception as e:
-        pass  # Silently fail — don't break trading loop
+        log(f"WARN apply_best_strategy failed: {e}")  # Don't break trading loop, but log for diagnosis
 
 # --- Adaptive Entry Threshold ---
 # Self-correcting: bot MUST trade to learn and hit 1%/day target

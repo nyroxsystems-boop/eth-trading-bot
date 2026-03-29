@@ -114,7 +114,8 @@ class DQNEnsembleAdapter:
                     p_up = p_down = 0.5
                 
                 results.append([p_down, p_up])
-            except:
+            except Exception as e:
+                print(f"DQN prediction error: {e}")
                 results.append([0.5, 0.5])
         
         return np.array(results)
@@ -220,8 +221,8 @@ class UnifiedEnsemble:
                 gb_score = self.gb_model.predict_score(strategy_params)
                 predictions["gradient_boosting"] = "BUY" if gb_score > 0.55 else "SELL" if gb_score < 0.45 else "HOLD"
                 confidences["gradient_boosting"] = abs(gb_score - 0.5) * 2
-            except:
-                pass
+            except Exception as e:
+                print(f"GB prediction error: {e}")
         
         # LSTM prediction
         if self.models_loaded.get("lstm") and strategy_params:
@@ -230,8 +231,8 @@ class UnifiedEnsemble:
                 lstm_score = lstm_preds.get("weighted", 0.5)
                 predictions["lstm"] = "BUY" if lstm_score > 0.55 else "SELL" if lstm_score < 0.45 else "HOLD"
                 confidences["lstm"] = abs(lstm_score - 0.5) * 2
-            except:
-                pass
+            except Exception as e:
+                print(f"LSTM prediction error: {e}")
         
         # Weighted voting
         votes = {"BUY": 0.0, "SELL": 0.0, "HOLD": 0.0}

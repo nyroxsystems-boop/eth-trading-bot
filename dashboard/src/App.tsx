@@ -306,7 +306,13 @@ function Dashboard() {
                 {activePage === 'social' && <SocialView />}
                 {activePage === 'journal' && <TradingJournalView />}
                 {activePage === 'account' && <AccountView />}
-                {activePage === 'admin' && <AdminDashboardView />}
+                {activePage === 'admin' && <AdminDashboardView activeTab="overview" />}
+                {activePage === 'admin-users' && <AdminDashboardView activeTab="users" />}
+                {activePage === 'admin-system' && <AdminDashboardView activeTab="system" />}
+                {activePage === 'admin-bot' && <AdminDashboardView activeTab="bot" />}
+                {activePage === 'admin-logs' && <AdminDashboardView activeTab="logs" />}
+                {activePage === 'admin-revenue' && <AdminDashboardView activeTab="revenue" />}
+                {activePage === 'admin-db' && <AdminDashboardView activeTab="database" />}
                 {activePage === 'ml' && <MLMonitorView />}
                 {activePage === 'accounts' && <AccountsView />}
                 {activePage === 'bots' && <BotsView />}

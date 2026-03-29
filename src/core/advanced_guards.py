@@ -47,6 +47,21 @@ class AdvancedTradeGuards:
         self.equity = equity
         self.tz = timezone.utc
         self.timestamp_format = "%Y-%m-%d %H:%M:%S"
+    
+    def _parse_timestamp(self, ts_str: str) -> datetime:
+        """Parse timestamp string robustly (supports ISO and fixed formats)"""
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+        ):
+            try:
+                return datetime.strptime(ts_str.strip(), fmt).replace(tzinfo=self.tz)
+            except ValueError:
+                continue
+        logger.warning(f"[GUARD] Unparseable timestamp '{ts_str}', using current time")
+        return datetime.now(self.tz)
         
         # Risk parameters
         self.max_drawdown_pct = 0.15  # 15% max drawdown
@@ -278,7 +293,7 @@ class AdvancedTradeGuards:
         daily_pnl = 0
         for trade in trades:
             try:
-                ts = datetime.strptime(trade["timestamp"], self.timestamp_format).replace(tzinfo=self.tz)
+                ts = self._parse_timestamp(trade["timestamp"])
                 if ts >= today_start and trade["action"].upper() == "SELL":
                     pnl = float(trade.get("pnl", 0))
                     daily_pnl += pnl
@@ -308,7 +323,7 @@ class AdvancedTradeGuards:
                 
                 if pnl < 0:
                     consecutive += 1
-                    last_loss_time = datetime.strptime(sell["timestamp"], self.timestamp_format).replace(tzinfo=self.tz)
+                    last_loss_time = self._parse_timestamp(sell["timestamp"])
                 else:
                     break
             except (ValueError, KeyError):

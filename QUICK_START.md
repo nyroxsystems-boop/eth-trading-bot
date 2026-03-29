@@ -93,8 +93,8 @@ Target: 1% daily
    - Manuell redeploy (Settings → Redeploy)
 
 2. **Keine Telegram Nachrichten?**
-   - Token korrekt? `8313976588:AAHp7jgE1wr84yvChl2PAhHh5zkxXAS60s4`
-   - Chat ID korrekt? `6379480212`
+   - Token korrekt? Prüfe `TELEGRAM_BOT_TOKEN` in deinen ENV Variablen
+   - Chat ID korrekt? Prüfe `TELEGRAM_CHAT_ID` in deinen ENV Variablen
 
 3. **Bot startet nicht?**
    - Alle Variables gesetzt?

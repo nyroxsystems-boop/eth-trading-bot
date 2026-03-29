@@ -163,11 +163,12 @@ app = FastAPI(title="ETH Bot Dashboard API", version="1.0.0")
 # Gzip Compression - reduces response size by 60-80%
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
-# CORS
+# CORS — credentials only allowed with explicit origins, never with wildcard
+_cors_allow_credentials = "*" not in CORS_ORIGINS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -1235,8 +1236,8 @@ async def forgot_password(request: ForgotPasswordRequest):
         
         if token:
             # TODO: Send email with reset link containing token
-            # For development, we log the token
-            print(f"🔐 Reset token for {request.email}: {token}")
+            # In production, token should be delivered via email only
+            print(f"🔐 Password reset requested for {request.email} (token generated, expires in 1h)")
             
             # In production, you would NOT return the token
             # Reset link would be: https://yourdomain.com/reset-password?token={token}

@@ -24,8 +24,20 @@ class TradeGuards:
         self.tz = timezone.utc
     
     def _parse_timestamp(self, ts_str: str) -> datetime:
-        """Parse timestamp string to datetime"""
-        return datetime.strptime(ts_str, self.timestamp_format).replace(tzinfo=self.tz)
+        """Parse timestamp string to datetime (supports ISO and fixed formats)"""
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S.%f",       # ISO with microseconds
+            "%Y-%m-%dT%H:%M:%S",            # ISO without microseconds
+            "%Y-%m-%d %H:%M:%S",            # Fixed format
+            "%Y-%m-%d %H:%M:%S.%f",         # Fixed with microseconds
+        ):
+            try:
+                return datetime.strptime(ts_str.strip(), fmt).replace(tzinfo=self.tz)
+            except ValueError:
+                continue
+        # Last resort: dateutil-style truncation
+        logger.warning(f"[GUARD] Unparseable timestamp '{ts_str}', using current time as fallback")
+        return datetime.now(self.tz)
     
     def _load_trades(self) -> List[dict]:
         """Load trades from CSV"""

@@ -53,7 +53,7 @@ class MarketDataProvider:
         params = {
             "symbol": symbol,
             "interval": interval,
-            "limit": 1000
+            "limit": min(lookback, 1000)  # Respect lookback, max 1000 per request
         }
         
         if start_ts:
@@ -62,9 +62,13 @@ class MarketDataProvider:
             params["endTime"] = int(end_ts)
         
         frames = []
+        fetched_total = 0
         
-        while True:
+        while fetched_total < lookback:
             try:
+                # Cap each request to remaining needed
+                params["limit"] = min(lookback - fetched_total, 1000)
+                
                 response = requests.get(
                     f"{self.base_url}/klines",
                     params=params,
@@ -81,9 +85,10 @@ class MarketDataProvider:
                     "close_time", "qv", "trades", "taker_base", "taker_quote", "ignore"
                 ])
                 frames.append(df)
+                fetched_total += len(data)
                 
-                if len(data) < 1000:
-                    break
+                if len(data) < params["limit"]:
+                    break  # No more data available
                 
                 params["startTime"] = int(data[-1][6]) + 1
                 
@@ -95,6 +100,10 @@ class MarketDataProvider:
             raise RuntimeError("No klines fetched")
         
         df = pd.concat(frames, ignore_index=True)
+        
+        # Trim to exactly lookback bars
+        if len(df) > lookback:
+            df = df.tail(lookback).reset_index(drop=True)
         
         # Convert to numeric
         for col in ["open", "high", "low", "close", "volume"]:

@@ -26,16 +26,35 @@ except ImportError:
     print("⚠️ cryptography not installed - API keys will not be encrypted")
 
 # Configuration
-JWT_SECRET = os.getenv("JWT_SECRET", secrets.token_urlsafe(32))
+_IS_PRODUCTION = os.getenv("ENV", os.getenv("RAILWAY_ENVIRONMENT", "development")).lower() in ("production", "prod")
+
+_jwt_secret_env = os.getenv("JWT_SECRET", "")
+if _jwt_secret_env:
+    JWT_SECRET = _jwt_secret_env
+elif _IS_PRODUCTION:
+    raise RuntimeError(
+        "FATAL: JWT_SECRET is not set in production! "
+        "Set JWT_SECRET env var to a stable, random string (e.g. `python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"`). "
+        "Without this, JWTs will break on every restart."
+    )
+else:
+    JWT_SECRET = secrets.token_urlsafe(32)
+    print("⚠️ JWT_SECRET not set — generated ephemeral key (OK for dev, WILL break sessions on restart)")
+
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
 
 # Encryption key for API secrets (generate once and store in env)
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
 if not ENCRYPTION_KEY and ENCRYPTION_AVAILABLE:
-    # Generate a new key if not set (should be set in production!)
+    if _IS_PRODUCTION:
+        raise RuntimeError(
+            "FATAL: ENCRYPTION_KEY is not set in production! "
+            "Set ENCRYPTION_KEY env var to a Fernet key (e.g. `python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"`). "
+            "Without this, encrypted API keys will be unrecoverable on restart."
+        )
     ENCRYPTION_KEY = Fernet.generate_key().decode()
-    print(f"⚠️ No ENCRYPTION_KEY set! Generated temporary key (set in production!)")
+    print("⚠️ ENCRYPTION_KEY not set — generated ephemeral key (OK for dev, encrypted data WILL be lost on restart)")
 
 def get_fernet():
     """Get Fernet instance for encryption/decryption"""

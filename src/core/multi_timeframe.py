@@ -28,6 +28,11 @@ class TimeframeSignal:
 class MultiTimeframeAnalyzer:
     """Analyzes multiple timeframes for better signal quality"""
     
+    # Class-level cache shared across instances
+    _cache: Dict[str, pd.DataFrame] = {}
+    _cache_ts: Dict[str, float] = {}
+    _CACHE_TTL = 120  # seconds — refresh every 2 minutes
+    
     def __init__(self, timeframes: Optional[List[str]] = None):
         """
         Initialize multi-timeframe analyzer
@@ -51,7 +56,7 @@ class MultiTimeframeAnalyzer:
         symbol: Optional[str] = None
     ) -> Dict[str, pd.DataFrame]:
         """
-        Fetch data for all configured timeframes
+        Fetch data for all configured timeframes (with 2-minute cache per TF).
         
         Args:
             symbol: Trading pair (default from config)
@@ -59,10 +64,22 @@ class MultiTimeframeAnalyzer:
         Returns:
             Dict mapping timeframe to DataFrame with indicators
         """
+        import time as _time
         symbol = symbol or self.config.trading.pair
         data = {}
         
         for tf in self.timeframes:
+            cache_key = f"{symbol}_{tf}"
+            now = _time.time()
+            
+            # Serve from cache if fresh
+            if (cache_key in self._cache 
+                    and cache_key in self._cache_ts 
+                    and (now - self._cache_ts[cache_key]) < self._CACHE_TTL):
+                data[tf] = self._cache[cache_key]
+                logger.debug(f"MTF cache hit: {tf} (age={now - self._cache_ts[cache_key]:.0f}s)")
+                continue
+            
             try:
                 # Fetch klines for this timeframe
                 df = self.market_data.fetch_klines(
@@ -74,11 +91,18 @@ class MultiTimeframeAnalyzer:
                 # Add indicators
                 df_with_indicators = self.market_data.add_indicators(df)
                 
+                # Store in cache
+                self._cache[cache_key] = df_with_indicators
+                self._cache_ts[cache_key] = now
                 data[tf] = df_with_indicators
-                logger.debug(f"Fetched {tf} data: {len(df_with_indicators)} bars")
+                logger.debug(f"MTF fetched {tf}: {len(df_with_indicators)} bars (cached for {self._CACHE_TTL}s)")
                 
             except Exception as e:
                 logger.warning(f"Failed to fetch {tf} data: {e}")
+                # Serve stale cache if available
+                if cache_key in self._cache:
+                    data[tf] = self._cache[cache_key]
+                    logger.info(f"MTF serving stale cache for {tf}")
                 continue
         
         return data

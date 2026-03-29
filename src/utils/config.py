@@ -48,10 +48,11 @@ class RiskConfig:
 class MLConfig:
     """Machine learning configuration"""
     alpha: float = 1e-4
-    max_iter: int = 5
+    max_iter: int = 1000
     tol: float = 1e-3
     loss: str = "log_loss"
     min_samples: int = 200
+    threshold: float = 0.0  # ML prediction threshold (0 = disabled, set via Strategy Lab)
 
 
 @dataclass
@@ -158,7 +159,7 @@ class BotConfig:
             ),
             ml=MLConfig(
                 alpha=float(os.getenv("ML_ALPHA", "1e-4")),
-                max_iter=int(os.getenv("ML_MAX_ITER", "5")),
+                max_iter=int(os.getenv("ML_MAX_ITER", "1000")),
             ),
             regime=RegimeConfig(
                 use_adx_filter=os.getenv("USE_ADX_FILTER", "true").lower() == "true",

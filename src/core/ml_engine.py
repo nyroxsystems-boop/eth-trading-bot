@@ -144,7 +144,10 @@ class MLEngine:
     
     def predict(self, row: pd.Series) -> float:
         """
-        Predict probability for a single data point
+        Predict probability for a single data point.
+        
+        If config.ml.threshold > 0 (set via Strategy Lab's mlThreshold),
+        predictions below the threshold are clamped to 0.5 (neutral).
         
         Args:
             row: Series with technical indicators
@@ -165,6 +168,12 @@ class MLEngine:
             
             # Predict probability
             proba = self.clf.predict_proba(features)[0, 1]
+            
+            # Apply mlThreshold gate if configured (> 0 means active)
+            threshold = getattr(self.config.ml, 'threshold', 0.0)
+            if threshold > 0 and proba < threshold:
+                logger.debug(f"ML prediction {proba:.3f} below threshold {threshold:.3f} → neutral")
+                return 0.5
             
             return float(proba)
             
