@@ -404,12 +404,12 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     # FAKE GATES: reject unrealistically perfect strategies
     if win_rate >= 99.5:
         score = 0.0  # No real strategy has 100% WR
-    elif win_rate >= 90.0 and n_trades < 30:
-        score = 0.0  # Statistically meaningless with so few trades
+    elif win_rate >= 90.0 and n_trades < 20:
+        score = 0.0  # Need at least 20 trades for 90%+ WR to be credible
     elif win_rate >= 80.0 and n_trades < 10:
         score = 0.0  # Way too few samples for such high WR
-    # KILL GATE: WR < 60% = score 0 (v7: raised from 55%)
-    elif win_rate < 60.0:
+    # KILL GATE: WR < 55% = score 0 (lowered from 60% — was too restrictive)
+    elif win_rate < 55.0:
         score = 0.0
     else:
         # BASE: WR contribution (v7: HALVED dominance — was *10, now *5)

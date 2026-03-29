@@ -434,10 +434,10 @@ def apply_best_strategy():
 # Self-correcting: bot MUST trade to learn and hit 1%/day target
 _adaptive_entry_min = ENTRY_SCORE_MIN
 _last_trade_ts = time.time()  # Safe default — prevents aggressive threshold decay on startup
-_ENTRY_FLOOR = 0.20        # Minimum entry quality — raised from 0.15 (prevent desperation trades)
+_ENTRY_FLOOR = 0.15        # Lowered from 0.20 — bot MUST trade to learn
 # _ENTRY_CEILING is set by apply_best_strategy() from backtester results
-_NO_TRADE_DECAY_MIN = 120  # Start lowering after 2h of no trades (was 60min — caused 00:01 trades)
-_DECAY_STEP = 0.01         # Lower by 0.01 each check (was 0.03 — too fast, caused blind trades)
+_NO_TRADE_DECAY_MIN = 60   # Start lowering after 1h of no trades (was 2h — too passive)
+_DECAY_STEP = 0.015        # Lower by 0.015 each check (balanced between aggressive and cautious)
 _EMERGENCY_HOURS = 8       # After 8h with 0 trades: lower threshold (was 4h — too aggressive)
 
 def adapt_entry_threshold():
@@ -469,7 +469,7 @@ def adapt_entry_threshold():
         
         # EMERGENCY MODE: 8+ hours with 0 trades today
         if hours_since_trade >= _EMERGENCY_HOURS and today_trades == 0:
-            _adaptive_entry_min = max(_ENTRY_FLOOR, 0.20)  # Floor is 0.20, not 0.15
+            _adaptive_entry_min = max(_ENTRY_FLOOR, 0.15)  # Floor is 0.15
             ENTRY_SCORE_MIN = _adaptive_entry_min
             # DON'T lower ML threshold in emergency — keep quality gate
             log(f"⚠️ LOW-THRESHOLD MODE: 0 trades in {hours_since_trade:.1f}h! Threshold={_adaptive_entry_min} (ml_min unchanged={SEC_PML_MIN:.2f})")
@@ -2074,13 +2074,13 @@ def decide_and_trade():
     # --- 4H CONTEXT: penalty instead of absolute block ---
     bias_4h = get_4h_bias()
     if bias_4h == "TREND_DOWN" and not open_position:
-        base_score -= 0.20  # Heavy penalty, but strong signals can still trigger
-        log(f"4H PENALTY: -0.20 (4H trend down, score now {base_score:.2f}, 1h was {hourly_bias})")
+        base_score -= 0.10  # Moderate penalty (was -0.20 = too aggressive, blocked all trades)
+        log(f"4H PENALTY: -0.10 (4H trend down, score now {base_score:.2f}, 1h was {hourly_bias})")
     
     # 1H DOWNTREND: penalty instead of hard block
     if hourly_bias == "TREND_DOWN" and bias_4h != "TREND_UP" and not open_position:
-        base_score -= 0.15  # Moderate penalty
-        log(f"1H PENALTY: -0.15 (1H trend down, score now {base_score:.2f})")
+        base_score -= 0.08  # Light penalty (was -0.15 = stacked with 4H killed all entries)
+        log(f"1H PENALTY: -0.08 (1H trend down, score now {base_score:.2f})")
     
     # --- FUNDING RATE SIGNAL ---
     funding = get_funding_rate()
@@ -2125,8 +2125,8 @@ def decide_and_trade():
         effective_entry_min = ENTRY_SCORE_MIN * 0.75  # Modest reduction for high-conviction setups (was 0.60)
     elif hourly_bias == "TREND_UP" and hourly_strength > 0.5:
         effective_entry_min = ENTRY_SCORE_MIN * 0.90  # Slight reduction for strong uptrend (was 0.80)
-    # HARD FLOOR: never trade below 0.20 entry score regardless of any reduction
-    effective_entry_min = max(effective_entry_min, 0.20)
+    # HARD FLOOR: never trade below 0.15 entry score regardless of any reduction
+    effective_entry_min = max(effective_entry_min, 0.15)
     
     entry_score = base_score
     

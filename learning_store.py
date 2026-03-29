@@ -443,8 +443,8 @@ def _pg_save_strategy(strategy: Dict):
             total_trades = int(metrics.get("total_trades", 0))
             if win_rate >= 99.5:  # No real strategy is 100% WR
                 score = 0
-            elif win_rate >= 90.0 and total_trades < 30:
-                score = 0  # Statistically meaningless
+            elif win_rate >= 90.0 and total_trades < 20:
+                score = 0  # Need at least 20 trades for credibility
             elif win_rate >= 80.0 and total_trades < 10:
                 score = 0  # Way too few samples
             

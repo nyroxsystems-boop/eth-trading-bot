@@ -992,8 +992,10 @@ async def get_performance_history(days: int = 7):
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT timestamp, action, qty, price, pnl 
-                    FROM paper_trades ORDER BY created_at ASC
-                """)
+                    FROM paper_trades 
+                    WHERE created_at >= NOW() - INTERVAL '%s days'
+                    ORDER BY created_at ASC
+                """, (days + 1,))  # +1 day buffer for timezone edge cases
                 for row in cursor.fetchall():
                     trades_raw.append({
                         "timestamp": row[0], "action": row[1], 

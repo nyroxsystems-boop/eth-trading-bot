@@ -56,7 +56,7 @@ const TradingJournalView = () => {
     }, [dateRange])
 
     const fetchTradeHistory = async () => {
-        setLoading(true)
+        if (trades.length === 0) setLoading(true)
         try {
             const token = localStorage.getItem('token')
             const response = await fetch(`${API_URL}/api/trades?range=${dateRange}`, {

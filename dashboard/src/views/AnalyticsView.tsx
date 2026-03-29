@@ -44,13 +44,13 @@ const AnalyticsView = () => {
     const [lastUpdate, setLastUpdate] = useState<Date>(new Date())
 
     useEffect(() => {
-        fetchAllData()
-        const interval = setInterval(fetchAllData, 60000) // Refresh every minute
+        fetchAllData(true)
+        const interval = setInterval(() => fetchAllData(false), 60000) // Refresh every minute
         return () => clearInterval(interval)
     }, [])
 
-    const fetchAllData = async () => {
-        setLoading(true)
+    const fetchAllData = async (isInitial = false) => {
+        if (isInitial) setLoading(true)
 
         // Fallback mock data
         const mockSentiment: SentimentData = {
@@ -153,7 +153,7 @@ const AnalyticsView = () => {
                     </p>
                 </div>
                 <button
-                    onClick={fetchAllData}
+                    onClick={() => fetchAllData(false)}
                     disabled={loading}
                     style={{
                         display: 'flex',

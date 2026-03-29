@@ -287,7 +287,7 @@ function Dashboard() {
         <main className="app-content">
           <ErrorBoundary>
             <Suspense fallback={<LoadingFallback />}>
-              <div key={activePage}>
+              <div>
                 {activePage === 'dashboard' && (
                   <DashboardView
                     trades={trades}
