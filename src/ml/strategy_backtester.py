@@ -188,7 +188,7 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     max_hold_bars = 60  # Match live bot: ~5h max hold time
     
     # Simulation state
-    equity = 10000.0
+    equity = 100000.0
     initial_equity = equity
     trades = []
     position = None

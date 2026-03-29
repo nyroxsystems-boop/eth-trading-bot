@@ -106,7 +106,7 @@ const OnboardingWizard = ({ onComplete, onSkip }: OnboardingWizardProps) => {
                         'Authorization': `Bearer ${token}`
                     },
                     body: JSON.stringify({
-                        capital: 10000,
+                        capital: 100000,
                         risk_per_trade: RISK_LEVELS.find(r => r.id === formData.riskLevel)?.risk || 0.01,
                         max_trades_per_day: 15,
                         daily_target_pct: 1.0,

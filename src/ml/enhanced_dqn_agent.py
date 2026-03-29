@@ -276,7 +276,7 @@ class AdvancedTradingEnvironment:
     def __init__(
         self,
         window_size: int = 30,
-        initial_balance: float = 10000,
+        initial_balance: float = 100000,
         transaction_cost: float = 0.001,  # 0.1% fee
         slippage: float = 0.0005  # 0.05% slippage
     ):
@@ -665,7 +665,7 @@ class EnhancedDQNAgent:
     
     def train(self, price_data: np.ndarray, episodes: int = 100) -> Dict:
         """Train agent on historical data"""
-        env = AdvancedTradingEnvironment(window_size=30, initial_balance=10000)
+        env = AdvancedTradingEnvironment(window_size=30, initial_balance=100000)
         
         best_reward = float('-inf')
         rewards_history = []

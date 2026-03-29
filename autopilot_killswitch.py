@@ -136,7 +136,7 @@ class AutoPilot:
         win_rate = wins / total if total > 0 else 0
         
         # Daily return
-        equity = float(os.getenv("EQUITY_USDT", 10000))
+        equity = float(os.getenv("EQUITY_USDT", 100000))
         daily_return = realized_pnl / equity if equity > 0 else 0
         
         return {

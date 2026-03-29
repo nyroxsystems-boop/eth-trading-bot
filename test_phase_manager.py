@@ -230,7 +230,7 @@ class TestPhaseManager:
         # PnL (30 points max)
         if phase["total_pnl"] > 0:
             # Normalize PnL to 0-30 range (assuming 10% is excellent)
-            pnl_pct = phase["total_pnl"] / 10000  # Assuming $10k starting capital
+            pnl_pct = phase["total_pnl"] / 100000  # Assuming $100k starting capital
             score += min(30, pnl_pct * 100 * 3)
         
         # Trade count (15 points max)

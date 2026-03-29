@@ -98,7 +98,7 @@ class PortfolioPairCreate(BaseModel):
     trading_pair: str
     pair_name: Optional[str] = None
     pair_icon: Optional[str] = "💰"
-    allocated_capital: float = 10000.0
+    allocated_capital: float = 100000.0
     risk_per_trade: float = 1.0
     max_trades_per_day: int = 10
     take_profit_pct: float = 1.5
@@ -1416,11 +1416,11 @@ async def startup_event():
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    UPDATE user_trading_pairs SET allocated_capital = 10000
+                    UPDATE user_trading_pairs SET allocated_capital = 100000
                     WHERE allocated_capital <= 100
                 """)
                 if cursor.rowcount > 0:
-                    print(f"Migrated {cursor.rowcount} portfolio pairs: $100 -> $10,000")
+                    print(f"Migrated {cursor.rowcount} portfolio pairs: $100 -> $100,000")
     except Exception as e:
         print(f"Capital migration: {e}")
     
@@ -1769,7 +1769,7 @@ def load_settings() -> dict:
         "telegram_chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
         "binance_api_key": os.getenv("BINANCE_API_KEY", ""),
         "binance_api_secret": os.getenv("BINANCE_API_SECRET", ""),
-        "trading_capital": float(os.getenv("PAPER_BASE_USDT", "10000")),
+        "trading_capital": float(os.getenv("PAPER_BASE_USDT", "100000")),
         "risk_per_trade": float(os.getenv("RISK_PCT_PER_TRADE", "0.006")),
         "max_trades_per_day": int(os.getenv("MAX_TRADES_PER_DAY", "15")),
         "daily_target_pct": float(os.getenv("DAILY_TARGET_PCT", "1.0")),
@@ -1853,7 +1853,7 @@ async def get_trading_settings():
     """Get trading parameters"""
     settings = load_settings()
     return {
-        "capital": settings.get("trading_capital", 10000),
+        "capital": settings.get("trading_capital", 100000),
         "risk_per_trade": settings.get("risk_per_trade", 0.006),
         "max_trades_per_day": settings.get("max_trades_per_day", 15),
         "daily_target_pct": settings.get("daily_target_pct", 1.0),
@@ -2265,7 +2265,7 @@ async def get_user_portfolio_pairs(current_user: Dict = Depends(get_current_user
                     "trading_pair": row[1],
                     "pair_name": row[2] or row[1].replace("USDT", ""),
                     "pair_icon": row[3] or "💰",
-                    "allocated_capital": float(row[4] or 10000),
+                    "allocated_capital": float(row[4] or 100000),
                     "risk_per_trade": float(row[5] or 0.01) * 100,  # Convert to %
                     "max_trades_per_day": row[6] or 10,
                     "take_profit_pct": float(row[7] or 0.015) * 100,
@@ -2290,7 +2290,7 @@ async def get_user_portfolio_pairs(current_user: Dict = Depends(get_current_user
             
             # Use actual bot capital, not sum of pair allocations
             settings = load_settings()
-            actual_capital = settings.get('paper_base_usdt', float(os.getenv('PAPER_BASE_USDT', 10000)))
+            actual_capital = settings.get('paper_base_usdt', float(os.getenv('PAPER_BASE_USDT', 100000)))
             
             return {
                 "pairs": pairs,
@@ -2673,8 +2673,14 @@ async def get_capital():
             return {"capital": 0, "currency": "USDT", "mode": "live", "source": "error", "error": str(e)}
 
 @app.post("/api/capital")
-async def update_capital(capital: float):
+async def update_capital(request: Request):
     """Update trading capital"""
+    try:
+        data = await request.json()
+        capital = float(data.get("capital", 0))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid request body")
+    
     if capital <= 0:
         raise HTTPException(status_code=400, detail="Capital must be positive")
     
@@ -2821,7 +2827,7 @@ async def run_backtest(params: BacktestParams):
             return {"error": "Not enough data after indicators", "total_trades": 0, "win_rate": 0, "roi": 0}
         
         # 3. Run backtest with EXACT live bot scoring logic (v7 synchronized)
-        eq = 10000.0
+        eq = 100000.0
         position = None
         trades = 0
         wins = 0
@@ -2978,7 +2984,7 @@ async def run_backtest(params: BacktestParams):
         
         # 4. Calculate metrics
         win_rate = (wins / max(trades, 1)) * 100
-        roi = ((eq - 10000.0) / 10000.0) * 100
+        roi = ((eq - 100000.0) / 100000.0) * 100
         
         # Profit factor (v6 scoring needs this)
         profit_factor = gross_wins / gross_losses if gross_losses > 0 else (5.0 if gross_wins > 0 else 0.0)
@@ -3180,7 +3186,7 @@ class AccountCreate(BaseModel):
     name: str
     api_key: str
     api_secret: str
-    capital: float = 10000
+    capital: float = 100000
     dry_run: bool = True
 
 class AccountUpdate(BaseModel):
@@ -3997,7 +4003,7 @@ async def get_training_progress():
             "best_roi": 0,
             "win_rate": 0,
             "trades": 0,
-            "portfolio_value": 10000,
+            "portfolio_value": 100000,
             "elapsed_seconds": 0,
             "last_update": datetime.now().isoformat(),
             "processes": []

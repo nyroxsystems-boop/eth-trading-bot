@@ -27,7 +27,7 @@ const AccountsView = () => {
         name: '',
         api_key: '',
         api_secret: '',
-        capital: 10000,
+        capital: 100000,
         dry_run: true
     })
 
@@ -120,7 +120,7 @@ const AccountsView = () => {
                 name: '',
                 api_key: '',
                 api_secret: '',
-                capital: 10000,
+                capital: 100000,
                 dry_run: true
             })
             setShowAddForm(false)

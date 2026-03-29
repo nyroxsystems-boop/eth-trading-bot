@@ -61,7 +61,7 @@ class MLBacktester:
     Calculates Sharpe ratio, win rate, drawdown, and other metrics.
     """
     
-    def __init__(self, initial_capital: float = 10000.0, risk_per_trade: float = 0.02):
+    def __init__(self, initial_capital: float = 100000.0, risk_per_trade: float = 0.02):
         self.initial_capital = initial_capital
         self.risk_per_trade = risk_per_trade
         
@@ -398,7 +398,7 @@ class MLBacktester:
 if __name__ == "__main__":
     print("🔬 Running ML Backtester...")
     
-    backtester = MLBacktester(initial_capital=10000)
+    backtester = MLBacktester(initial_capital=100000)
     
     # Load data
     prices = backtester.load_price_data(days=30)

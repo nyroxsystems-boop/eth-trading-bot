@@ -63,7 +63,7 @@ def init_database():
                     name TEXT NOT NULL,
                     api_key TEXT NOT NULL,
                     api_secret TEXT NOT NULL,
-                    capital REAL DEFAULT 10000,
+                    capital REAL DEFAULT 100000,
                     dry_run BOOLEAN DEFAULT true,
                     active BOOLEAN DEFAULT true,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -79,7 +79,7 @@ def init_database():
                     name TEXT NOT NULL,
                     api_key TEXT NOT NULL,
                     api_secret TEXT NOT NULL,
-                    capital REAL DEFAULT 10000,
+                    capital REAL DEFAULT 100000,
                     dry_run BOOLEAN DEFAULT 1,
                     active BOOLEAN DEFAULT 1,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -159,7 +159,7 @@ class AccountManager:
         init_database()
     
     def create_account(self, user_id: int, name: str, api_key: str, api_secret: str, 
-                      capital: float = 10000, dry_run: bool = True) -> int:
+                      capital: float = 100000, dry_run: bool = True) -> int:
         """Create a new trading account"""
         try:
             # Encrypt the API secret
@@ -483,7 +483,7 @@ class AccountManager:
         # Get credentials from environment
         api_key = os.getenv("BINANCE_API_KEY", "")
         api_secret = os.getenv("BINANCE_API_SECRET", "")
-        capital = float(os.getenv("PAPER_BASE_USDT", "10000"))
+        capital = float(os.getenv("PAPER_BASE_USDT", "100000"))
         dry_run = os.getenv("DRY_RUN", "true").lower() == "true"
         
         if not api_key or not api_secret:

@@ -9,7 +9,7 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 const SettingsView = () => {
     const { token } = useAuth()
     const [mode, setMode] = useState('paper')
-    const [capital, setCapital] = useState(10000)
+    const [capital, setCapital] = useState(100000)
     const [telegramToken, setTelegramToken] = useState('')
     const [telegramChatId, setTelegramChatId] = useState('')
     const [binanceApiKey, setBinanceApiKey] = useState('')
@@ -33,7 +33,7 @@ const SettingsView = () => {
             const settingsData = await settingsRes.json()
 
             setMode(modeData.mode)
-            setCapital(settingsData.trading_capital || 10000)
+            setCapital(settingsData.trading_capital || 100000)
             setTelegramToken(settingsData.telegram_bot_token || '')
             setTelegramChatId(settingsData.telegram_chat_id || '')
         } catch (err) {

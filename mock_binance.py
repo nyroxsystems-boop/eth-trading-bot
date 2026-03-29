@@ -15,7 +15,7 @@ class MockBinanceClient:
     def __init__(self):
         self.base_price = 2500.0  # ETH base price
         self.price_volatility = 0.02  # 2% volatility
-        self.balance_usdt = 10000.0
+        self.balance_usdt = 100000.0
         self.balance_eth = 0.0
         
     def get_symbol_ticker(self, symbol: str = "ETHUSDT") -> Dict:
