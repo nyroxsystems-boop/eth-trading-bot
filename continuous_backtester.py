@@ -7,27 +7,17 @@ Tests strategies 24/7 and saves results
 import asyncio
 import aiohttp
 import json
-import sqlite3
+
 import os
 from datetime import datetime
 from typing import List, Dict, Any
 from pathlib import Path
-from contextlib import contextmanager
 
 from strategy_generator import StrategyGenerator
 
-# Learning DB path
-LEARNING_DB = Path(os.getenv("LOG_DIR", "./logs")) / "learning.db"
+import learning_store
 
-@contextmanager
-def get_learning_db():
-    """Context manager for learning.db connection"""
-    conn = sqlite3.connect(LEARNING_DB)
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
+LOG_DIR = Path(os.getenv("LOG_DIR", "./logs"))
 
 
 class ContinuousBacktester:
@@ -44,66 +34,8 @@ class ContinuousBacktester:
         self.init_database()
     
     def init_database(self):
-        """Initialize database for learning"""
-        with get_learning_db() as conn:
-            cursor = conn.cursor()
-            
-            if False:  # SQLite only
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS strategies (
-                        id SERIAL PRIMARY KEY,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        ml_threshold REAL,
-                        risk_per_trade REAL,
-                        tp_min REAL,
-                        tp_max REAL,
-                        stop_floor REAL,
-                        max_trades_per_day INTEGER,
-                        
-                        total_trades INTEGER,
-                        winning_trades INTEGER,
-                        losing_trades INTEGER,
-                        win_rate REAL,
-                        total_pnl REAL,
-                        roi REAL,
-                        sharpe_ratio REAL,
-                        max_drawdown REAL,
-                        
-                        score REAL,
-                        applied BOOLEAN DEFAULT false,
-                        applied_at TIMESTAMP
-                    )
-                """)
-            else:
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS strategies (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        ml_threshold REAL,
-                        risk_per_trade REAL,
-                        tp_min REAL,
-                        tp_max REAL,
-                        stop_floor REAL,
-                        max_trades_per_day INTEGER,
-                        
-                        total_trades INTEGER,
-                        winning_trades INTEGER,
-                        losing_trades INTEGER,
-                        win_rate REAL,
-                        total_pnl REAL,
-                        roi REAL,
-                        sharpe_ratio REAL,
-                        max_drawdown REAL,
-                        
-                        score REAL,
-                        applied BOOLEAN DEFAULT 0,
-                        applied_at DATETIME
-                    )
-                """)
-            
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_score ON strategies(score DESC)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON strategies(timestamp DESC)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_applied ON strategies(applied, score DESC)")
+        """Initialize database for learning — delegates to learning_store (PostgreSQL)."""
+        learning_store.ensure_learning_tables()
     
     async def backtest_strategy(self, strategy: Dict[str, Any]) -> Dict[str, Any]:
         """Run backtest for a single strategy"""
@@ -125,14 +57,11 @@ class ContinuousBacktester:
     
     def calculate_score(self, metrics: Dict[str, Any]) -> float:
         """
-        Calculate strategy score — v7 PROFITABILITY-FIRST.
+        Calculate strategy score — v8 synced with strategy_backtester.
         
-        v7 changes vs v6:
-          - Kill gate raised: 55% → 60%
-          - WR weight halved: *10 → *5
-          - ROI weight 7x: *15 → *100 (PRIMARY driver)
-          - R:R ratio bonus (NEW): rewards better risk management
-          - ROI floor: < 5% ROI → score * 0.5
+        v8 changes vs v7:
+          - Kill gate lowered: 60% → 55% (synced)
+          - 90% WR gate: 30 → 20 trades (synced)
         """
         if not metrics:
             return 0.0
@@ -143,13 +72,13 @@ class ContinuousBacktester:
         # FAKE GATES: reject unrealistically perfect strategies
         if win_rate >= 99.5:
             return 0.0
-        if win_rate >= 90.0 and total_trades < 30:
+        if win_rate >= 90.0 and total_trades < 20:
             return 0.0
         if win_rate >= 80.0 and total_trades < 10:
             return 0.0
         
-        # KILL GATE: below 60% WR = instant death (v7: raised from 55%)
-        if win_rate < 60.0:
+        # KILL GATE: below 55% WR = instant death (v8: lowered, synced with strategy_backtester)
+        if win_rate < 55.0:
             return 0.0
         
         score = 0.0
@@ -203,105 +132,18 @@ class ContinuousBacktester:
         return score
     
     def save_result(self, strategy: Dict[str, Any], metrics: Dict[str, Any], score: float):
-        """Save backtest result to database"""
-        with get_learning_db() as conn:
-            cursor = conn.cursor()
-            
-            if False:  # SQLite only
-                cursor.execute("""
-                    INSERT INTO strategies (
-                        ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                        total_trades, winning_trades, losing_trades, win_rate, total_pnl, roi,
-                        sharpe_ratio, max_drawdown, score
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (
-                    strategy['ml_threshold'],
-                    strategy['risk_per_trade'],
-                    strategy['tp_min'],
-                    strategy['tp_max'],
-                    strategy['stop_floor'],
-                    strategy['max_trades_per_day'],
-                    metrics.get('total_trades', 0),
-                    metrics.get('winning_trades', 0),
-                    metrics.get('losing_trades', 0),
-                    metrics.get('win_rate', 0),
-                    metrics.get('total_pnl', 0),
-                    metrics.get('roi', 0),
-                    metrics.get('sharpe_ratio', 0),
-                    metrics.get('max_drawdown', 0),
-                    score
-                ))
-            else:
-                cursor.execute("""
-                    INSERT INTO strategies (
-                        timestamp, ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                        total_trades, winning_trades, losing_trades, win_rate, total_pnl, roi,
-                        sharpe_ratio, max_drawdown, score
-                    ) VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    strategy['ml_threshold'],
-                    strategy['risk_per_trade'],
-                    strategy['tp_min'],
-                    strategy['tp_max'],
-                    strategy['stop_floor'],
-                    strategy['max_trades_per_day'],
-                    metrics.get('total_trades', 0),
-                    metrics.get('winning_trades', 0),
-                    metrics.get('losing_trades', 0),
-                    metrics.get('win_rate', 0),
-                    metrics.get('total_pnl', 0),
-                    metrics.get('roi', 0),
-                    metrics.get('sharpe_ratio', 0),
-                    metrics.get('max_drawdown', 0),
-                    score
-                ))
+        """Save backtest result to PostgreSQL via learning_store (no more SQLite)."""
+        learning_store.save_strategy({
+            "params": strategy,
+            "metrics": metrics,
+            "score": score,
+            "applied": False,
+            "data_source": "continuous_backtester"
+        })
     
     def get_top_strategies(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get top performing strategies"""
-        with get_learning_db() as conn:
-            cursor = conn.cursor()
-            
-            if False:  # SQLite only
-                cursor.execute("""
-                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                           total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score
-                    FROM strategies
-                    ORDER BY score DESC
-                    LIMIT %s
-                """, (limit,))
-            else:
-                cursor.execute("""
-                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                           total_trades, win_rate, roi, sharpe_ratio, max_drawdown, score
-                    FROM strategies
-                    ORDER BY score DESC
-                    LIMIT ?
-                """, (limit,))
-            
-            rows = cursor.fetchall()
-        
-        strategies = []
-        for row in rows:
-            strategies.append({
-                'params': {
-                    'ml_threshold': row[0],
-                    'risk_per_trade': row[1],
-                    'tp_min': row[2],
-                    'tp_max': row[3],
-                    'stop_floor': row[4],
-                    'max_trades_per_day': row[5]
-                },
-                'metrics': {
-                    'total_trades': row[6],
-                    'win_rate': row[7],
-                    'roi': row[8],
-                    'sharpe_ratio': row[9],
-                    'max_drawdown': row[10]
-                },
-                'score': row[11]
-            })
-        
-        return strategies
+        """Get top performing strategies from PostgreSQL via learning_store."""
+        return learning_store.get_top_n_strategies(limit)
     
     async def run_cycle(self):
         """Run one backtest cycle"""
@@ -329,20 +171,6 @@ class ContinuousBacktester:
                 score = self.calculate_score(metrics)
                 self.save_result(strategy, metrics, score)
                 
-                # === SYNC TO POSTGRESQL via learning_store ===
-                # Without this, apply_best_strategy() never sees new results!
-                try:
-                    import learning_store
-                    learning_store.save_strategy({
-                        "params": strategy,
-                        "metrics": metrics,
-                        "score": score,
-                        "applied": False,
-                        "data_source": "continuous_backtester"
-                    })
-                except Exception as e:
-                    print(f" [PG sync: {e}]", end="")
-                
                 results.append({
                     'params': strategy,
                     'metrics': metrics,
@@ -363,7 +191,6 @@ class ContinuousBacktester:
             
             # Mark best strategy as current in PostgreSQL
             try:
-                import learning_store
                 learning_store.set_current_strategy(best)
             except Exception as e:
                 print(f"  ⚠️ Set current strategy error: {e}")
@@ -401,7 +228,7 @@ class ContinuousBacktester:
             print("\n🔄 Checking for auto-apply...")
             auto_apply = AutoApply(
                 db_path=str(self.db_path),
-                settings_file=str(LEARNING_DB.parent / "bot_settings.json")
+                settings_file=str(LOG_DIR / "bot_settings.json")
             )
             auto_apply.check_and_apply()
             

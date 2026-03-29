@@ -84,7 +84,7 @@ def _rescore_migration_v2():
     """One-time migration: re-score all existing strategies with the v5 formula.
     
     v5: Win Rate DOMINANT with RELIABILITY FILTERS.
-    WR >= 99.5% = score 0, WR >= 90% with < 30 trades = score 0,
+    WR >= 99.5% = score 0, WR >= 90% with < 20 trades = score 0,
     WR >= 80% with < 10 trades = score 0, WR < 55% = score 0.
     Reliability gate raised to 10 trades, trade bonus requires 20 trades.
     Without this, old strategies with inflated scores block new ones forever.
@@ -123,7 +123,7 @@ def _rescore_migration_v2():
                 # FAKE GATES: reject unrealistically perfect strategies
                 if win_rate >= 99.5:
                     new_score = 0.0
-                elif win_rate >= 90.0 and total_trades < 30:
+                elif win_rate >= 90.0 and total_trades < 20:
                     new_score = 0.0
                 elif win_rate >= 80.0 and total_trades < 10:
                     new_score = 0.0
@@ -132,14 +132,14 @@ def _rescore_migration_v2():
                     new_score = 0.0
                 else:
                     new_score = 0.0
-                    new_score += win_rate * 10.0
+                    new_score += win_rate * 5.0  # v8: synced with backtester (was 10.0)
                     # Tier bonuses
                     if win_rate > 58: new_score += 100.0
                     if win_rate > 62: new_score += 250.0
                     if win_rate > 66: new_score += 500.0
                     if win_rate > 70: new_score += 800.0
                     # ROI — significant weight (v6: was 3.0, now 15.0)
-                    new_score += metrics.get('roi', 0) * 15.0
+                    new_score += metrics.get('roi', 0) * 100.0  # v8: synced with backtester (was 15.0)
                     # Profit factor bonus/penalty (v6)
                     pf = metrics.get('profit_factor', 0)
                     if pf >= 1.5: new_score += 200.0
@@ -245,12 +245,12 @@ def _rescore_migration_v2():
                 """)
                 purged_perfect = cursor.rowcount
                 
-                # 2. Kill WR >= 90% with fewer than 30 trades (statistically meaningless)
+                # 2. Kill WR >= 90% with fewer than 20 trades (statistically meaningless)
                 cursor.execute("""
                     UPDATE learning_strategies 
                     SET score = 0
                     WHERE CAST(metrics->>'win_rate' AS FLOAT) >= 90.0
-                      AND CAST(metrics->>'total_trades' AS INTEGER) < 30
+                      AND CAST(metrics->>'total_trades' AS INTEGER) < 20
                       AND score > 0
                 """)
                 purged_suspicious = cursor.rowcount

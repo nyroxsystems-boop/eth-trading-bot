@@ -6,26 +6,13 @@ Automatically applies best strategies to live bot
 
 import json
 import os
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
-from contextlib import contextmanager
 import requests
 
 # Learning DB path
 LOG_DIR = Path(os.getenv("LOG_DIR", "./logs"))
-LEARNING_DB = LOG_DIR / "learning.db"
-
-@contextmanager
-def get_learning_db():
-    """Context manager for learning.db connection"""
-    conn = sqlite3.connect(LEARNING_DB)
-    try:
-        yield conn
-        conn.commit()
-    finally:
-        conn.close()
 
 class AutoApply:
     def __init__(
@@ -45,7 +32,7 @@ class AutoApply:
         
         # Safety thresholds
         self.min_score_improvement = float(os.getenv("MIN_SCORE_IMPROVEMENT", "1.03"))  # 3% better (lowered to allow WR improvements)
-        self.min_win_rate = float(os.getenv("MIN_WIN_RATE", "60.0"))  # Raised from 55% for higher WR
+        self.min_win_rate = float(os.getenv("MIN_WIN_RATE", "55.0"))  # Synced with backtester kill gate (v8)
         self.max_drawdown = float(os.getenv("MAX_DRAWDOWN_THRESHOLD", "15.0"))
         self.min_roi = float(os.getenv("MIN_ROI", "2.0"))
     
@@ -67,30 +54,6 @@ class AutoApply:
         except Exception as e:
             print(f"⚠️ PG current strategy read failed: {e}")
         
-        # Fallback to SQLite
-        try:
-            with get_learning_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                           score, win_rate, roi, max_drawdown
-                    FROM strategies
-                    WHERE applied = 1
-                    ORDER BY applied_at DESC
-                    LIMIT 1
-                """)
-                row = cursor.fetchone()
-            if row:
-                return {
-                    'params': {
-                        'ml_threshold': row[0], 'risk_per_trade': row[1],
-                        'tp_min': row[2], 'tp_max': row[3],
-                        'stop_floor': row[4], 'max_trades_per_day': row[5]
-                    },
-                    'score': row[6], 'win_rate': row[7], 'roi': row[8], 'max_drawdown': row[9]
-                }
-        except Exception:
-            pass
         return None
     
     def get_best_strategy(self) -> Optional[Dict[str, Any]]:
@@ -113,30 +76,6 @@ class AutoApply:
         except Exception as e:
             print(f"⚠️ PG best strategy read failed: {e}")
         
-        # Fallback to SQLite
-        try:
-            with get_learning_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT ml_threshold, risk_per_trade, tp_min, tp_max, stop_floor, max_trades_per_day,
-                           score, win_rate, roi, max_drawdown, sharpe_ratio
-                    FROM strategies
-                    ORDER BY score DESC
-                    LIMIT 1
-                """)
-                row = cursor.fetchone()
-            if row:
-                return {
-                    'params': {
-                        'ml_threshold': row[0], 'risk_per_trade': row[1],
-                        'tp_min': row[2], 'tp_max': row[3],
-                        'stop_floor': row[4], 'max_trades_per_day': row[5]
-                    },
-                    'score': row[6], 'win_rate': row[7], 'roi': row[8],
-                    'max_drawdown': row[9], 'sharpe_ratio': row[10]
-                }
-        except Exception:
-            pass
         return None
     
     def should_apply_strategy(self, new_strategy: Dict[str, Any], current_strategy: Optional[Dict[str, Any]]) -> bool:
