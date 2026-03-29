@@ -125,13 +125,14 @@ class ContinuousBacktester:
     
     def calculate_score(self, metrics: Dict[str, Any]) -> float:
         """
-        Calculate strategy score — WIN RATE + PROFITABILITY (v6).
+        Calculate strategy score — v7 PROFITABILITY-FIRST.
         
-        v6 changes vs v5:
-          - PROFITABILITY GATE: profit_factor < 0.8 → score halved
-          - NEGATIVE ROI PENALTY: ROI × 15.0 instead of 3.0 (makes losses hurt)
-          - PROFIT FACTOR BONUS: up to +200 for PF > 1.2
-          - This prevents strategies that win often but lose big from being selected
+        v7 changes vs v6:
+          - Kill gate raised: 55% → 60%
+          - WR weight halved: *10 → *5
+          - ROI weight 7x: *15 → *100 (PRIMARY driver)
+          - R:R ratio bonus (NEW): rewards better risk management
+          - ROI floor: < 5% ROI → score * 0.5
         """
         if not metrics:
             return 0.0
@@ -141,59 +142,61 @@ class ContinuousBacktester:
         
         # FAKE GATES: reject unrealistically perfect strategies
         if win_rate >= 99.5:
-            return 0.0  # No real strategy has 100% WR
+            return 0.0
         if win_rate >= 90.0 and total_trades < 30:
-            return 0.0  # Statistically meaningless with so few trades
+            return 0.0
         if win_rate >= 80.0 and total_trades < 10:
-            return 0.0  # Way too few samples for such high WR
+            return 0.0
         
-        # KILL GATE: below 55% WR = instant death
-        if win_rate < 55.0:
+        # KILL GATE: below 60% WR = instant death (v7: raised from 55%)
+        if win_rate < 60.0:
             return 0.0
         
         score = 0.0
         
-        # Win Rate — DOMINANT: this IS the score
-        score += win_rate * 10.0
+        # Win Rate — HALVED dominance (v7: *5, was *10)
+        score += win_rate * 5.0
         
-        # Win Rate TIER BONUSES — exponential reward for higher WR
-        if win_rate > 58:
-            score += 100.0   # Breaking 58% = solid
-        if win_rate > 62:
-            score += 250.0   # Breaking 62% = very good
-        if win_rate > 66:
-            score += 500.0   # Breaking 66% = excellent
-        if win_rate > 70:
-            score += 800.0   # Breaking 70% = exceptional
+        # Tier bonuses (v7: recalibrated)
+        if win_rate > 65: score += 100.0
+        if win_rate > 70: score += 200.0
+        if win_rate > 75: score += 300.0
+        if win_rate > 80: score += 500.0
+        if win_rate > 85: score += 800.0  # NEW tier for 85%+ target
         
-        # ROI — SIGNIFICANT weight (was 3.0, now 15.0 — makes losses costly)
+        # ROI — MASSIVELY weighted (v7: 100x, was 15x)
         roi = metrics.get('roi', 0)
-        score += roi * 15.0
+        score += roi * 100.0
         
-        # PROFIT FACTOR — critical indicator (avg_win / avg_loss)
+        # PROFIT FACTOR (v7: boosted tiers)
         pf = metrics.get('profit_factor', 0)
-        if pf >= 1.5:
-            score += 200.0   # Great risk/reward
+        if pf >= 2.0:
+            score += 300.0
+        elif pf >= 1.5:
+            score += 200.0
         elif pf >= 1.2:
-            score += 100.0   # Good risk/reward
-        elif pf >= 1.0:
-            score += 30.0    # At least not losing
-        # PF < 1.0 = losing money on average → penalty
+            score += 100.0
         elif pf < 0.8:
-            score *= 0.5     # HALVE the score for deeply unprofitable strategies
+            score *= 0.3  # v7: harsher penalty
         
-        # Sharpe Ratio — capped and minor
+        # ROI FLOOR (v7 NEW)
+        if roi < 5.0:
+            score *= 0.5
+        if roi < 0:
+            score *= 0.2
+        
+        # Sharpe Ratio
         sharpe = metrics.get('sharpe_ratio', 0)
         score += min(sharpe, 3.0) * 5.0
         
-        # Max Drawdown — heavy penalty
+        # Max Drawdown penalty
         max_dd = metrics.get('max_drawdown', 0)
         score -= max_dd * 5.0
         
-        # Trade count reliability bonus (need ≥20 trades for full credit)
+        # Trade count reliability bonus
         score += min(total_trades / 20, 1.0) * 50
         
-        # RELIABILITY GATE: <10 trades = divide by 10
+        # Reliability gate
         if total_trades < 10:
             score *= 0.1
         

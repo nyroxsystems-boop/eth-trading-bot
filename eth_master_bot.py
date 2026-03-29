@@ -354,7 +354,7 @@ def apply_best_strategy():
         weights = [0.50, 0.30, 0.20]
         
         # Blend parameters from top strategies
-        blend_keys = ["tp_min", "tp_max", "stop_floor", "ml_threshold", "rsi_oversold", "rsi_overbought",
+        blend_keys = ["tp_min", "tp_max", "stop_floor", "ml_threshold", "risk_per_trade", "rsi_oversold", "rsi_overbought",
                       "max_trades_per_day", "entry_score_min", "adx_min", "sentiment_gate"]
         blended = {}
         total_weight = 0.0
@@ -387,6 +387,9 @@ def apply_best_strategy():
             STOP_FLOOR = max(0.008, min(0.035, blended["stop_floor"]))  # Clamp 0.8-3.5%
         if "ml_threshold" in blended:
             SEC_PML_MIN = max(0.42, blended["ml_threshold"])  # Floor 0.42 (was 0.30)
+        # v7 FIX: Apply risk_per_trade from strategy (was hardcoded 1%!)
+        if "risk_per_trade" in blended:
+            RISK_PCT_PER_TRADE = max(0.005, min(0.02, blended["risk_per_trade"]))
         
         # === Entry Parameters ===
         if "rsi_oversold" in blended:
@@ -394,7 +397,7 @@ def apply_best_strategy():
         if "rsi_overbought" in blended:
             RSI_MAX = blended["rsi_overbought"]
         if "max_trades_per_day" in blended:
-            _env_max = int(_os.getenv("MAX_TRADES_PER_DAY", "3"))
+            _env_max = int(_os.getenv("MAX_TRADES_PER_DAY", "15"))  # v7 FIX: was "3" = silent clamp!
             MAX_TRADES_PER_DAY = min(int(round(blended["max_trades_per_day"])), _env_max)  # Never exceed .env.bot value
         if "entry_score_min" in blended:
             _ENTRY_CEILING = max(0.20, min(0.35, blended["entry_score_min"]))  # Raised floor 0.15→0.20
@@ -1669,7 +1672,7 @@ def get_4h_bias() -> str:
         _4h_cache = {"bias": "NEUTRAL", "ts": time.time()}
         return "NEUTRAL"
 
-RISK_MIN = 0.01   # 1% — conservative baseline
+RISK_MIN = RISK_PCT_PER_TRADE   # v7: use strategy-optimized value (was hardcoded 0.01)
 RISK_MAX = 0.05   # 5% — maximum on high-conviction setups
 
 def dynamic_risk_factor(p_ml, entry_score=0.0, vol_ok=False, trend_15m_ok=False):

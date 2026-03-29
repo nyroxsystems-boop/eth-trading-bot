@@ -34,17 +34,17 @@ def ensure_db():
 
 # Strategy parameter CONTINUOUS RANGES (wider than old discrete grid!)
 PARAM_RANGES = {
-    "ml_threshold":       (0.20, 0.75),   # was [0.35-0.65]
-    "risk_per_trade":     (0.002, 0.020),  # was [0.004-0.012]
-    "tp_min":             (0.004, 0.025),  # was [0.008-0.015]
-    "tp_max":             (0.010, 0.050),  # was [0.015-0.025] — now up to 5%!
-    "stop_floor":         (0.008, 0.035),  # Aligned with live bot clamp (was 0.002-0.015 = too tight)
-    "rsi_oversold":       (15, 40),        # was [25-35]
-    "rsi_overbought":     (60, 85),        # was [65-75]
-    "max_trades_per_day": (3, 30),         # was [8-20]
-    "entry_score_min":    (0.10, 0.50),    # was [0.15-0.35]
-    "breakout_weight":    (0.10, 0.50),    # was [0.20-0.40]
-    "trend_weight":       (0.05, 0.40),    # was [0.10-0.30]
+    "ml_threshold":       (0.35, 0.65),    # v7: tightened to match bot floor=0.42
+    "risk_per_trade":     (0.005, 0.020),   # v7: min 0.5% (was 0.2% = too tiny)
+    "tp_min":             (0.012, 0.025),   # v7: ALIGNED with bot clamp min 1.2% (was 0.4%!)
+    "tp_max":             (0.020, 0.050),   # v7: min 2% (was 1% = overlapped tp_min)
+    "stop_floor":         (0.008, 0.025),   # v7: max 2.5% (was 3.5% = terrible R:R)
+    "rsi_oversold":       (15, 40),
+    "rsi_overbought":     (60, 85),
+    "max_trades_per_day": (5, 25),          # v7: min 5 (was 3)
+    "entry_score_min":    (0.15, 0.35),     # v7: tightened to match bot reality
+    "breakout_weight":    (0.10, 0.50),
+    "trend_weight":       (0.05, 0.40),
 }
 # Backwards compat
 PARAM_GRID = {k: list(v) for k, v in PARAM_RANGES.items()}
@@ -398,7 +398,7 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     std_pnl = (sum((p - avg_pnl) ** 2 for p in pnls) / len(pnls)) ** 0.5
     sharpe = (avg_pnl / std_pnl * (len(trades) ** 0.5)) if std_pnl > 0 else 0
     
-    # === SCORING: v6 WIN-RATE DOMINANT + PROFITABILITY (synced with continuous_backtester) ===
+    # === SCORING: v7 PROFITABILITY-FIRST (ROI + R:R dominant) ===
     n_trades = len(trades)
     
     # FAKE GATES: reject unrealistically perfect strategies
@@ -408,30 +408,46 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
         score = 0.0  # Statistically meaningless with so few trades
     elif win_rate >= 80.0 and n_trades < 10:
         score = 0.0  # Way too few samples for such high WR
-    # KILL GATE: WR < 55% = score 0
-    elif win_rate < 55.0:
+    # KILL GATE: WR < 60% = score 0 (v7: raised from 55%)
+    elif win_rate < 60.0:
         score = 0.0
     else:
-        score = win_rate * 10.0
-        # Tier bonuses
-        if win_rate > 58: score += 100.0
-        if win_rate > 62: score += 250.0
-        if win_rate > 66: score += 500.0
-        if win_rate > 70: score += 800.0
-        # ROI — SIGNIFICANT weight (v6: 15.0)
-        score += roi * 15.0
-        # PROFIT FACTOR — critical indicator (v6)
-        if profit_factor >= 1.5:
+        # BASE: WR contribution (v7: HALVED dominance — was *10, now *5)
+        score = win_rate * 5.0
+        # Tier bonuses (v7: recalibrated)
+        if win_rate > 65: score += 100.0
+        if win_rate > 70: score += 200.0
+        if win_rate > 75: score += 300.0
+        if win_rate > 80: score += 500.0
+        if win_rate > 85: score += 800.0   # NEW tier for 85%+ target
+        # ROI — MASSIVELY weighted (v7: 100x — was 15x!)
+        # 15% ROI = 1500pts, making ROI the PRIMARY driver
+        score += roi * 100.0
+        # R:R RATIO BONUS (v7 NEW — rewards better risk management)
+        avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0
+        avg_loss = abs(sum(t["pnl"] for t in losses) / len(losses)) if losses else 0.001
+        rr_ratio = avg_win / max(avg_loss, 0.001)
+        if rr_ratio >= 2.0: score += 500.0      # Excellent R:R
+        elif rr_ratio >= 1.5: score += 300.0    # Good R:R
+        elif rr_ratio >= 1.0: score += 100.0    # Fair R:R
+        elif rr_ratio < 0.5: score *= 0.3       # Terrible R:R → heavy penalty
+        # PROFIT FACTOR (v7: boosted tiers)
+        if profit_factor >= 2.0:
+            score += 300.0
+        elif profit_factor >= 1.5:
             score += 200.0
         elif profit_factor >= 1.2:
             score += 100.0
-        elif profit_factor >= 1.0:
-            score += 30.0
         elif profit_factor < 0.8:
-            score *= 0.5  # HALVE for deeply unprofitable
-        # Sharpe (v6: 5.0)
+            score *= 0.3  # v7: harsher penalty (was 0.5)
+        # ROI FLOOR (v7 NEW): low ROI = heavy penalty
+        if roi < 5.0:
+            score *= 0.5   # Below 5% ROI — not worth it
+        if roi < 0:
+            score *= 0.2   # Losing money → near-zero
+        # Sharpe (kept at 5.0)
         score += min(sharpe, 3.0) * 5.0
-        # Drawdown penalty (v6: 5.0, max_drawdown already in %)
+        # Drawdown penalty (kept at 5.0)
         score -= max_drawdown * 5.0
         # Trade count bonus (need ≥20 trades for full credit)
         score += min(n_trades / 20, 1.0) * 50
@@ -470,6 +486,9 @@ def generate_random_params() -> Dict:
         p["tp_min"], p["tp_max"] = p["tp_max"], p["tp_min"]
         if p["tp_min"] == p["tp_max"]:
             p["tp_max"] += 0.005
+    # v7: Enforce minimum R:R ratio — tp_min must be >= 50% of stop_floor
+    if p["tp_min"] < p["stop_floor"] * 0.5:
+        p["tp_min"] = round(p["stop_floor"] * 0.5, 6)
     return p
 
 
@@ -507,6 +526,9 @@ def mutate_strategy(parent: Dict, mutation_rate: float = 0.20) -> Dict:
     # Enforce tp_min < tp_max
     if child["tp_min"] >= child["tp_max"]:
         child["tp_min"], child["tp_max"] = child["tp_max"], child["tp_min"]
+    # v7: Enforce minimum R:R ratio
+    if child["tp_min"] < child["stop_floor"] * 0.5:
+        child["tp_min"] = round(child["stop_floor"] * 0.5, 6)
     return child
 
 
