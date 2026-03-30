@@ -456,9 +456,14 @@ class MarketIntelligence:
         adjustment = composite * 0.05
         return round(adjustment, 4)
 
-    def is_extreme_fear_block(self) -> Tuple[bool, str]:
+    def is_extreme_fear_block(self, paper_mode: bool = True) -> Tuple[bool, str]:
         """
-        Check if Fear & Greed is at extreme levels that warrant blocking.
+        Graduated Fear & Greed response system.
+        
+        Paper mode: NEVER blocks (no real money at risk, bot needs to trade to learn)
+        Live mode:  Hard block only at F&G ≤5 (true market crash)
+                    F&G 6-15 returns penalty info but no block
+        
         Returns: (should_block, reason)
         """
         if not self.enabled:
@@ -467,11 +472,40 @@ class MarketIntelligence:
         fg = fetch_fear_greed()
         value = fg.get("value", 50)
 
-        # Extreme Fear (≤10) — market could crash further, be cautious
-        if value <= 10:
-            return True, f"Extreme Fear (F&G={value}): market panic — blocking entries"
+        # Paper trading = NEVER block — bot needs trades to learn
+        if paper_mode:
+            if value <= 15:
+                # Log it but don't block
+                now = time.time()
+                if now - self._last_log > 600:  # Log every 10 min max
+                    self._last_log = now
+                    logger.info(f"INTEL F&G={value} (Fear) — paper mode, trading continues")
+            return False, ""
+
+        # Live trading: hard block ONLY at catastrophic levels (≤5)
+        if value <= 5:
+            return True, f"EXTREME CRASH (F&G={value}): catastrophic fear — blocking LIVE entries"
 
         return False, ""
+
+    def get_fear_penalty(self) -> float:
+        """
+        Returns a score PENALTY for elevated fear levels (0.0 = no penalty, up to -0.08).
+        Used to make the bot more selective during fear, NOT to block it entirely.
+        """
+        if not self.enabled:
+            return 0.0
+        
+        fg = fetch_fear_greed()
+        value = fg.get("value", 50)
+        
+        if value <= 10:
+            return -0.08  # Very cautious but not blocked
+        elif value <= 20:
+            return -0.05  # Moderately cautious
+        elif value <= 30:
+            return -0.02  # Slightly cautious
+        return 0.0
 
 
 # ─── Singleton instance ──────────────────────────────────────────────────

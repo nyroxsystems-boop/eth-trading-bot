@@ -1921,7 +1921,7 @@ def decide_and_trade():
     # === MARKET INTELLIGENCE: Extreme Fear Block ===
     if _market_intel and not open_position:
         try:
-            blocked, reason = _market_intel.is_extreme_fear_block()
+            blocked, reason = _market_intel.is_extreme_fear_block(paper_mode=PAPER_MODE)
             if blocked:
                 log(f"🛑 MARKET_INTEL BLOCK: {reason}")
                 return
@@ -2104,6 +2104,11 @@ def decide_and_trade():
             if abs(intel_adj) > 0.001:
                 base_score += intel_adj
                 log(f"MARKET_INTEL: entry_score {'+' if intel_adj >= 0 else ''}{intel_adj:.4f} → {base_score:.3f}")
+            # Fear penalty: makes bot MORE selective during fear (not blocked)
+            fear_pen = _market_intel.get_fear_penalty()
+            if fear_pen < 0:
+                base_score += fear_pen
+                log(f"FEAR_PENALTY: {fear_pen:.3f} → entry_score={base_score:.3f}")
         except Exception as e:
             log(f"WARN market_intel score: {e}")
     
