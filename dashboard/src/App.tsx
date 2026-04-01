@@ -195,10 +195,14 @@ function Dashboard() {
       fetchTrades()
       fetchMetrics()
       fetchStatus()
+      // v10: Reduced from 30s to 60s polling + visibility check
       const interval = setInterval(() => {
-        fetchMetrics()
-        fetchStatus()
-      }, 30000)
+        // Don't poll when tab is hidden (saves server resources)
+        if (document.visibilityState === 'visible') {
+          fetchMetrics()
+          fetchStatus()
+        }
+      }, 60000)
       return () => clearInterval(interval)
     }
   }, [token])

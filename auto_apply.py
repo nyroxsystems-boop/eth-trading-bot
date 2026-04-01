@@ -31,10 +31,10 @@ class AutoApply:
         self.telegram_chat_id = telegram_chat_id or os.getenv("TELEGRAM_CHAT_ID")
         
         # Safety thresholds
-        self.min_score_improvement = float(os.getenv("MIN_SCORE_IMPROVEMENT", "1.03"))  # 3% better (lowered to allow WR improvements)
+        self.min_score_improvement = float(os.getenv("MIN_SCORE_IMPROVEMENT", "1.005"))  # v10: 0.5% better (was 3% — caused deadlock)
         self.min_win_rate = float(os.getenv("MIN_WIN_RATE", "55.0"))  # Synced with backtester kill gate (v8)
         self.max_drawdown = float(os.getenv("MAX_DRAWDOWN_THRESHOLD", "15.0"))
-        self.min_roi = float(os.getenv("MIN_ROI", "2.0"))
+        self.min_roi = float(os.getenv("MIN_ROI", "1.0"))  # v10: lowered from 2.0 (too restrictive)
     
     def get_current_strategy(self) -> Optional[Dict[str, Any]]:
         """Get currently applied strategy from PostgreSQL via learning_store."""
@@ -99,25 +99,26 @@ class AutoApply:
             print("✅ No current strategy, applying first good one")
             return True
         
-        # Win Rate regression protection — never go backwards on WR
-        if new_strategy['win_rate'] < current_strategy['win_rate']:
-            print(f"❌ Win rate regression: {new_strategy['win_rate']:.1f}% < current {current_strategy['win_rate']:.1f}%")
+        # Win Rate regression protection — allow tiny regression (±0.5%)
+        # v10: The old strict check blocked ALL changes because strategies had identical WR
+        if new_strategy['win_rate'] < current_strategy['win_rate'] - 0.5:
+            print(f"❌ Win rate regression: {new_strategy['win_rate']:.1f}% < current {current_strategy['win_rate']:.1f}% (tolerance: -0.5%)")
             return False
         
-        # Must be significantly better by score
+        # Must be better by score (v10: only 0.5% improvement required)
         if current_strategy['score'] == 0:
             print("✅ Current strategy has score 0, applying new one")
             return True
-        score_improvement = new_strategy['score'] / current_strategy['score']
+        score_improvement = new_strategy['score'] / max(current_strategy['score'], 0.01)
         if score_improvement < self.min_score_improvement:
-            print(f"❌ Not enough improvement: {score_improvement:.2f}x < {self.min_score_improvement}x")
+            print(f"❌ Not enough improvement: {score_improvement:.4f}x < {self.min_score_improvement}x")
             return False
         
-        print(f"✅ New strategy is {score_improvement:.2f}x better! (WR: {current_strategy['win_rate']:.1f}% → {new_strategy['win_rate']:.1f}%)")
+        print(f"✅ New strategy is {score_improvement:.4f}x better! (WR: {current_strategy['win_rate']:.1f}% → {new_strategy['win_rate']:.1f}%)")
         return True
     
     def apply_strategy(self, strategy: Dict[str, Any]) -> bool:
-        """Apply strategy to bot settings"""
+        """Apply strategy to bot settings and mark as current in PostgreSQL"""
         try:
             # Load current settings
             if self.settings_file.exists():
@@ -127,13 +128,14 @@ class AutoApply:
                 settings = {}
             
             # Update with new strategy parameters
+            params = strategy.get('params', strategy)
             settings.update({
-                'ml_threshold': strategy['params']['ml_threshold'],
-                'risk_per_trade': strategy['params']['risk_per_trade'],
-                'tp_min': strategy['params']['tp_min'],
-                'tp_max': strategy['params']['tp_max'],
-                'stop_floor': strategy['params']['stop_floor'],
-                'max_trades_per_day': strategy['params']['max_trades_per_day']
+                'ml_threshold': params.get('ml_threshold', 0.55),
+                'risk_per_trade': params.get('risk_per_trade', 0.008),
+                'tp_min': params.get('tp_min', 0.012),
+                'tp_max': params.get('tp_max', 0.025),
+                'stop_floor': params.get('stop_floor', 0.015),
+                'max_trades_per_day': params.get('max_trades_per_day', 10)
             })
             
             # Save settings
@@ -141,32 +143,16 @@ class AutoApply:
             with open(self.settings_file, 'w') as f:
                 json.dump(settings, f, indent=2)
             
-            # Mark as applied in database
-            with get_learning_db() as conn:
-                cursor = conn.cursor()
-                
-                if False:  # SQLite only
-                    cursor.execute("""
-                        UPDATE strategies
-                        SET applied = true, applied_at = %s
-                        WHERE ml_threshold = %s AND risk_per_trade = %s AND tp_min = %s
-                    """, (
-                        datetime.now().isoformat(),
-                        strategy['params']['ml_threshold'],
-                        strategy['params']['risk_per_trade'],
-                        strategy['params']['tp_min']
-                    ))
-                else:
-                    cursor.execute("""
-                        UPDATE strategies
-                        SET applied = 1, applied_at = ?
-                        WHERE ml_threshold = ? AND risk_per_trade = ? AND tp_min = ?
-                    """, (
-                        datetime.now().isoformat(),
-                        strategy['params']['ml_threshold'],
-                        strategy['params']['risk_per_trade'],
-                        strategy['params']['tp_min']
-                    ))
+            # Mark as applied in PostgreSQL via learning_store
+            # v10: The old code used get_learning_db() which doesn't exist — was dead code!
+            try:
+                import learning_store
+                strategy['applied'] = True
+                strategy['applied_at'] = datetime.now().isoformat()
+                learning_store.set_current_strategy(strategy)
+                print(f"✅ Strategy marked as current in PostgreSQL")
+            except Exception as e:
+                print(f"⚠️ PG apply error (non-critical): {e}")
             
             return True
             

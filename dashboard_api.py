@@ -34,6 +34,33 @@ def _cached(key: str, ttl: int = 30):
 def _set_cache(key: str, data):
     _endpoint_cache[key] = (data, _time.time())
 
+# v10: Cached Binance price (background refresh every 10s)
+# Eliminates synchronous requests.get() on every /api/status call
+_binance_price_cache = {"price": 0.0, "ts": 0.0}
+def _get_cached_eth_price() -> float:
+    """Return cached ETH price. Background task refreshes it."""
+    return _binance_price_cache["price"]
+
+async def _binance_price_updater():
+    """Background task: refresh ETH price every 10 seconds.
+    Uses asyncio.to_thread() to run requests.get() without blocking the event loop."""
+    import requests as _req
+    await asyncio.sleep(2)  # Let server start
+    while True:
+        try:
+            # Run synchronous requests.get in a thread to not block event loop
+            resp = await asyncio.to_thread(
+                _req.get,
+                "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT",
+                timeout=5
+            )
+            if resp.status_code == 200:
+                _binance_price_cache["price"] = float(resp.json().get("price", 0))
+                _binance_price_cache["ts"] = _time.time()
+        except Exception:
+            pass  # Keep last known price on error
+        await asyncio.sleep(10)
+
 # Import database adapter
 from db_adapter import get_db_connection, USE_POSTGRES
 
@@ -589,15 +616,9 @@ async def get_bot_status() -> BotStatus:
     today = datetime.now().date().isoformat()
     today_trades = len([t for t in trades if t.timestamp.startswith(today)])
     
-    # Fetch current ETH price from Binance public API (no auth needed)
-    current_price = 0.0
-    try:
-        import requests as _req
-        r = _req.get("https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT", timeout=3)
-        if r.status_code == 200:
-            current_price = float(r.json().get("price", 0))
-    except Exception:
-        pass
+    # v10: Use cached ETH price (background task refreshes every 10s)
+    # Eliminates the ~1-3s synchronous requests.get() that was blocking the event loop
+    current_price = _get_cached_eth_price()
     
     return BotStatus(
         is_running=not _bot_paused,
@@ -978,8 +999,13 @@ async def get_trade_state():
 
 @app.get("/api/performance", response_model=PerformanceMetrics)
 async def get_performance():
-    """Get performance metrics"""
-    return await get_performance_metrics()
+    """Get performance metrics — v10: cached for 15s"""
+    cached = _cached("perf_metrics", ttl=15)
+    if cached:
+        return cached
+    result = await get_performance_metrics()
+    _set_cache("perf_metrics", result)
+    return result
 
 @app.get("/api/performance/history")
 async def get_performance_history(days: int = 7):
@@ -1080,8 +1106,13 @@ async def get_performance_history(days: int = 7):
 
 @app.get("/api/status", response_model=BotStatus)
 async def get_status():
-    """Get bot status"""
-    return await get_bot_status()
+    """Get bot status — v10: cached for 8s"""
+    cached = _cached("bot_status", ttl=8)
+    if cached:
+        return cached
+    result = await get_bot_status()
+    _set_cache("bot_status", result)
+    return result
 
 @app.get("/api/chart/data")
 async def get_chart_data(symbol: str = "ETHUSDT", interval: str = "5m", limit: int = 100):
@@ -1311,16 +1342,27 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            # Send updates every 2 seconds
-            await asyncio.sleep(2)
+            # v10: Throttled to 10s (was 2s) — uses cached data
+            # 2s interval was calling get_bot_status() + get_performance_metrics()
+            # on EVERY tick, each hitting the database
+            await asyncio.sleep(10)
             
-            status = await get_bot_status()
-            metrics = await get_performance_metrics()
+            # Use cached versions where possible
+            cached_status = _cached("bot_status", ttl=8)
+            cached_metrics = _cached("perf_metrics", ttl=15)
+            
+            status = cached_status or await get_bot_status()
+            metrics = cached_metrics or await get_performance_metrics()
+            
+            if not cached_status:
+                _set_cache("bot_status", status)
+            if not cached_metrics:
+                _set_cache("perf_metrics", metrics)
             
             await websocket.send_json({
                 "type": "update",
-                "status": status.dict(),
-                "metrics": metrics.dict(),
+                "status": status.dict() if hasattr(status, 'dict') else status,
+                "metrics": metrics.dict() if hasattr(metrics, 'dict') else metrics,
                 "timestamp": datetime.now().isoformat()
             })
             
@@ -1384,6 +1426,10 @@ async def startup_event():
     
     # Start trade monitoring
     asyncio.create_task(monitor_trades())
+    
+    # v10: Start cached Binance price updater (async, non-blocking)
+    asyncio.create_task(_binance_price_updater())
+    print("💰 Binance price updater started (10s refresh)")
     
     # Initialize learning store (PostgreSQL tables)
     try:
@@ -1529,6 +1575,7 @@ async def auto_learning_background():
             run_backtest,
             generate_evolved_params,
             generate_random_params,
+            get_random_backtest_period,
             ensure_db
         )
         ensure_db()
@@ -1566,14 +1613,15 @@ async def auto_learning_background():
                 hour_start = current_hour
                 hour_tested = 0
             
-            # Refresh historical data every hour
-            if use_real_backtest and (datetime.now() - last_data_fetch).total_seconds() > 3600:
-                print("Fetching fresh historical data from Binance...")
+            # v10: Fetch data with RANDOM period to diversify strategy results
+            if use_real_backtest and (datetime.now() - last_data_fetch).total_seconds() > 1800:  # v10: refresh every 30min (was 1h)
+                period = get_random_backtest_period()
+                print(f"Fetching fresh historical data from Binance ({period} days)...")
                 try:
-                    historical_candles = fetch_historical_data(60)
+                    historical_candles = fetch_historical_data(period)
                     if historical_candles:
                         historical_candles = calculate_indicators(historical_candles)
-                        print(f"Got {len(historical_candles)} candles with indicators")
+                        print(f"Got {len(historical_candles)} candles with indicators ({period}d)")
                     else:
                         print("No candles returned, will retry next cycle")
                 except Exception as fetch_err:

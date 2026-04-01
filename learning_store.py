@@ -419,24 +419,33 @@ def _pg_save_strategy(strategy: Dict):
     
     Counter logic: total_tested increments AFTER successful insert,
     so deduped/skipped strategies don't inflate the count.
+    
+    v10 dedup fix: Only reject if params are nearly identical (hash match).
+    The old dedup (score < 1.0 AND win_rate < 0.1) was rejecting ALL new
+    strategies because the top-10 were all clustered within 12 score points.
     """
     try:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             score = strategy.get("score", 0)
             metrics = strategy.get("metrics", {})
+            params = strategy.get("params", {})
             
-            # DEDUP: Skip if a strategy with very similar score AND same win_rate already exists
+            # v10 DEDUP: Only skip if exact same params exist (round to 4 decimals)
+            # This allows strategies with similar scores but DIFFERENT parameters
+            import hashlib
+            params_key = hashlib.md5(
+                json.dumps({k: round(float(v), 4) if isinstance(v, (int, float)) else v 
+                           for k, v in sorted(params.items())}).encode()
+            ).hexdigest()[:12]
+            
             cursor.execute("""
                 SELECT COUNT(*) FROM learning_strategies
-                WHERE ABS(score - %s) < 1.0
-                AND ABS(CAST(metrics->>'win_rate' AS FLOAT) - %s) < 0.1
-            """, (
-                score,
-                float(metrics.get("win_rate", -1))
-            ))
+                WHERE ABS(score - %s) < 0.5
+                AND md5(params::text)::varchar(12) = %s
+            """, (score, params_key))
             if cursor.fetchone()[0] > 0:
-                return  # Skip duplicate — do NOT increment counters
+                return  # True duplicate (same params + same score) — skip
             
             # Apply reliability filter before saving: reject fake-looking strategies
             win_rate = float(metrics.get("win_rate", 0))

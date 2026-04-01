@@ -66,27 +66,32 @@ _cache_time = None
 CACHE_TTL = 3600  # 1 hour
 
 
+# v10: Multi-period cache to avoid testing everything on same candles
+_cached_candles_multi = {}  # {days: (candles, timestamp)}
+
 def fetch_historical_data(days: int = 7) -> List[Dict]:
     """
-    Fetch historical OHLCV data from Binance with caching.
+    Fetch historical OHLCV data from Binance with per-period caching.
+    v10: Supports multiple periods (7/14/30/60 days) cached independently.
     Uses 5m candles to MATCH the bot's trading timeframe.
     Returns list of candles with: time, open, high, low, close, volume
     """
-    global _cached_candles, _cache_time
+    global _cached_candles, _cache_time, _cached_candles_multi
     import time as _time
     
-    # Return cached data if fresh
-    if _cached_candles and _cache_time and (_time.time() - _cache_time) < CACHE_TTL:
-        return _cached_candles
+    # Return cached data for this specific period if fresh
+    if days in _cached_candles_multi:
+        cached, cache_ts = _cached_candles_multi[days]
+        if cached and (_time.time() - cache_ts) < CACHE_TTL:
+            return cached
     
     import requests
     
     try:
         # Binance API - 5m candles to match bot's INTERVAL
-        # 7 days × 288 candles/day = ~2016 candles (needs 2 requests)
         url = "https://api.binance.com/api/v3/klines"
         all_candles = []
-        candles_needed = min(days * 288, 2000)  # 288 5m candles per day
+        candles_needed = min(days * 288, 4000)  # v10: allow more candles for longer periods
         
         # Paginate (Binance limit = 1000 per request)
         start_time = int((_time.time() - days * 86400) * 1000)
@@ -118,13 +123,22 @@ def fetch_historical_data(days: int = 7) -> List[Dict]:
                 break
             start_time = int(data[-1][6]) + 1  # Next batch after last close_time
         
+        _cached_candles_multi[days] = (all_candles, _time.time())
+        # Also update legacy cache for backward compat
         _cached_candles = all_candles
         _cache_time = _time.time()
         logger.info(f"Fetched {len(all_candles)} 5m candles ({days} days)")
         return all_candles
     except Exception as e:
         logger.error(f"Failed to fetch historical data: {e}")
+        if days in _cached_candles_multi:
+            return _cached_candles_multi[days][0]
         return _cached_candles or []
+
+
+def get_random_backtest_period() -> int:
+    """v10: Return a random backtest period to avoid all strategies being scored on identical data."""
+    return random.choice([7, 14, 14, 30, 30, 60])
 
 
 def calculate_indicators(candles: List[Dict]) -> List[Dict]:
@@ -548,20 +562,47 @@ def crossover(parent_a: Dict, parent_b: Dict) -> Dict:
     return child
 
 
+def _detect_convergence(top: List[Dict]) -> bool:
+    """v10: Detect if evolution has converged (top strategies too similar).
+    Returns True if all top strategies are within 5% score spread."""
+    if len(top) < 3:
+        return False
+    scores = [s.get("score", 0) for s in top if s.get("score", 0) > 0]
+    if not scores:
+        return True  # All zeros = definitely converged
+    max_s = max(scores)
+    min_s = min(scores)
+    if max_s == 0:
+        return True
+    spread = (max_s - min_s) / max_s
+    is_converged = spread < 0.05  # Less than 5% spread = converged
+    if is_converged:
+        logger.warning(f"⚠️ CONVERGENCE DETECTED: spread={spread:.3f} (max={max_s:.1f}, min={min_s:.1f}) → forcing 100% exploration")
+    return is_converged
+
+
 def generate_evolved_params() -> Dict:
     """
-    Bayesian-inspired evolutionary optimization — EXPLORATION-HEAVY:
-    - 20% Fine-tune: small Gaussian mutation of top parent (intensification)
-    - 15% Crossover + mutate: blend two parents, then tiny polish
-    - 20% Big mutation: large perturbation to escape local minimum
-    - 45% Pure exploration: random from continuous ranges (ANTI-STAGNATION)
+    v10 Bayesian-inspired evolutionary optimization — ANTI-STAGNATION:
     
-    Higher exploration prevents convergence → dedup → 0 new strategies/hour.
+    If convergence detected (top-10 within 5% spread):
+    → 100% pure random exploration to escape local minimum
+    
+    Normal mode:
+    - 15% Fine-tune: small Gaussian mutation of top parent
+    - 10% Crossover + mutate: blend two parents
+    - 20% Big mutation: large perturbation to escape local minimum  
+    - 55% Pure exploration: random (v10: up from 45%)
+    
     Score-proportional parent selection (roulette wheel).
     """
     top = get_top_strategies(10)
     
     if len(top) < 3:
+        return generate_random_params()
+    
+    # v10: CONVERGENCE ESCAPE — if top strategies are too similar, go full random
+    if _detect_convergence(top):
         return generate_random_params()
     
     # Score-proportional selection (roulette wheel)
@@ -580,28 +621,28 @@ def generate_evolved_params() -> Dict:
     
     roll = random.random()
     
-    if roll < 0.20:
+    if roll < 0.15:
         # FINE-TUNE: small Gaussian mutation
         parent = pick_parent()
         child = mutate_strategy(parent, mutation_rate=0.10)
         logger.info(f"FINE-TUNE parent score={parent.get('score',0):.1f}")
         return child
-    elif roll < 0.35:
+    elif roll < 0.25:
         # CROSSOVER + MUTATE: blend two parents, then small perturbation
         pa = pick_parent()
         pb = pick_parent()
         child = crossover(pa, pb)
-        child = mutate_strategy(child, mutation_rate=0.05)
+        child = mutate_strategy(child, mutation_rate=0.08)
         logger.info(f"CROSSOVER+MUTATE {pa.get('score',0):.1f} x {pb.get('score',0):.1f}")
         return child
-    elif roll < 0.55:
+    elif roll < 0.45:
         # BIG MUTATION: jump out of local minimum
         parent = pick_parent()
-        child = mutate_strategy(parent, mutation_rate=0.40)
+        child = mutate_strategy(parent, mutation_rate=0.50)  # v10: bigger jump (was 0.40)
         logger.info(f"BIG MUTATE from score={parent.get('score',0):.1f}")
         return child
     else:
-        # PURE EXPLORATION: continuous random from wider ranges
+        # PURE EXPLORATION: v10 55% (was 45%)
         logger.info("EXPLORE random continuous params")
         return generate_random_params()
 
@@ -643,8 +684,9 @@ async def run_single_backtest():
         params = generate_evolved_params()
         BACKTEST_STATE["current_params"] = params
         
-        # Fetch historical data (cached for 1 hour)
-        candles = fetch_historical_data(60)
+        # v10: Random backtest period to diversify strategy scoring
+        period = get_random_backtest_period()
+        candles = fetch_historical_data(period)
         if not candles or len(candles) < 120:
             return
         
