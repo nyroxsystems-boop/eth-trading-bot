@@ -4,6 +4,7 @@ Strategy Generator - Auto-Learning System
 Generates parameter combinations for testing
 """
 
+import os
 import random
 import json
 from typing import List, Dict, Any
@@ -61,6 +62,24 @@ class StrategyGenerator:
             'adx_min': (14, 20),                # Conservative — needs clear trend
             'sentiment_gate': (-0.15, 0.05),    # Strict sentiment — no negative news
         }
+        
+        # WR-BOOST: Extreme precision for 65%+ win rate target
+        # Key insight: Very tight TP (5-10 pips) + wide SL = most trades hit TP before SL
+        # Combined with high ML confidence = only the best setups
+        self.wr_boost_ranges = {
+            'ml_threshold': (0.63, 0.70),      # VERY high confidence only
+            'risk_per_trade': (0.004, 0.007),   # Tiny risk per trade
+            'tp_min': (0.005, 0.009),           # ULTRA tight — 0.5-0.9% TP (almost always hit)
+            'tp_max': (0.008, 0.014),           # Still tight max
+            'stop_floor': (0.018, 0.035),       # WIDE stop — 1.8-3.5% — rarely triggered
+            'max_trades_per_day': (2, 5),       # Very few — sniper mode
+            'rsi_oversold': (33, 38),           # Very tight RSI band
+            'rsi_overbought': (66, 73),         # Exit early
+            'entry_score_min': (0.28, 0.42),    # Highest entry quality bar
+            'breakout_pct': (0.0002, 0.0005),
+            'adx_min': (15, 22),                # Strong trend required
+            'sentiment_gate': (-0.10, 0.05),    # Almost no negative sentiment allowed
+        }
     
     def generate_random_strategy(self) -> Dict[str, Any]:
         """Generate random strategy within tightened ranges"""
@@ -114,6 +133,25 @@ class StrategyGenerator:
             'sentiment_gate': random.uniform(*self.ultra_conservative_ranges['sentiment_gate']),
         }
     
+    def generate_wr_boost_strategy(self) -> Dict[str, Any]:
+        """Generate WR-BOOST strategy targeting 65%+ win rate.
+        Ultra-tight TP (almost always hit) + wide SL (rarely triggered) = sniper mode.
+        Key: The R:R is intentionally asymmetric — we sacrifice R:R for WR consistency."""
+        return {
+            'ml_threshold': random.uniform(*self.wr_boost_ranges['ml_threshold']),
+            'risk_per_trade': random.uniform(*self.wr_boost_ranges['risk_per_trade']),
+            'tp_min': random.uniform(*self.wr_boost_ranges['tp_min']),
+            'tp_max': random.uniform(*self.wr_boost_ranges['tp_max']),
+            'stop_floor': random.uniform(*self.wr_boost_ranges['stop_floor']),
+            'max_trades_per_day': random.randint(*self.wr_boost_ranges['max_trades_per_day']),
+            'rsi_oversold': random.uniform(*self.wr_boost_ranges['rsi_oversold']),
+            'rsi_overbought': random.uniform(*self.wr_boost_ranges['rsi_overbought']),
+            'entry_score_min': random.uniform(*self.wr_boost_ranges['entry_score_min']),
+            'breakout_pct': random.uniform(*self.wr_boost_ranges['breakout_pct']),
+            'adx_min': random.uniform(*self.wr_boost_ranges['adx_min']),
+            'sentiment_gate': random.uniform(*self.wr_boost_ranges['sentiment_gate']),
+        }
+    
     def mutate_strategy(self, strategy: Dict[str, Any], mutation_rate: float = 0.20) -> Dict[str, Any]:
         """Mutate strategy by small random changes"""
         mutated = strategy.copy()
@@ -146,29 +184,35 @@ class StrategyGenerator:
     
     def generate_strategies(self, count: int = 10, best_strategies: List[Dict] = None) -> List[Dict[str, Any]]:
         """
-        Generate mix of strategies (v4 — win-rate ULTRA-DOMINANT):
-        - 15% Random exploration (reduced from 40%)
-        - 30% High win-rate focused (increased from 20%)
-        - 20% Ultra-conservative (NEW — maximum WR pursuit)
-        - 20% Mutation of best (slightly reduced)
+        Generate mix of strategies (v5 — WR-BOOST DOMINANT):
+        - 10% Random exploration
+        - 20% High win-rate focused
+        - 15% Ultra-conservative
+        - 20% WR-BOOST (NEW — sniper mode for 65%+ WR)
+        - 20% Mutation of best
         - 15% Crossover
         """
         strategies = []
         
-        # Random exploration (15% — reduced)
-        random_count = max(1, int(count * 0.15))
+        # Random exploration (10% — reduced)
+        random_count = max(1, int(count * 0.10))
         for _ in range(random_count):
             strategies.append(self.generate_random_strategy())
         
-        # High win-rate focused (30%)
-        high_wr_count = max(1, int(count * 0.30))
+        # High win-rate focused (20%)
+        high_wr_count = max(1, int(count * 0.20))
         for _ in range(high_wr_count):
             strategies.append(self.generate_high_winrate_strategy())
         
-        # Ultra-conservative (20% — NEW)
-        ultra_count = max(1, int(count * 0.20))
+        # Ultra-conservative (15%)
+        ultra_count = max(1, int(count * 0.15))
         for _ in range(ultra_count):
             strategies.append(self.generate_ultra_conservative_strategy())
+        
+        # WR-BOOST (20% — NEW sniper strategies)
+        wr_boost_count = max(1, int(count * 0.20))
+        for _ in range(wr_boost_count):
+            strategies.append(self.generate_wr_boost_strategy())
         
         # If we have best strategies, use them for mutation and crossover
         if best_strategies and len(best_strategies) >= 2:
@@ -187,12 +231,15 @@ class StrategyGenerator:
                 child = self.crossover(parent1['params'], parent2['params'])
                 strategies.append(child)
         else:
-            # Fill remaining with high WR + ultra-conservative
+            # Fill remaining with WR-boost + ultra-conservative
             while len(strategies) < count:
-                if random.random() < 0.5:
-                    strategies.append(self.generate_high_winrate_strategy())
-                else:
+                roll = random.random()
+                if roll < 0.4:
+                    strategies.append(self.generate_wr_boost_strategy())
+                elif roll < 0.7:
                     strategies.append(self.generate_ultra_conservative_strategy())
+                else:
+                    strategies.append(self.generate_high_winrate_strategy())
         
         return strategies
     

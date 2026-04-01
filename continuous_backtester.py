@@ -59,9 +59,9 @@ class ContinuousBacktester:
         """
         Calculate strategy score — v8 synced with strategy_backtester.
         
-        v8 changes vs v7:
-          - Kill gate lowered: 60% → 55% (synced)
-          - 90% WR gate: 30 → 20 trades (synced)
+        v8 changes: WR-BOOST + PROFITABILITY balanced.
+        More granular WR tiers from 58%+, sweet spot bonus 60-75%,
+        ROI×80, softer ROI floor to not kill high-WR low-ROI strategies.
         """
         if not metrics:
             return 0.0
@@ -77,27 +77,35 @@ class ContinuousBacktester:
         if win_rate >= 80.0 and total_trades < 10:
             return 0.0
         
-        # KILL GATE: below 55% WR = instant death (v8: lowered, synced with strategy_backtester)
+        # KILL GATE: below 55% WR = instant death
         if win_rate < 55.0:
             return 0.0
         
         score = 0.0
         
-        # Win Rate — HALVED dominance (v7: *5, was *10)
-        score += win_rate * 5.0
+        # Win Rate — v8: boosted back to *7 to push WR higher
+        score += win_rate * 7.0
         
-        # Tier bonuses (v7: recalibrated)
-        if win_rate > 65: score += 100.0
-        if win_rate > 70: score += 200.0
-        if win_rate > 75: score += 300.0
-        if win_rate > 80: score += 500.0
-        if win_rate > 85: score += 800.0  # NEW tier for 85%+ target
+        # Tier bonuses (v8: MORE TIERS from 58% for granular WR optimization)
+        if win_rate > 58: score += 50.0
+        if win_rate > 60: score += 100.0
+        if win_rate > 63: score += 200.0
+        if win_rate > 65: score += 300.0
+        if win_rate > 68: score += 400.0
+        if win_rate > 70: score += 500.0
+        if win_rate > 75: score += 700.0
+        if win_rate > 80: score += 1000.0
+        if win_rate > 85: score += 1500.0
         
-        # ROI — MASSIVELY weighted (v7: 100x, was 15x)
+        # WR CONSISTENCY BONUS (v8 NEW): sweet spot 60-75%
+        if 60 <= win_rate <= 75:
+            score += 200.0
+        
+        # ROI — balanced with WR (v8: 80x, was 100x)
         roi = metrics.get('roi', 0)
-        score += roi * 100.0
+        score += roi * 80.0
         
-        # PROFIT FACTOR (v7: boosted tiers)
+        # PROFIT FACTOR
         pf = metrics.get('profit_factor', 0)
         if pf >= 2.0:
             score += 300.0
@@ -106,13 +114,13 @@ class ContinuousBacktester:
         elif pf >= 1.2:
             score += 100.0
         elif pf < 0.8:
-            score *= 0.3  # v7: harsher penalty
+            score *= 0.3
         
-        # ROI FLOOR (v7 NEW)
+        # ROI FLOOR (v8: softer — don't kill high WR strategies)
         if roi < 5.0:
-            score *= 0.5
+            score *= 0.6
         if roi < 0:
-            score *= 0.2
+            score *= 0.25
         
         # Sharpe Ratio
         sharpe = metrics.get('sharpe_ratio', 0)
@@ -279,10 +287,8 @@ class ContinuousBacktester:
     def _count_strategies(self) -> int:
         """Count total strategies in database"""
         try:
-            with get_learning_db() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM strategies")
-                return cursor.fetchone()[0] or 0
+            stats = learning_store.get_learning_stats()
+            return stats.get("stats", {}).get("total_tested", 0)
         except:
             return 0
 

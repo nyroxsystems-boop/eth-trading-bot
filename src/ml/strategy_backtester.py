@@ -412,7 +412,7 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
     std_pnl = (sum((p - avg_pnl) ** 2 for p in pnls) / len(pnls)) ** 0.5
     sharpe = (avg_pnl / std_pnl * (len(trades) ** 0.5)) if std_pnl > 0 else 0
     
-    # === SCORING: v7 PROFITABILITY-FIRST (ROI + R:R dominant) ===
+    # === SCORING: v8 WR-BOOST + PROFITABILITY (optimized for 65%+ WR) ===
     n_trades = len(trades)
     
     # FAKE GATES: reject unrealistically perfect strategies
@@ -422,30 +422,37 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
         score = 0.0  # Need at least 20 trades for 90%+ WR to be credible
     elif win_rate >= 80.0 and n_trades < 10:
         score = 0.0  # Way too few samples for such high WR
-    # KILL GATE: WR < 55% = score 0 (lowered from 60% — was too restrictive)
+    # KILL GATE: WR < 55% = score 0
     elif win_rate < 55.0:
         score = 0.0
     else:
-        # BASE: WR contribution (v7: HALVED dominance — was *10, now *5)
-        score = win_rate * 5.0
-        # Tier bonuses (v7: recalibrated)
-        if win_rate > 65: score += 100.0
-        if win_rate > 70: score += 200.0
-        if win_rate > 75: score += 300.0
-        if win_rate > 80: score += 500.0
-        if win_rate > 85: score += 800.0   # NEW tier for 85%+ target
-        # ROI — MASSIVELY weighted (v7: 100x — was 15x!)
-        # 15% ROI = 1500pts, making ROI the PRIMARY driver
-        score += roi * 100.0
-        # R:R RATIO BONUS (v7 NEW — rewards better risk management)
+        # BASE: WR contribution (v8: boosted back to *7 to push WR higher)
+        score = win_rate * 7.0
+        # Tier bonuses (v8: MORE TIERS starting at 60% for granular WR optimization)
+        if win_rate > 58: score += 50.0    # v8 NEW: reward anything above kill gate
+        if win_rate > 60: score += 100.0   # v8 NEW: 60% threshold
+        if win_rate > 63: score += 200.0   # v8 NEW: good WR
+        if win_rate > 65: score += 300.0   # v8: boosted from 100
+        if win_rate > 68: score += 400.0   # v8 NEW: great WR
+        if win_rate > 70: score += 500.0   # v8: boosted from 200
+        if win_rate > 75: score += 700.0
+        if win_rate > 80: score += 1000.0
+        if win_rate > 85: score += 1500.0
+        # WR CONSISTENCY BONUS (v8 NEW): extra reward for 60-75% sweet spot
+        # This is the realistic achievable range — reward strategies that land here
+        if 60 <= win_rate <= 75:
+            score += 200.0  # Sweet spot bonus
+        # ROI — still significant but balanced with WR (v8: 80x, was 100x)
+        score += roi * 80.0
+        # R:R RATIO BONUS (rewards better risk management)
         avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 0
         avg_loss = abs(sum(t["pnl"] for t in losses) / len(losses)) if losses else 0.001
         rr_ratio = avg_win / max(avg_loss, 0.001)
-        if rr_ratio >= 2.0: score += 500.0      # Excellent R:R
-        elif rr_ratio >= 1.5: score += 300.0    # Good R:R
-        elif rr_ratio >= 1.0: score += 100.0    # Fair R:R
-        elif rr_ratio < 0.5: score *= 0.3       # Terrible R:R → heavy penalty
-        # PROFIT FACTOR (v7: boosted tiers)
+        if rr_ratio >= 2.0: score += 500.0
+        elif rr_ratio >= 1.5: score += 300.0
+        elif rr_ratio >= 1.0: score += 100.0
+        elif rr_ratio < 0.5: score *= 0.4   # v8: slightly less harsh (was 0.3)
+        # PROFIT FACTOR
         if profit_factor >= 2.0:
             score += 300.0
         elif profit_factor >= 1.5:
@@ -453,17 +460,17 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
         elif profit_factor >= 1.2:
             score += 100.0
         elif profit_factor < 0.8:
-            score *= 0.3  # v7: harsher penalty (was 0.5)
-        # ROI FLOOR (v7 NEW): low ROI = heavy penalty
+            score *= 0.3
+        # ROI FLOOR: low ROI = penalty but don't completely kill high WR strategies
         if roi < 5.0:
-            score *= 0.5   # Below 5% ROI — not worth it
+            score *= 0.6   # v8: less harsh (was 0.5) — don't kill high WR low ROI
         if roi < 0:
-            score *= 0.2   # Losing money → near-zero
-        # Sharpe (kept at 5.0)
+            score *= 0.25  # Losing money → near-zero
+        # Sharpe
         score += min(sharpe, 3.0) * 5.0
-        # Drawdown penalty (kept at 5.0)
+        # Drawdown penalty
         score -= max_drawdown * 5.0
-        # Trade count bonus (need ≥20 trades for full credit)
+        # Trade count bonus
         score += min(n_trades / 20, 1.0) * 50
         # Reliability gate: <10 trades = divide by 10
         if n_trades < 10:
