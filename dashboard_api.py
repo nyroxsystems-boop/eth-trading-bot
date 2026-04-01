@@ -252,6 +252,71 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ═══════════════════════════════════════════════════════
+# RATE LIMITING (in-memory, per-IP)
+# ═══════════════════════════════════════════════════════
+from collections import defaultdict
+import time as _rl_time
+
+_rate_limits: Dict[str, list] = defaultdict(list)
+
+def check_rate_limit(ip: str, bucket: str = "default", max_requests: int = 30, window_seconds: int = 60) -> bool:
+    """Returns True if request is allowed, False if rate-limited."""
+    key = f"{bucket}:{ip}"
+    now = _rl_time.time()
+    # Clean old entries
+    _rate_limits[key] = [t for t in _rate_limits[key] if t > now - window_seconds]
+    if len(_rate_limits[key]) >= max_requests:
+        return False
+    _rate_limits[key].append(now)
+    return True
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Rate limit auth & expensive endpoints."""
+    ip = request.client.host if request.client else "unknown"
+    path = request.url.path
+    
+    # Auth endpoints: 5 requests / minute
+    if path in ("/api/login", "/api/register", "/api/forgot-password"):
+        if not check_rate_limit(ip, "auth", max_requests=5, window_seconds=60):
+            return JSONResponse(status_code=429, content={"detail": "Too many requests. Try again later."})
+    
+    # Backtest endpoints: 3 requests / minute (heavy compute)
+    elif path in ("/api/backtest", "/api/strategy/backtest"):
+        if not check_rate_limit(ip, "backtest", max_requests=3, window_seconds=60):
+            return JSONResponse(status_code=429, content={"detail": "Backtest rate limit reached. Wait 60 seconds."})
+    
+    # General: 120 requests / minute
+    elif not check_rate_limit(ip, "general", max_requests=120, window_seconds=60):
+        return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded."})
+    
+    return await call_next(request)
+
+# ═══════════════════════════════════════════════════════
+# HEALTH CHECK (for Railway & monitoring)
+# ═══════════════════════════════════════════════════════
+@app.get("/health")
+async def health_check():
+    """Heartbeat endpoint for Railway health checks and monitoring."""
+    db_ok = False
+    try:
+        if USE_POSTGRES:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1")
+                db_ok = True
+    except Exception:
+        pass
+    
+    return {
+        "status": "healthy" if db_ok else "degraded",
+        "database": "connected" if db_ok else "disconnected",
+        "timestamp": datetime.now().isoformat(),
+        "version": "v8-production",
+        "uptime_check": True
+    }
+
 # Simple in-memory cache for frequent endpoints
 from functools import lru_cache
 import time as time_module
