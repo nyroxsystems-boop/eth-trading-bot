@@ -5450,6 +5450,36 @@ async def run_strategy_backtest(data: dict, current_user: Optional[Dict] = Depen
         gross_losses = abs(sum(losses)) if losses else 1
         profit_factor = gross_wins / gross_losses if gross_losses > 0 else 0
         
+        # === v8 SCORE (synced with strategy_backtester + continuous_backtester) ===
+        v8_score = 0.0
+        if win_rate >= 99.5 or (win_rate >= 90.0 and total_trades < 20) or (win_rate >= 80.0 and total_trades < 10):
+            v8_score = 0.0
+        elif win_rate < 55.0:
+            v8_score = 0.0
+        else:
+            v8_score = win_rate * 7.0
+            if win_rate > 58: v8_score += 50.0
+            if win_rate > 60: v8_score += 100.0
+            if win_rate > 63: v8_score += 200.0
+            if win_rate > 65: v8_score += 300.0
+            if win_rate > 68: v8_score += 400.0
+            if win_rate > 70: v8_score += 500.0
+            if win_rate > 75: v8_score += 700.0
+            if win_rate > 80: v8_score += 1000.0
+            if win_rate > 85: v8_score += 1500.0
+            if 60 <= win_rate <= 75: v8_score += 200.0
+            v8_score += roi * 80.0
+            if profit_factor >= 2.0: v8_score += 300.0
+            elif profit_factor >= 1.5: v8_score += 200.0
+            elif profit_factor >= 1.2: v8_score += 100.0
+            elif profit_factor < 0.8: v8_score *= 0.3
+            if roi < 5.0: v8_score *= 0.6
+            if roi < 0: v8_score *= 0.25
+            v8_score += min(sharpe, 3.0) * 5.0
+            v8_score -= max_dd * 100 * 5.0
+            v8_score += min(total_trades / 20, 1.0) * 50
+            if total_trades < 10: v8_score *= 0.1
+        
         result = {
             "totalReturn": round(roi, 2),
             "winRate": round(win_rate, 1),
@@ -5457,6 +5487,7 @@ async def run_strategy_backtest(data: dict, current_user: Optional[Dict] = Depen
             "maxDrawdown": round(max_dd * 100, 1),
             "sharpeRatio": round(sharpe, 2),
             "profitFactor": round(profit_factor, 2),
+            "score": round(v8_score, 1),
             "dataSource": "historical_binance",
             "candlesUsed": len(df),
             "daysBacktested": days

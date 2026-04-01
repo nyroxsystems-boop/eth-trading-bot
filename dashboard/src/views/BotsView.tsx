@@ -2,7 +2,7 @@ import { motion } from 'framer-motion'
 import { Play, Pause, Brain, Target, BookOpen } from 'lucide-react'
 import { useState, useEffect } from 'react'
 
-const API = import.meta.env.VITE_API_URL || ''
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 export default function BotsView() {
     const [botRunning, setBotRunning] = useState(false)

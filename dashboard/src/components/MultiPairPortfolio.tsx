@@ -3,7 +3,7 @@ import { Plus, Trash2, Settings, Play, Pause, TrendingUp, TrendingDown, X, Searc
 import { useAuth } from '../contexts/AuthContext'
 import '../styles/premium.css'
 
-const API_URL = import.meta.env.VITE_API_URL || ''
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 interface PortfolioPair {
     id: number

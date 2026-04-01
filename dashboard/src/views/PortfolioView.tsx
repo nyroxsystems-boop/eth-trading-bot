@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { Wallet, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Activity, DollarSign, BarChart3, Clock } from 'lucide-react'
 import '../styles/premium.css'
 
-const API = import.meta.env.VITE_API_URL || ''
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 interface TradeEntry {
     timestamp: string

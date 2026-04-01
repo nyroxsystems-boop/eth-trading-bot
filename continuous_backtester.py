@@ -38,19 +38,60 @@ class ContinuousBacktester:
         learning_store.ensure_learning_tables()
     
     async def backtest_strategy(self, strategy: Dict[str, Any]) -> Dict[str, Any]:
-        """Run backtest for a single strategy"""
+        """Run backtest for a single strategy — DIRECT import (no HTTP).
+        
+        v8: Uses strategy_backtester directly with walk-forward validation.
+        The old HTTP approach fails on Railway when services run in different containers.
+        """
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.api_url}/api/backtest",
-                    json=strategy,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        print(f"Backtest failed: {response.status}")
+            from src.ml.strategy_backtester import (
+                fetch_historical_data, calculate_indicators, run_backtest
+            )
+            
+            def _run_direct():
+                # Fetch real Binance data
+                candles = fetch_historical_data(days=7)
+                if not candles or len(candles) < 120:
+                    return None
+                candles = calculate_indicators(candles)
+                
+                # Walk-Forward: 70% train / 30% test
+                split_idx = int(len(candles) * 0.7)
+                train_candles = candles[:split_idx]
+                test_candles = candles[split_idx:]
+                
+                # Run on test set (out-of-sample)
+                test_metrics = run_backtest(test_candles, strategy)
+                if not test_metrics:
+                    return None
+                
+                # Also run on train for blended score
+                train_metrics = run_backtest(train_candles, strategy)
+                if train_metrics and test_metrics.get("score", 0) > 0:
+                    blended = test_metrics["score"] * 0.7 + train_metrics["score"] * 0.3
+                    test_metrics["score"] = round(blended, 2)
+                
+                test_metrics["data_source"] = "direct_backtester"
+                return test_metrics
+            
+            result = await asyncio.get_event_loop().run_in_executor(None, _run_direct)
+            return result
+            
+        except ImportError:
+            # Fallback: HTTP if direct import fails
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{self.api_url}/api/backtest",
+                        json=strategy,
+                        timeout=aiohttp.ClientTimeout(total=30)
+                    ) as response:
+                        if response.status == 200:
+                            return await response.json()
                         return None
+            except Exception as e:
+                print(f"Error backtesting (HTTP fallback): {e}")
+                return None
         except Exception as e:
             print(f"Error backtesting strategy: {e}")
             return None
