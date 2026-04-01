@@ -2,6 +2,58 @@
 """
 ETH Trading Bot - Dashboard API
 Real-time WebSocket API for Premium Trading Dashboard
+
+╔═══════════════════════════════════════════════════════════════╗
+║                    TABLE OF CONTENTS                          ║
+╠═══════════════════════════════════════════════════════════════╣
+║                                                               ║
+║  SECTION 1: CORE SETUP & MIDDLEWARE          (~Line 1-200)    ║
+║    - FastAPI app, CORS, GZip, Auth                            ║
+║    - Binance price cache, endpoint cache                      ║
+║    - Database adapter, learning_store imports                 ║
+║                                                               ║
+║  SECTION 2: USER AUTH & MANAGEMENT           (~Line 200-800)  ║
+║    - JWT auth, login, register, password reset                ║
+║    - User profiles, API key management                        ║
+║    - Subscription & billing                                   ║
+║                                                               ║
+║  SECTION 3: TRADING & STATUS API             (~Line 800-2000) ║
+║    - /api/status, /api/trades, /api/performance               ║
+║    - WebSocket connections                                    ║
+║    - Paper trading, position management                       ║
+║                                                               ║
+║  SECTION 4: ML & STRATEGY API                (~Line 2000-2800)║
+║    - /api/ml/*, model training endpoints                      ║
+║    - Strategy predictor, DQN agent                            ║
+║                                                               ║
+║  SECTION 5: BACKTEST ENGINE                  (~Line 2813-3080)║
+║    - /api/backtest — real Binance data backtest               ║
+║    - Walk-forward validation, scoring v8                      ║
+║                                                               ║
+║  SECTION 6: LEARNING & EVOLUTION             (~Line 3083-3200)║
+║    - /api/learning/stats, /api/learning/evolution             ║
+║    - Strategy promotion pipeline                              ║
+║                                                               ║
+║  SECTION 7: COPY TRADING                     (~Line 3200-3600)║
+║    - Leader/follower system                                   ║
+║                                                               ║
+║  SECTION 8: STRATEGY LAB                     (~Line 5307-5500)║
+║    - /api/strategy/backtest — lab endpoint                    ║
+║    - v8 scoring synchronized                                  ║
+║                                                               ║
+║  SECTION 9: LOGS API                         (~Line 5500-5555)║
+║    - /api/logs — bot log streaming                            ║
+║                                                               ║
+║  SECTION 10: ADMIN DASHBOARD                 (~Line 5558-5923)║
+║    - Strategy cleanup, user management                        ║
+║    - Revenue dashboard, platform analytics                    ║
+║    - Emergency controls (connected to bot!)                   ║
+║    - System health, Jarvis monitoring                         ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+
+Scoring Formula: v8 (synced across strategy_backtester.py,
+continuous_backtester.py, and this file's Strategy Lab endpoint)
 """
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Header, Request
