@@ -264,6 +264,39 @@ daily_trade_results = []            # List of trade P&Ls today
 circuit_breaker_active = False      # True = NO MORE TRADING until midnight
 circuit_breaker_reason = ""
 
+# === EMERGENCY STOP (Dashboard → Bot communication) ===
+_EMERGENCY_FLAG_FILE = os.path.join(LOG_DIR, "EMERGENCY_STOP")
+_last_emergency_check = 0.0
+_emergency_check_cache = False
+
+def _check_emergency_stop() -> bool:
+    """Check if admin has triggered emergency stop via dashboard.
+    Uses flag file (fast) + database (reliable). Cached for 30s to avoid I/O spam."""
+    global _last_emergency_check, _emergency_check_cache
+    
+    # Only check every 30 seconds
+    if time.time() - _last_emergency_check < 30:
+        return _emergency_check_cache
+    _last_emergency_check = time.time()
+    
+    # Method 1: Flag file (fast, works across processes on same machine)
+    if os.path.exists(_EMERGENCY_FLAG_FILE):
+        _emergency_check_cache = True
+        return True
+    
+    # Method 2: Database kv_store (reliable, works across Railway services)
+    try:
+        import learning_store
+        val = learning_store.get_kv("emergency_trading_stopped")
+        if val and val.lower() in ("true", "1", "yes"):
+            _emergency_check_cache = True
+            return True
+    except Exception:
+        pass
+    
+    _emergency_check_cache = False
+    return False
+
 # ML — GradientBoosting: 100 trees, depth 4, warm_start for incremental learning
 clf = Pipeline([
     ("scaler", StandardScaler(with_mean=True)),
@@ -1917,6 +1950,17 @@ def decide_and_trade():
             pass  # Let position management continue below
         else:
             return  # No new trades
+    
+    # === EMERGENCY STOP CHECK (Dashboard → Bot link) ===
+    # Checks flag file + database for admin-triggered emergency stop
+    if not open_position:
+        try:
+            emergency_stopped = _check_emergency_stop()
+            if emergency_stopped:
+                log("🚨 EMERGENCY STOP ACTIVE (set via Admin Dashboard) — no new trades")
+                return
+        except Exception:
+            pass  # Don't let emergency check crash trading loop
 
     # === MARKET INTELLIGENCE: Extreme Fear Block ===
     if _market_intel and not open_position:

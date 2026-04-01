@@ -777,3 +777,58 @@ def _json_get_evolution(days: int) -> List[Dict]:
                 daily_best[date] = score
 
     return [{"date": d, "best_score": round(s, 2)} for d, s in sorted(daily_best.items())]
+
+
+# ============================================================================
+# KEY-VALUE STORE (Generic cross-process communication)
+# ============================================================================
+
+def get_kv(key: str) -> Optional[str]:
+    """Get a value from kv_store by key. Returns None if not found."""
+    if not USE_POSTGRES or not HAS_DB_ADAPTER:
+        # Fallback: read from JSON file
+        kv_file = LOG_DIR / "kv_store.json"
+        try:
+            if kv_file.exists():
+                data = json.loads(kv_file.read_text())
+                return data.get(key)
+        except Exception:
+            pass
+        return None
+    
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM kv_store WHERE key = %s", (key,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+    except Exception as e:
+        print(f"⚠️ get_kv({key}) error: {e}")
+        return None
+
+
+def set_kv(key: str, value: str):
+    """Set a value in kv_store. Creates or updates."""
+    if not USE_POSTGRES or not HAS_DB_ADAPTER:
+        # Fallback: write to JSON file
+        kv_file = LOG_DIR / "kv_store.json"
+        try:
+            data = {}
+            if kv_file.exists():
+                data = json.loads(kv_file.read_text())
+            data[key] = value
+            kv_file.write_text(json.dumps(data, indent=2))
+        except Exception:
+            pass
+        return
+    
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO kv_store (key, value) VALUES (%s, %s)
+                ON CONFLICT (key) DO UPDATE SET value = %s
+            """, (key, value, value))
+    except Exception as e:
+        print(f"⚠️ set_kv({key}) error: {e}")
+

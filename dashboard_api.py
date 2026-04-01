@@ -5691,12 +5691,32 @@ async def admin_get_analytics(current_user: Dict = Depends(get_current_admin)):
 @app.get("/api/admin/emergency/status")
 async def admin_emergency_status(current_user: Dict = Depends(get_current_admin)):
     global EMERGENCY_TRADING_STOPPED
+    # Also check flag file + kv_store for cross-process consistency
+    flag_file = Path(os.getenv("LOG_DIR", "./logs")) / "EMERGENCY_STOP"
+    if flag_file.exists():
+        EMERGENCY_TRADING_STOPPED = True
     return {"trading_stopped": EMERGENCY_TRADING_STOPPED}
 
 @app.post("/api/admin/emergency/stop-all")
 async def admin_emergency_stop(current_user: Dict = Depends(get_current_admin)):
     global EMERGENCY_TRADING_STOPPED
     EMERGENCY_TRADING_STOPPED = True
+    
+    # Write flag file (bot checks this — works for same-container deployment)
+    try:
+        flag_file = Path(os.getenv("LOG_DIR", "./logs")) / "EMERGENCY_STOP"
+        flag_file.parent.mkdir(parents=True, exist_ok=True)
+        flag_file.write_text(f"STOPPED by {current_user.get('username')} at {datetime.now().isoformat()}")
+    except Exception as e:
+        print(f"⚠️ Flag file write failed: {e}")
+    
+    # Write to database kv_store (bot checks this — works for multi-container Railway)
+    try:
+        learning_store.set_kv("emergency_trading_stopped", "true")
+    except Exception as e:
+        print(f"⚠️ KV store write failed: {e}")
+    
+    # Telegram notification
     try:
         import requests
         token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
@@ -5710,6 +5730,29 @@ async def admin_emergency_stop(current_user: Dict = Depends(get_current_admin)):
 async def admin_emergency_resume(current_user: Dict = Depends(get_current_admin)):
     global EMERGENCY_TRADING_STOPPED
     EMERGENCY_TRADING_STOPPED = False
+    
+    # Remove flag file
+    try:
+        flag_file = Path(os.getenv("LOG_DIR", "./logs")) / "EMERGENCY_STOP"
+        if flag_file.exists():
+            flag_file.unlink()
+    except Exception as e:
+        print(f"⚠️ Flag file remove failed: {e}")
+    
+    # Clear database kv_store
+    try:
+        learning_store.set_kv("emergency_trading_stopped", "false")
+    except Exception as e:
+        print(f"⚠️ KV store clear failed: {e}")
+    
+    # Telegram notification
+    try:
+        import requests
+        token, chat = os.getenv("TELEGRAM_BOT_TOKEN"), os.getenv("TELEGRAM_CHAT_ID")
+        if token and chat:
+            requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                         json={"chat_id": chat, "text": f"✅ Trading RESUMED by {current_user.get('username')}"})
+    except: pass
     return {"status": "success", "trading_stopped": False}
 
 # ------------ System Health ------------
