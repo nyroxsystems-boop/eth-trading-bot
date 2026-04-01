@@ -19,22 +19,14 @@ const RegisterView = lazy(() => import('./views/RegisterView'))
 const DashboardView = lazy(() => import('./views/DashboardView'))
 const PortfolioView = lazy(() => import('./views/PortfolioView'))
 const LearningView = lazy(() => import('./views/LearningView'))
-const AccountsView = lazy(() => import('./views/AccountsView'))
-const BotsView = lazy(() => import('./views/BotsView'))
 const SettingsView = lazy(() => import('./views/SettingsView'))
-const SubscriptionView = lazy(() => import('./views/SubscriptionView'))
 const MLMonitorView = lazy(() => import('./views/MLMonitorView'))
 const AdminDashboardView = lazy(() => import('./views/AdminDashboardView'))
 const ForgotPasswordView = lazy(() => import('./views/ForgotPasswordView'))
-const PricingView = lazy(() => import('./views/PricingView'))
 const AnalyticsView = lazy(() => import('./views/AnalyticsView'))
 const TradingJournalView = lazy(() => import('./views/TradingJournalView'))
-const LeaderboardView = lazy(() => import('./views/LeaderboardView'))
-const EarningsView = lazy(() => import('./views/EarningsView'))
 const StrategyLabView = lazy(() => import('./views/StrategyLabView'))
-// Combined views for consolidated sidebar
 const TradingView = lazy(() => import('./views/TradingView'))
-const SocialView = lazy(() => import('./views/SocialView'))
 const AccountView = lazy(() => import('./views/AccountView'))
 import './views/AdminDashboardView.css'
 
@@ -307,7 +299,6 @@ function Dashboard() {
                 {activePage === 'learning' && <LearningView />}
                 {activePage === 'trading' && <TradingView />}
                 {activePage === 'analytics' && <AnalyticsView />}
-                {activePage === 'social' && <SocialView />}
                 {activePage === 'journal' && <TradingJournalView />}
                 {activePage === 'account' && <AccountView />}
                 {activePage === 'admin' && <AdminDashboardView activeTab="overview" />}
@@ -318,12 +309,6 @@ function Dashboard() {
                 {activePage === 'admin-revenue' && <AdminDashboardView activeTab="revenue" />}
                 {activePage === 'admin-db' && <AdminDashboardView activeTab="database" />}
                 {activePage === 'ml' && <MLMonitorView />}
-                {activePage === 'accounts' && <AccountsView />}
-                {activePage === 'bots' && <BotsView />}
-                {activePage === 'subscription' && <SubscriptionView />}
-                {activePage === 'pricing' && <PricingView />}
-                {activePage === 'leaderboard' && <LeaderboardView />}
-                {activePage === 'earnings' && <EarningsView />}
                 {activePage === 'strategy-lab' && <StrategyLabView />}
                 {activePage === 'settings' && <SettingsView />}
               </div>
@@ -343,7 +328,7 @@ function App() {
         <AuthProvider>
           <Suspense fallback={<LoadingFallback />}>
             <Routes>
-              <Route path="/pricing" element={<PricingView />} />
+              <Route path="/pricing" element={<LoginView />} />
               <Route path="/login" element={<LoginView />} />
               <Route path="/register" element={<RegisterView />} />
               <Route path="/forgot-password" element={<ForgotPasswordView />} />
