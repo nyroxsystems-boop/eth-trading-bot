@@ -1851,8 +1851,8 @@ async def auto_learning_background():
                 if strategies_tested % 10 == 0:
                     print(f"Strategy #{strategies_tested}: Score={strategy['score']:.2f} | Hour: {hour_tested} | Best: {best_score_session:.1f}")
             
-            # Wait 3-5 seconds between tests (720-1200/hour)
-            wait_time = random.randint(3, 5)
+            # Wait 1-2 seconds between tests (~1800-3600/hour, 2x faster)
+            wait_time = random.uniform(1.0, 2.0)
             await asyncio.sleep(wait_time)
             
         except Exception as e:
@@ -3976,12 +3976,12 @@ async def stripe_webhook(request):
 
 @app.get("/api/ml/status")
 async def get_ml_status():
-    """Get status of all ML models"""
+    """Get status of all ML models (checks local files + KV store)"""
     log_dir = Path(os.getenv("LOG_DIR", "./logs"))
     
     models = {}
     
-    # Check DQN model
+    # Check DQN model (local file only)
     dqn_path = log_dir / "dqn_agent.pt"
     if dqn_path.exists():
         stat = dqn_path.stat()
@@ -3994,9 +3994,32 @@ async def get_ml_status():
     else:
         models["dqn"] = {"status": "not_trained", "model_type": "Deep Q-Network"}
     
-    # Check Gradient Boosting model
+    # Check Gradient Boosting model — KV store (bot saves here) + local file
     gb_path = log_dir / "ml_model.pkl"
-    if gb_path.exists():
+    gb_found = False
+    
+    # 1) Check KV store (bot persists model here as pickle)
+    try:
+        ml_stats_json = learning_store.get_kv("ml_stats")
+        ml_model_exists = learning_store.get_kv("ml_model_pickle") is not None
+        if ml_stats_json and ml_model_exists:
+            stats = json.loads(ml_stats_json)
+            ml_s = stats.get("ml_stats", {})
+            models["gradient_boosting"] = {
+                "status": "trained",
+                "storage": "PostgreSQL KV Store",
+                "accuracy": f"{ml_s.get('accuracy', 0):.1f}%",
+                "samples": ml_s.get("samples", 0),
+                "last_updated": stats.get("saved_at", "unknown"),
+                "model_type": "Gradient Boosting Classifier (11 features)",
+                "experience_replay": stats.get("experience_replay_size", 0)
+            }
+            gb_found = True
+    except Exception:
+        pass
+    
+    # 2) Fallback: local file
+    if not gb_found and gb_path.exists():
         stat = gb_path.stat()
         models["gradient_boosting"] = {
             "status": "trained",
@@ -4004,10 +4027,12 @@ async def get_ml_status():
             "last_updated": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             "model_type": "Gradient Boosting Regressor"
         }
-    else:
+        gb_found = True
+    
+    if not gb_found:
         models["gradient_boosting"] = {"status": "not_trained", "model_type": "Gradient Boosting"}
     
-    # Check LSTM model
+    # Check LSTM model (local file only)
     lstm_path = log_dir / "neural_model.pt"
     if lstm_path.exists():
         stat = lstm_path.stat()
@@ -4122,27 +4147,28 @@ async def get_ensemble_prediction():
 
 @app.get("/api/ml/feature-importance")
 async def get_feature_importance():
-    """Get feature importance from Gradient Boosting model"""
+    """Get feature importance from Gradient Boosting model (from bot's KV store)"""
     try:
+        # Try KV store first (bot saves real feature importance here)
+        fi_json = learning_store.get_kv("ml_feature_importance")
+        if fi_json:
+            features = json.loads(fi_json)
+            return {"status": "success", "features": features}
+        
+        # Fallback: try MLStrategyPredictor
         import sys
         sys.path.insert(0, str(Path(__file__).parent))
-        
         from ml_strategy_predictor import MLStrategyPredictor
-        
         predictor = MLStrategyPredictor()
+        if predictor.is_trained:
+            importance = predictor.get_feature_importance()
+            sorted_importance = sorted(importance.items(), key=lambda x: x[1], reverse=True)
+            return {
+                "status": "success",
+                "features": [{"name": k, "importance": round(v * 100, 2)} for k, v in sorted_importance]
+            }
         
-        if not predictor.is_trained:
-            return {"status": "not_trained", "message": "Model not trained yet"}
-        
-        importance = predictor.get_feature_importance()
-        
-        # Sort by importance
-        sorted_importance = sorted(importance.items(), key=lambda x: x[1], reverse=True)
-        
-        return {
-            "status": "success",
-            "features": [{"name": k, "importance": round(v * 100, 2)} for k, v in sorted_importance]
-        }
+        return {"status": "not_trained", "message": "Model not trained yet — waiting for bot to train on klines"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

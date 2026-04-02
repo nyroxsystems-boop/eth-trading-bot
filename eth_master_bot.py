@@ -921,36 +921,114 @@ def ml_feedback_trade(entry_row, outcome_win: bool):
         log(f"WARN ml feedback failed: {e}")
 
 # --- ML Model Persistence (survive Railway deploys) ---
-_last_model_save = 0.0  # Throttle: save at most every 60s
+_last_model_save = 0.0  # Throttle: save at most every 120s
 
 def save_ml_model():
-    """Save ML stats to local file (model retrains from klines on startup — faster & more reliable)."""
+    """Save trained ML model to PostgreSQL KV store (survives Railway deploys).
+    
+    Saves: 1) ML stats as JSON  2) Full sklearn pipeline as pickle+base64
+    The model is ~50-200KB compressed, well within KV store limits.
+    """
     global _last_model_save
     if not ml_warm:
         return
     
-    if time.time() - _last_model_save < 60:
+    if time.time() - _last_model_save < 120:
         return
     _last_model_save = time.time()
     
     try:
+        import pickle, base64, zlib
+        
+        # 1) Save stats (JSON) to KV store
         state = {
             "ml_stats": ml_stats,
             "ml_conf_boost": ml_conf_boost,
-            "saved_at": datetime.now().isoformat()
+            "saved_at": datetime.now().isoformat(),
+            "experience_replay_size": len(_experience_replay)
         }
         
+        try:
+            import learning_store
+            learning_store.set_kv("ml_stats", json.dumps(state))
+        except Exception:
+            pass
+        
+        # 2) Save actual model (pickle → compress → base64)
+        try:
+            model_bytes = pickle.dumps(clf)
+            compressed = zlib.compress(model_bytes)
+            encoded = base64.b64encode(compressed).decode('ascii')
+            import learning_store
+            learning_store.set_kv("ml_model_pickle", encoded)
+            model_kb = len(compressed) / 1024
+            log(f"ML MODEL SAVED to DB: {model_kb:.0f}KB, acc={ml_stats.get('accuracy', 0):.1f}%")
+        except Exception as e:
+            log(f"WARN ml model pickle save failed: {e}")
+        
+        # 3) Save feature importance for dashboard
+        try:
+            gbc = clf.named_steps["gbc"]
+            if hasattr(gbc, "feature_importances_"):
+                fi = [{"name": ML_FEATURES[i], "importance": round(float(v), 4)} 
+                      for i, v in enumerate(gbc.feature_importances_)]
+                fi.sort(key=lambda x: x["importance"], reverse=True)
+                import learning_store
+                learning_store.set_kv("ml_feature_importance", json.dumps(fi))
+        except Exception:
+            pass
+        
+        # 4) Also save local JSON fallback
         local_path = os.path.join(LOG_DIR, "ml_model_state.json")
         with open(local_path, "w") as f:
             json.dump(state, f)
-        log(f"ML STATS SAVED: acc={ml_stats.get('accuracy', 0):.1f}%")
+            
     except Exception as e:
-        log(f"WARN ml stats save failed: {e}")
+        log(f"WARN ml model save failed: {e}")
 
 def load_ml_model():
-    """Load ML stats from local file. Model is retrained from klines by ml_online_update()."""
-    global ml_conf_boost, ml_stats
+    """Load ML model from PostgreSQL KV store (survives deploys).
+    Falls back to local JSON if KV store not available."""
+    global ml_conf_boost, ml_stats, ml_warm, clf
     
+    # 1) Try loading pickled model from KV store (best: full model survives deploy)
+    try:
+        import learning_store
+        encoded = learning_store.get_kv("ml_model_pickle")
+        if encoded:
+            import pickle, base64, zlib
+            compressed = base64.b64decode(encoded)
+            model_bytes = zlib.decompress(compressed)
+            loaded_clf = pickle.loads(model_bytes)
+            
+            # Verify it's a valid pipeline with the right features
+            scaler_n = loaded_clf.named_steps["scaler"].n_features_in_
+            if scaler_n == len(ML_FEATURES):
+                clf = loaded_clf
+                ml_warm = True
+                log(f"ML MODEL LOADED from DB: {len(ML_FEATURES)} features, "
+                    f"scaler OK ({scaler_n} features)")
+            else:
+                log(f"ML MODEL: feature mismatch ({scaler_n} vs {len(ML_FEATURES)}) → retrain")
+    except Exception as e:
+        log(f"ML MODEL: KV load failed ({e}) → will retrain from klines")
+    
+    # 2) Load stats from KV store
+    try:
+        import learning_store
+        stats_json = learning_store.get_kv("ml_stats")
+        if stats_json:
+            state = json.loads(stats_json)
+            if state.get("ml_stats"):
+                ml_stats.update(state["ml_stats"])
+            ml_conf_boost = state.get("ml_conf_boost", 0.0)
+            saved_at = state.get("saved_at", "unknown")
+            log(f"ML STATS from DB: acc={ml_stats.get('accuracy', 0):.1f}% saved_at={saved_at}")
+            return True
+    except Exception:
+        pass
+    
+    # 3) Fallback: local JSON
     local_path = os.path.join(LOG_DIR, "ml_model_state.json")
     try:
         if os.path.exists(local_path):
@@ -959,14 +1037,12 @@ def load_ml_model():
             if state.get("ml_stats"):
                 ml_stats.update(state["ml_stats"])
             ml_conf_boost = state.get("ml_conf_boost", 0.0)
-            saved_at = state.get("saved_at", "unknown")
-            log(f"ML STATS LOADED: acc={ml_stats.get('accuracy', 0):.1f}% saved_at={saved_at}")
-            log("ML MODEL: will retrain from klines on first cycle (~2s)")
+            log(f"ML STATS from local file: acc={ml_stats.get('accuracy', 0):.1f}%")
             return True
     except Exception as e:
-        log(f"WARN ml stats load failed: {e}")
+        log(f"WARN ml local load failed: {e}")
     
-    log("ML MODEL: fresh start")
+    log("ML MODEL: fresh start — will train on first kline fetch")
     return False
 
 # ------------------ SENTIMENT ------------------
