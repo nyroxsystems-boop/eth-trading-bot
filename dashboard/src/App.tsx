@@ -25,7 +25,7 @@ const AdminDashboardView = lazy(() => import('./views/AdminDashboardView'))
 const ForgotPasswordView = lazy(() => import('./views/ForgotPasswordView'))
 const AnalyticsView = lazy(() => import('./views/AnalyticsView'))
 const TradingJournalView = lazy(() => import('./views/TradingJournalView'))
-const StrategyLabView = lazy(() => import('./views/StrategyLabView'))
+
 const TradingView = lazy(() => import('./views/TradingView'))
 const AccountView = lazy(() => import('./views/AccountView'))
 import './views/AdminDashboardView.css'
@@ -309,7 +309,7 @@ function Dashboard() {
                 {activePage === 'admin-revenue' && <AdminDashboardView activeTab="revenue" />}
                 {activePage === 'admin-db' && <AdminDashboardView activeTab="database" />}
                 {activePage === 'ml' && <MLMonitorView />}
-                {activePage === 'strategy-lab' && <StrategyLabView />}
+
                 {activePage === 'settings' && <SettingsView />}
               </div>
             </Suspense>

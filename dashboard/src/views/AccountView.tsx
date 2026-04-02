@@ -8,25 +8,35 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 const AccountView = () => {
     const { user, token } = useAuth()
-    const [hasApiKeys, setHasApiKeys] = useState(false)
+    const [apiKeysInfo, setApiKeysInfo] = useState<any>(null)
+    const [telegramInfo, setTelegramInfo] = useState<any>(null)
     const [loading, setLoading] = useState(true)
 
     useEffect(() => {
-        fetchProfile()
+        fetchAccountData()
     }, [])
 
-    const fetchProfile = async () => {
+    const fetchAccountData = async () => {
+        const headers: any = token ? { 'Authorization': `Bearer ${token}` } : {}
+        
         try {
-            const res = await fetch(`${API_URL}/api/profile`, {
-                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-            })
-            if (res.ok) {
-                const data = await res.json()
-                setHasApiKeys(data.has_api_keys || false)
+            const [keysRes, telegramRes] = await Promise.allSettled([
+                fetch(`${API_URL}/api/settings/api-keys`, { headers }),
+                fetch(`${API_URL}/api/settings/user-telegram`, { headers })
+            ])
+
+            if (keysRes.status === 'fulfilled' && keysRes.value.ok) {
+                setApiKeysInfo(await keysRes.value.json())
             }
-        } catch (e) { console.warn('Profile fetch failed:', e) }
+            if (telegramRes.status === 'fulfilled' && telegramRes.value.ok) {
+                setTelegramInfo(await telegramRes.value.json())
+            }
+        } catch (e) { console.warn('Account fetch failed:', e) }
         setLoading(false)
     }
+
+    const hasApiKeys = apiKeysInfo?.has_binance_keys || false
+    const hasTelegram = apiKeysInfo?.has_telegram || false
 
     return (
         <motion.div
@@ -83,24 +93,33 @@ const AccountView = () => {
                         </div>
                     </div>
 
-                    {/* API Keys Card */}
+                    {/* API Keys Card — LIVE DATA */}
                     <div className="glass-card" style={{ padding: '24px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
                             <Key size={20} style={{ color: '#06b6d4' }} />
                             <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: '16px' }}>API Keys</span>
                         </div>
-                        <div style={{
-                            padding: '16px', borderRadius: '10px',
-                            background: hasApiKeys ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)',
-                            border: `1px solid ${hasApiKeys ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}`,
-                            marginBottom: '16px'
-                        }}>
-                            <div style={{ fontWeight: 600, color: hasApiKeys ? '#10b981' : '#f59e0b', marginBottom: '4px' }}>
-                                {hasApiKeys ? '✅ Binance Keys Configured' : '⚠️ No API Keys'}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--glass-border)' }}>
+                                <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Binance API</span>
+                                <span style={{ color: hasApiKeys ? '#10b981' : '#f59e0b', fontWeight: 600, fontSize: '13px' }}>
+                                    {hasApiKeys ? '✅ Connected' : '⚠️ Not Set'}
+                                </span>
                             </div>
-                            <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                                {hasApiKeys ? 'Your Binance API keys are set up and ready for trading.' : 'Add your Binance API keys in Settings to enable live trading.'}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--glass-border)' }}>
+                                <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Trading Enabled</span>
+                                <span style={{ color: apiKeysInfo?.trading_enabled ? '#10b981' : '#ef4444', fontWeight: 600, fontSize: '13px' }}>
+                                    {apiKeysInfo?.trading_enabled ? '✅ Active' : '❌ Disabled'}
+                                </span>
                             </div>
+                            {hasApiKeys && apiKeysInfo?.binance_api_key && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid var(--glass-border)' }}>
+                                    <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>API Key</span>
+                                    <span style={{ color: 'var(--text-muted)', fontSize: '13px', fontFamily: 'monospace' }}>
+                                        {apiKeysInfo.binance_api_key}
+                                    </span>
+                                </div>
+                            )}
                         </div>
                         <button
                             onClick={() => window.dispatchEvent(new CustomEvent('navigate', { detail: { page: 'settings' } }))}
@@ -122,10 +141,6 @@ const AccountView = () => {
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>2FA</span>
-                                <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Coming Soon</span>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                 <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>JWT Auth</span>
                                 <span style={{ color: '#10b981', fontWeight: 600, fontSize: '13px' }}>✅ Active</span>
                             </div>
@@ -133,10 +148,14 @@ const AccountView = () => {
                                 <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>API Encryption</span>
                                 <span style={{ color: '#10b981', fontWeight: 600, fontSize: '13px' }}>✅ Fernet</span>
                             </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Rate Limiting</span>
+                                <span style={{ color: '#10b981', fontWeight: 600, fontSize: '13px' }}>✅ Active</span>
+                            </div>
                         </div>
                     </div>
 
-                    {/* Notifications */}
+                    {/* Notifications — LIVE DATA */}
                     <div className="glass-card" style={{ padding: '24px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
                             <Bell size={20} style={{ color: '#f59e0b' }} />
@@ -145,16 +164,24 @@ const AccountView = () => {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                 <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Telegram</span>
-                                <span style={{ color: '#10b981', fontWeight: 600, fontSize: '13px' }}>✅ Connected</span>
+                                <span style={{ color: hasTelegram ? '#10b981' : '#f59e0b', fontWeight: 600, fontSize: '13px' }}>
+                                    {hasTelegram ? '✅ Connected' : '⚠️ Not Set'}
+                                </span>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                 <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Trade Alerts</span>
-                                <span style={{ color: '#10b981', fontWeight: 600, fontSize: '13px' }}>Enabled</span>
+                                <span style={{ color: hasTelegram ? '#10b981' : 'var(--text-muted)', fontWeight: 600, fontSize: '13px' }}>
+                                    {hasTelegram ? 'Enabled' : 'Requires Telegram'}
+                                </span>
                             </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Daily Reports</span>
-                                <span style={{ color: '#10b981', fontWeight: 600, fontSize: '13px' }}>18:00 CET</span>
-                            </div>
+                            {telegramInfo?.chat_id && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                    <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Chat ID</span>
+                                    <span style={{ color: 'var(--text-muted)', fontSize: '13px', fontFamily: 'monospace' }}>
+                                        {telegramInfo.chat_id}
+                                    </span>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
