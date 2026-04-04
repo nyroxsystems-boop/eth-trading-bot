@@ -4313,16 +4313,22 @@ async def get_all_models_status():
                 cursor.execute("SELECT value FROM kv_store WHERE key = 'ml_stats'")
                 row = cursor.fetchone()
                 if row:
-                    ml_stats = json.loads(row[0])
+                    raw = json.loads(row[0])
+                    # Bot wraps stats: {"ml_stats": {...}, "ml_conf_boost": ..., "saved_at": ...}
+                    ml_stats = raw.get("ml_stats", raw) if isinstance(raw, dict) else {}
                     _synced_ml_stats = ml_stats  # Cache in memory
-                else:
-                    # Fallback: read from persisted model-state (has nested ml_stats)
-                    cursor.execute("SELECT value FROM kv_store WHERE key = 'sgd_model_state'")
-                    row = cursor.fetchone()
-                    if row:
-                        model_state = json.loads(row[0])
-                        if model_state.get("ml_stats"):
-                            ml_stats = model_state["ml_stats"]
+                
+                # ALWAYS also check sgd_model_state — it may have NEWER stats
+                # (Bot saves model weights + stats here on every ml_online_update)
+                cursor.execute("SELECT value FROM kv_store WHERE key = 'sgd_model_state'")
+                row2 = cursor.fetchone()
+                if row2:
+                    model_state = json.loads(row2[0])
+                    nested_stats = model_state.get("ml_stats", {})
+                    if nested_stats:
+                        # Use whichever source has more samples (= more recent training)
+                        if nested_stats.get("samples", 0) >= ml_stats.get("samples", 0):
+                            ml_stats = nested_stats
                             _synced_ml_stats = ml_stats
         except Exception:
             pass
@@ -4366,8 +4372,8 @@ async def get_all_models_status():
     
     results = [
         {
-            "name": "SGD Classifier",
-            "type": "Online Learning (SGDClassifier)",
+            "name": "ML Classifier",
+            "type": "Gradient Boosting (Online Learning)",
             "version": "v3.1.0",
             "accuracy": ml_stats.get("accuracy", 0),
             "samples": ml_stats.get("samples", 0),
