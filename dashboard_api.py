@@ -4318,16 +4318,14 @@ async def get_all_models_status():
                     ml_stats = raw.get("ml_stats", raw) if isinstance(raw, dict) else {}
                     _synced_ml_stats = ml_stats  # Cache in memory
                 
-                # ALWAYS also check sgd_model_state — it may have NEWER stats
-                # (Bot saves model weights + stats here on every ml_online_update)
-                cursor.execute("SELECT value FROM kv_store WHERE key = 'sgd_model_state'")
-                row2 = cursor.fetchone()
-                if row2:
-                    model_state = json.loads(row2[0])
-                    nested_stats = model_state.get("ml_stats", {})
-                    if nested_stats:
-                        # Use whichever source has more samples (= more recent training)
-                        if nested_stats.get("samples", 0) >= ml_stats.get("samples", 0):
+                # Fallback: if ml_stats key was empty, try legacy sgd_model_state
+                if not ml_stats:
+                    cursor.execute("SELECT value FROM kv_store WHERE key = 'sgd_model_state'")
+                    row2 = cursor.fetchone()
+                    if row2:
+                        model_state = json.loads(row2[0])
+                        nested_stats = model_state.get("ml_stats", {})
+                        if nested_stats:
                             ml_stats = nested_stats
                             _synced_ml_stats = ml_stats
         except Exception:
