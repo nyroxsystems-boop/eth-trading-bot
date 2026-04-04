@@ -329,7 +329,7 @@ ml_stats = {
 nltk_downloaded = False
 sia = None
 sent_score = 0.0
-SENT_ENTRY_MIN = -0.20  # Sentiment gate — dynamic, optimized by backtester (clamp -0.40 to 0.10)
+SENT_ENTRY_MIN = -0.40  # Sentiment gate — loosened from -0.20 (was blocking too many trades)
 last_rss_pull = 0.0
 
 # --- Auto-Optimization State ---
@@ -439,7 +439,7 @@ def apply_best_strategy():
         if "adx_min" in blended:
             ADX_MIN_TREND = max(8.0, min(25.0, blended["adx_min"]))  # Clamp 8-25
         if "sentiment_gate" in blended:
-            SENT_ENTRY_MIN = max(-0.40, min(0.10, blended["sentiment_gate"]))  # Clamp -0.40 to 0.10
+            SENT_ENTRY_MIN = max(-0.50, min(0.10, blended["sentiment_gate"]))  # Clamp -0.50 to 0.10 (wider range)
         
         # Update current_params dict for tracking
         current_params['tp_min'] = TP_MIN
@@ -719,6 +719,59 @@ def last_price() -> float|None:
         return None
 
 # ------------------ INDICATORS ------------------
+# --- Funding Rate + Open Interest caches for ML features ---
+_oi_cache = {"value": 0.0, "prev": 0.0, "change_pct": 0.0, "ts": 0}
+
+def _fetch_open_interest() -> float:
+    """Fetch Open Interest from Binance Futures. Cached 5min."""
+    global _oi_cache
+    if time.time() - _oi_cache["ts"] < 300:
+        return _oi_cache["change_pct"]
+    try:
+        resp = requests.get(
+            "https://fapi.binance.com/fapi/v1/openInterest",
+            params={"symbol": "ETHUSDT"}, timeout=5
+        )
+        oi_val = float(resp.json().get("openInterest", 0))
+        prev = _oi_cache["value"] if _oi_cache["value"] > 0 else oi_val
+        change_pct = (oi_val - prev) / max(prev, 1e-9) * 100  # OI change %
+        _oi_cache = {"value": oi_val, "prev": prev, "change_pct": round(change_pct, 4), "ts": time.time()}
+        return change_pct
+    except Exception:
+        return _oi_cache.get("change_pct", 0.0)
+
+def _fetch_funding_for_feature() -> float:
+    """Get current funding rate as a feature value (cached via get_funding_rate)."""
+    try:
+        fr = get_funding_rate()
+        return fr.get("rate", 0.0) * 10000  # Scale: 0.0001 → 1.0 for ML
+    except Exception:
+        return 0.0
+
+def _compute_mtf_alignment() -> float:
+    """Multi-Timeframe alignment score: -1.0 (all bearish) to +1.0 (all bullish)."""
+    try:
+        score = 0.0
+        # 1H context
+        ctx = get_1h_context()
+        if ctx["bias"] == "TREND_UP":
+            score += 0.4
+        elif ctx["bias"] == "OVERSOLD_BOUNCE":
+            score += 0.3
+        elif ctx["bias"] == "TREND_DOWN":
+            score -= 0.4
+        # 4H context
+        bias_4h = get_4h_bias()
+        if bias_4h == "TREND_UP":
+            score += 0.4
+        elif bias_4h == "TREND_DOWN":
+            score -= 0.4
+        # 5m (current candle momentum — uses last few ret1 values)
+        # Positive score if recent momentum is up
+        return max(-1.0, min(1.0, score))
+    except Exception:
+        return 0.0
+
 def add_features(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out["ret1"] = out["close"].pct_change()
@@ -735,13 +788,17 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     out["bb_lo"] = bb.bollinger_lband()
     out["hh20"] = out["high"].rolling(20).max()
     out["ll20"] = out["low"].rolling(20).min()
-    # --- NEW: Volume ratio + ADX for ML ---
+    # --- Volume ratio + ADX for ML ---
     vol_med = out["volume"].rolling(20).median()
     out["volume_ratio"] = out["volume"] / vol_med.clip(lower=1e-9)
     try:
         out["adx14"] = ADXIndicator(out["high"], out["low"], out["close"], window=14).adx()
     except Exception:
         out["adx14"] = 25.0  # Neutral fallback
+    # --- NEW: Funding Rate, Open Interest Change, Multi-TF Alignment ---
+    out["funding_rate"] = _fetch_funding_for_feature()  # Scalar broadcast to all rows
+    out["oi_change"] = _fetch_open_interest()            # Scalar broadcast
+    out["mtf_alignment"] = _compute_mtf_alignment()      # Scalar broadcast
     out.dropna(inplace=True)
     return out
 
@@ -752,8 +809,9 @@ def is_drawdown_candle(row):
     cond = (range_ > 0) and (lower_wick / max(range_, 1e-9) > 0.45) and (row["close"] > (row["low"] + 0.5*range_))
     return cond
 
-# --- ML Feature columns (11 features) ---
-ML_FEATURES = ["ret1","ema20","ema50","macd","macd_sig","rsi14","atr","bb_hi","bb_lo","volume_ratio","adx14"]
+# --- ML Feature columns (14 features — upgraded from 11) ---
+ML_FEATURES = ["ret1","ema20","ema50","macd","macd_sig","rsi14","atr","bb_hi","bb_lo","volume_ratio","adx14",
+               "funding_rate","oi_change","mtf_alignment"]
 
 # ------------------ ML ------------------
 def ml_prepare(df_feat: pd.DataFrame):
@@ -1787,18 +1845,7 @@ RISK_MAX = 0.05   # 5% — maximum on high-conviction setups
 def dynamic_risk_factor(p_ml, entry_score=0.0, vol_ok=False, trend_15m_ok=False):
     """Scale risk between 1x (1%) and 5x (5%) based on market conditions.
     
-    Factors that INCREASE risk (toward 5%):
-      - High entry score (strong signal)
-      - ML confidence > 70%
-      - Volume confirms the move
-      - 15m trend aligns
-      - Win streak (bot is calibrated)
-    
-    Factors that DECREASE risk (toward 1%):
-      - Low entry score
-      - ML bearish or uncertain
-      - Against 15m trend
-      - Loss streak (bot is off-calibration)
+    v2: Added drawdown-based risk reduction + daily PnL awareness.
     """
     # Start at 1x (= 1%)
     factor = 1.0
@@ -1812,7 +1859,6 @@ def dynamic_risk_factor(p_ml, entry_score=0.0, vol_ok=False, trend_15m_ok=False)
         factor += 1.0    # Decent setup
     elif entry_score >= 0.35:
         factor += 0.5    # Weak setup
-    # Below 0.35: no bonus (minimum quality)
     
     # ML confidence: +0.0 to +1.0
     if p_ml >= 0.80:
@@ -1834,24 +1880,71 @@ def dynamic_risk_factor(p_ml, entry_score=0.0, vol_ok=False, trend_15m_ok=False)
     
     # Win/loss streak adjustment
     if win_streak >= 3:
-        factor += 0.5    # Hot hand → slightly more aggressive
+        factor += 0.5
+    elif loss_streak >= 3:
+        factor *= 0.3    # 3+ losses: cut to 30% (NEW: much more aggressive pullback)
     elif loss_streak >= 2:
-        factor -= 1.0    # Losing → pull back hard
+        factor *= 0.5    # 2 losses: cut to 50% (was -1.0 additive)
     elif loss_streak >= 1:
-        factor -= 0.5    # Recent loss → cautious
+        factor -= 0.5
+    
+    # DRAWDOWN-BASED REDUCTION: daily PnL awareness
+    if daily_realized_pnl < 0:
+        eq = current_equity() if callable(current_equity) else 100000
+        daily_dd_pct = abs(daily_realized_pnl) / max(eq, 1) * 100
+        if daily_dd_pct > 2.0:
+            factor *= 0.3  # Down >2% today → extreme caution
+        elif daily_dd_pct > 1.0:
+            factor *= 0.5  # Down >1% → cautious
     
     # Clamp to 1x-5x range (= 1%-5%)
     factor = max(1.0, min(5.0, factor))
     
     return factor
 
+# --- Kelly Criterion helper ---
+def _kelly_fraction() -> float:
+    """Calculate Half-Kelly fraction from recent trade history.
+    Returns a multiplier 0.5-2.0 for position sizing.
+    Only active with >20 trades."""
+    if len(daily_trade_results) < 5:  # Not enough data this day
+        # Try using win_streak/loss_streak as proxy
+        if win_streak >= 3:
+            return 1.3  # Winning → slightly bigger
+        elif loss_streak >= 2:
+            return 0.6  # Losing → smaller
+        return 1.0  # Default
+    
+    wins = [p for p in daily_trade_results if p > 0]
+    losses = [p for p in daily_trade_results if p <= 0]
+    
+    if not wins or not losses:
+        return 1.0
+    
+    win_rate = len(wins) / len(daily_trade_results)
+    avg_win = sum(wins) / len(wins)
+    avg_loss = abs(sum(losses) / len(losses))
+    
+    if avg_loss < 1e-9:
+        return 1.5
+    
+    # Kelly% = W - (1-W) / (avg_win/avg_loss)
+    rr_ratio = avg_win / avg_loss
+    kelly = win_rate - (1 - win_rate) / max(rr_ratio, 0.01)
+    
+    # Half-Kelly for safety, clamped to 0.5-2.0
+    half_kelly = max(0.5, min(2.0, kelly * 0.5 + 0.5))
+    return half_kelly
+
 def position_size_for_risk(px, sl_pct, eq, risk_factor=1.0):
     """
-    Risiko pro Trade = eq * RISK_MIN * risk_factor
-    risk_factor ranges from 1.0 (1%) to 5.0 (5%)
-    Größe (qty) = (RiskUSD) / (sl_pct * px)
+    Risiko pro Trade = eq * RISK_MIN * risk_factor * kelly_mult
+    v2: Kelly Criterion integration for smarter sizing.
     """
-    effective_risk_pct = RISK_MIN * risk_factor  # 1% * 1..5 = 1%-5%
+    kelly_mult = _kelly_fraction()
+    effective_risk_pct = RISK_MIN * risk_factor * kelly_mult
+    # Hard cap: never risk more than 5% per trade
+    effective_risk_pct = min(effective_risk_pct, 0.05)
     risk_usd = max(0.0, float(eq) * effective_risk_pct)
     denom = max(sl_pct * px, 1e-9)
     qty = risk_usd / denom
@@ -1954,20 +2047,37 @@ def update_position_management(px, row, effective_tp):
     return None
 def compute_effective_tp(rsi14, regime, row):
     """
-    Baseline: TP_MIN … TP_MAX.
-    Booster: Wenn Trend stark (ADX >= TP_STRETCH_ADX) -> TP_STRETCH (z.B. 2.0%).
+    Regime-specific TP/SL:
+    - TRENDING (ADX>25): Stretch TP by 1.3x, let winners run
+    - RANGING (ADX<20): Use TP_MIN, take quick profits
+    - HIGH VOLATILITY (ATR > 2x median): Wider TP to capture big moves
     """
-    import os
-    try:
-        stretch_adx = float(_os.getenv("TP_STRETCH_ADX", "22.0"))
-        stretch_tp  = float(_os.getenv("TP_STRETCH", "0.02"))
-    except Exception:
-        stretch_adx, stretch_tp = 22.0, 0.02
-
-    base = TP_MAX if rsi14 >= 70 else TP_MIN
-    if regime.get("adx", 0.0) >= stretch_adx:
-        return max(base, stretch_tp)
-    return base
+    adx_val = regime.get("adx", 20.0)
+    atr_val = float(row.get("atr", 0))
+    px = float(row.get("close", 1))
+    atr_pct = atr_val / max(px, 1) if px > 0 else 0
+    
+    # Regime detection
+    if adx_val >= 25:
+        # TRENDING: let winners run — stretch TP
+        base = TP_MAX * 1.3  # 30% wider TP target
+        if rsi14 >= 70:
+            base = TP_MAX * 1.5  # Strong momentum → even wider
+    elif adx_val < 20:
+        # RANGING: quick profits — use minimum TP
+        base = TP_MIN
+        if rsi14 >= 65:
+            base = TP_MIN * 0.9  # Overbought in range → tighter exit
+    else:
+        # TRANSITIONAL: standard TP
+        base = TP_MAX if rsi14 >= 70 else TP_MIN
+    
+    # HIGH VOLATILITY BONUS: if ATR is >2x the typical 0.5% of price
+    if atr_pct > 0.01:  # ATR > 1% of price = high vol
+        base = max(base, atr_pct * 1.5)  # TP at least 1.5x ATR
+    
+    # Clamp to reasonable range
+    return max(TP_MIN * 0.8, min(base, 0.06))  # 0.96% - 6% range
 
 def should_one_and_done(today_trades, loss_streak):
     import os
@@ -2194,13 +2304,13 @@ def decide_and_trade():
     # --- 4H CONTEXT: penalty instead of absolute block ---
     bias_4h = get_4h_bias()
     if bias_4h == "TREND_DOWN" and not open_position:
-        base_score -= 0.10  # Moderate penalty (was -0.20 = too aggressive, blocked all trades)
-        log(f"4H PENALTY: -0.10 (4H trend down, score now {base_score:.2f}, 1h was {hourly_bias})")
+        base_score -= 0.06  # Reduced from -0.10 (was stacking too hard with 1H)
+        log(f"4H PENALTY: -0.06 (4H trend down, score now {base_score:.2f}, 1h was {hourly_bias})")
     
-    # 1H DOWNTREND: penalty instead of hard block
+    # 1H DOWNTREND: light penalty instead of hard block
     if hourly_bias == "TREND_DOWN" and bias_4h != "TREND_UP" and not open_position:
-        base_score -= 0.08  # Light penalty (was -0.15 = stacked with 4H killed all entries)
-        log(f"1H PENALTY: -0.08 (1H trend down, score now {base_score:.2f})")
+        base_score -= 0.05  # Reduced from -0.08 (combined with 4H was -0.18 = impossible)
+        log(f"1H PENALTY: -0.05 (1H trend down, score now {base_score:.2f})")
     
     # --- FUNDING RATE SIGNAL ---
     funding = get_funding_rate()
@@ -2227,6 +2337,7 @@ def decide_and_trade():
             # Fear penalty: makes bot MORE selective during fear (not blocked)
             fear_pen = _market_intel.get_fear_penalty()
             if fear_pen < 0:
+                fear_pen = max(fear_pen, -0.03)  # CAP: never penalize more than -0.03
                 base_score += fear_pen
                 log(f"FEAR_PENALTY: {fear_pen:.3f} → entry_score={base_score:.3f}")
         except Exception as e:

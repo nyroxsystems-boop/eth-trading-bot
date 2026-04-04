@@ -294,7 +294,9 @@ def run_backtest(candles: List[Dict], params: Dict) -> Dict:
                 position["exit_reason"] = exit_reason
                 position["bars_held"] = bars_held
                 trades.append(position)
-                equity += pos_size * pnl_pct * (0.999 if is_win else 1.0)  # Fee only on wins
+                # Realistic fees: 0.1% entry + 0.1% exit = 0.2% total + 0.05% slippage
+                fee_and_slippage = 0.0025  # 0.25% total friction (conservative)
+                equity += pos_size * (pnl_pct - fee_and_slippage)
                 position = None
             
             # Update max drawdown
