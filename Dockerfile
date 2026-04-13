@@ -37,5 +37,9 @@ RUN mkdir -p /root/ethbot/logs
 # Make entrypoint script executable
 RUN chmod +x entrypoint.sh
 
+# Health check so Railway detects if the bot is internally crashed
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD curl -f http://localhost:${PORT:-8080}/api/health || exit 1
+
 # Use entrypoint script to route to correct service
 CMD ["./entrypoint.sh"]

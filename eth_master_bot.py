@@ -796,9 +796,15 @@ def add_features(df: pd.DataFrame) -> pd.DataFrame:
     except Exception:
         out["adx14"] = 25.0  # Neutral fallback
     # --- NEW: Funding Rate, Open Interest Change, Multi-TF Alignment ---
-    out["funding_rate"] = _fetch_funding_for_feature()  # Scalar broadcast to all rows
-    out["oi_change"] = _fetch_open_interest()            # Scalar broadcast
-    out["mtf_alignment"] = _compute_mtf_alignment()      # Scalar broadcast
+    # FIXED: Only set on last row (current candle). Historical rows get 0.0.
+    # Broadcasting live scalars to all rows caused massive look-ahead bias in backtesting.
+    out["funding_rate"] = 0.0
+    out["oi_change"] = 0.0
+    out["mtf_alignment"] = 0.0
+    if len(out) > 0:
+        out.iloc[-1, out.columns.get_loc("funding_rate")] = _fetch_funding_for_feature()
+        out.iloc[-1, out.columns.get_loc("oi_change")] = _fetch_open_interest()
+        out.iloc[-1, out.columns.get_loc("mtf_alignment")] = _compute_mtf_alignment()
     out.dropna(inplace=True)
     return out
 
@@ -952,8 +958,9 @@ def ml_feedback_trade(entry_row, outcome_win: bool):
         _experience_replay.append((features, label))  # Never forget
         _replay_counter += 1
         
-        # Retrain every 5 trade outcomes (small batch for responsiveness)
-        if len(_trade_feedback_buffer) >= 5:
+        # Retrain every 50 trade outcomes (minimum for statistical significance)
+        # FIXED: was 5 samples — catastrophic overfitting with 100-tree GBC
+        if len(_trade_feedback_buffer) >= 50:
             X = np.array([f for f, _ in _trade_feedback_buffer])
             y = np.array([l for _, l in _trade_feedback_buffer])
             
@@ -965,8 +972,8 @@ def ml_feedback_trade(entry_row, outcome_win: bool):
             _trade_feedback_buffer.clear()
             save_ml_model()
         
-        # EXPERIENCE REPLAY: every 10 trades, replay ALL stored outcomes
-        if _replay_counter >= 10 and len(_experience_replay) >= 10:
+        # EXPERIENCE REPLAY: every 10 trades, replay ALL stored outcomes (min 50)
+        if _replay_counter >= 10 and len(_experience_replay) >= 50:
             X_replay = np.array([f for f, _ in _experience_replay])
             y_replay = np.array([l for _, l in _experience_replay])
             clf.fit(X_replay, y_replay)  # warm_start=True preserves weights
@@ -1404,8 +1411,8 @@ def place_buy(qty: float, price_hint: float) -> bool:
             print((result.stdout or '').strip())
             return result.returncode == 0
         except Exception as e:
-            log(f"WARN {guard_name} failed: {e} - allowing trade")
-            return True  # Allow trade on guard failure
+            log(f"WARN {guard_name} failed: {e} - BLOCKING trade (fail-closed)")
+            return False  # Fail-CLOSED: block trade on guard failure
     
     # 1) Max-Consecutive-Losses (optional)
     if not run_guard_safe(os.path.join(BASE_DIR, 'max_losses_guard.py'), 'max_losses_guard'):

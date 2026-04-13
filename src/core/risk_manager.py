@@ -76,9 +76,9 @@ class RiskManager:
             self.config.risk.stop_atr_mult * (atr / max(entry, 1e-9))
         )
         
-        # Break-even logic
+        # Break-even logic: when profit exceeds trigger, tighten stop to near break-even
         if current_upnl is not None and current_upnl >= self.config.risk.break_even_trigger:
-            sl_pct = max(sl_pct, 0.0)  # Move to break-even
+            sl_pct = min(sl_pct, 0.001)  # Move stop to 0.1% (covers fees)
         
         return sl_pct
     
@@ -215,7 +215,7 @@ class RiskManager:
         # Calculate dynamic stops and targets
         sl_pct = self.calculate_stop_loss(entry, position.atr, upnl)
         trail_pct = self.calculate_trailing_stop(entry, current_atr)
-        sl_pct = max(sl_pct, trail_pct)
+        sl_pct = min(sl_pct, trail_pct)  # Trailing should TIGHTEN the stop
         
         tp_pct = self.calculate_take_profit(rsi, adx)
         

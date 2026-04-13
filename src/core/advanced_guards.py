@@ -47,23 +47,8 @@ class AdvancedTradeGuards:
         self.equity = equity
         self.tz = timezone.utc
         self.timestamp_format = "%Y-%m-%d %H:%M:%S"
-    
-    def _parse_timestamp(self, ts_str: str) -> datetime:
-        """Parse timestamp string robustly (supports ISO and fixed formats)"""
-        for fmt in (
-            "%Y-%m-%dT%H:%M:%S.%f",
-            "%Y-%m-%dT%H:%M:%S",
-            "%Y-%m-%d %H:%M:%S",
-            "%Y-%m-%d %H:%M:%S.%f",
-        ):
-            try:
-                return datetime.strptime(ts_str.strip(), fmt).replace(tzinfo=self.tz)
-            except ValueError:
-                continue
-        logger.warning(f"[GUARD] Unparseable timestamp '{ts_str}', using current time")
-        return datetime.now(self.tz)
         
-        # Risk parameters
+        # Risk parameters (FIXED: was unreachable dead code after return in _parse_timestamp)
         self.max_drawdown_pct = 0.15  # 15% max drawdown
         self.max_daily_loss_pct = 0.05  # 5% max daily loss
         self.max_consecutive_losses = 4
@@ -83,6 +68,21 @@ class AdvancedTradeGuards:
         # Internal state
         self._risk_metrics_cache: Optional[RiskMetrics] = None
         self._cache_timestamp: Optional[datetime] = None
+    
+    def _parse_timestamp(self, ts_str: str) -> datetime:
+        """Parse timestamp string robustly (supports ISO and fixed formats)"""
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M:%S.%f",
+        ):
+            try:
+                return datetime.strptime(ts_str.strip(), fmt).replace(tzinfo=self.tz)
+            except ValueError:
+                continue
+        logger.warning(f"[GUARD] Unparseable timestamp '{ts_str}', using current time")
+        return datetime.now(self.tz)
     
     def calculate_risk_metrics(self, lookback_trades: int = 100) -> RiskMetrics:
         """Calculate comprehensive risk metrics"""

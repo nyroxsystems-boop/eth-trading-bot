@@ -50,10 +50,14 @@ backups/
 *.bak
 *.bak.*
 
-# Environment
+# Environment (NEVER commit secrets!)
 .env
+.env.*
 .env.local
 .env.*.local
+.env.bot
+.env.bot.d/
+.env.auto_learning
 
 # OS
 .DS_Store

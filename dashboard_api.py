@@ -227,6 +227,20 @@ async def get_current_admin(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
+# Internal API key for bot-to-API sync (Worker container → Web container)
+# Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
+
+async def verify_internal_api_key(request: Request):
+    """Verify internal API key for bot-to-API sync endpoints.
+    These endpoints are called by the Worker container, not by users.
+    If INTERNAL_API_KEY is not set, allow all requests (backward compat)."""
+    if not INTERNAL_API_KEY:
+        return  # No key configured = allow (dev/legacy mode)
+    key = request.headers.get("X-Internal-Key", "")
+    if key != INTERNAL_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid internal API key")
+
 # Configuration
 DASHBOARD_SECRET = os.getenv("DASHBOARD_SECRET", "change_me")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
@@ -765,14 +779,14 @@ async def health_check():
 _bot_paused = False  # When True, bot skips trading cycles
 
 @app.post("/api/bot/start")
-async def start_bot():
+async def start_bot(current_user: Dict = Depends(get_current_user)):
     """Start the trading bot (resume if paused)"""
     global _bot_paused
     _bot_paused = False
     return {"is_running": True, "message": "Bot started"}
 
 @app.post("/api/bot/stop")
-async def stop_bot():
+async def stop_bot(current_user: Dict = Depends(get_current_user)):
     """Pause the trading bot"""
     global _bot_paused
     _bot_paused = True
@@ -898,7 +912,7 @@ async def get_trades(limit: int = 100):
 
 
 @app.post("/api/trades/record")
-async def record_trade(trade: dict = None, request: Request = None):
+async def record_trade(trade: dict = None, request: Request = None, _auth = Depends(verify_internal_api_key)):
     """Record a paper trade from the Worker bot.
     Called by eth_master_bot on every entry/exit.
     Now also stores signal data: entry_type, signals[], ml_confidence, entry_score."""
@@ -952,7 +966,7 @@ async def record_trade(trade: dict = None, request: Request = None):
 PAPER_BALANCE_FILE = LOG_DIR / "paper_balance.json"
 
 @app.post("/api/paper-balance")
-async def save_paper_balance(request: Request):
+async def save_paper_balance(request: Request, _auth = Depends(verify_internal_api_key)):
     """Save paper trading balance (called by Worker bot on every trade exit).
     Uses PostgreSQL kv_store for persistence across deploys, file as fallback."""
     try:
@@ -1018,7 +1032,7 @@ async def get_paper_balance():
 
 # --- ML Model Persistence (survives Railway deploys) ---
 @app.post("/api/ml/model-state")
-async def save_ml_model_state(request: Request):
+async def save_ml_model_state(request: Request, _auth = Depends(verify_internal_api_key)):
     """Save ML model weights to PostgreSQL kv_store (called by Worker after training)."""
     try:
         data = await request.json()
@@ -1069,7 +1083,7 @@ async def get_ml_model_state():
 TRADE_STATE_FILE = LOG_DIR / "trade_state.json"
 
 @app.post("/api/trade-state")
-async def save_trade_state(request: Request):
+async def save_trade_state(request: Request, _auth = Depends(verify_internal_api_key)):
     """Save open trade state to PostgreSQL kv_store (called by Worker on every BUY/SELL)."""
     try:
         data = await request.json()
@@ -1455,7 +1469,17 @@ async def admin_reset_user_password(
 
 # WebSocket Endpoint
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = None):
+    # WebSocket auth: validate JWT token from query param
+    if token:
+        payload = user_mgr.verify_jwt(token)
+        if not payload:
+            await websocket.close(code=4001, reason="Invalid token")
+            return
+    # If no token and INTERNAL_API_KEY is set, reject
+    elif INTERNAL_API_KEY:
+        await websocket.close(code=4001, reason="Authentication required")
+        return
     await manager.connect(websocket)
     try:
         while True:
@@ -1958,7 +1982,7 @@ def save_settings(settings: dict):
         return False
 
 @app.get("/api/settings/bot")
-async def get_bot_settings():
+async def get_bot_settings(current_user: Dict = Depends(get_current_user)):
     """Get all bot settings"""
     settings = load_settings()
     # Mask sensitive data
@@ -1967,7 +1991,7 @@ async def get_bot_settings():
     return settings
 
 @app.post("/api/settings/bot")
-async def update_bot_settings(settings: BotSettings):
+async def update_bot_settings(settings: BotSettings, current_user: Dict = Depends(get_current_user)):
     """Update bot settings"""
     current = load_settings()
     
@@ -1994,7 +2018,7 @@ async def update_bot_settings(settings: BotSettings):
         raise HTTPException(status_code=500, detail="Failed to save settings")
 
 @app.get("/api/settings/telegram")
-async def get_telegram_settings():
+async def get_telegram_settings(current_user: Dict = Depends(get_current_user)):
     """Get Telegram settings"""
     settings = load_settings()
     return {
@@ -2003,7 +2027,7 @@ async def get_telegram_settings():
     }
 
 @app.post("/api/settings/telegram")
-async def update_telegram_settings(telegram: TelegramSettings):
+async def update_telegram_settings(telegram: TelegramSettings, current_user: Dict = Depends(get_current_user)):
     """Update Telegram settings"""
     current = load_settings()
     current["telegram_bot_token"] = telegram.bot_token
@@ -2015,7 +2039,7 @@ async def update_telegram_settings(telegram: TelegramSettings):
         raise HTTPException(status_code=500, detail="Failed to save settings")
 
 @app.get("/api/settings/trading")
-async def get_trading_settings():
+async def get_trading_settings(current_user: Dict = Depends(get_current_user)):
     """Get trading parameters"""
     settings = load_settings()
     return {
@@ -2030,7 +2054,7 @@ async def get_trading_settings():
     }
 
 @app.post("/api/settings/trading")
-async def update_trading_settings(trading: TradingSettings):
+async def update_trading_settings(trading: TradingSettings, current_user: Dict = Depends(get_current_user)):
     """Update trading parameters"""
     current = load_settings()
     current.update({
@@ -2114,7 +2138,7 @@ async def save_user_api_keys(keys: UserApiKeysInput, current_user: Dict = Depend
 
 # ───────── MULTI-USER TRADE BROADCAST ─────────
 @app.post("/api/trades/broadcast")
-async def broadcast_trade(data: dict):
+async def broadcast_trade(data: dict, current_user: Dict = Depends(get_current_admin)):
     """
     Bot calls this on every BUY/SELL signal.
     Executes the trade on ALL users with trading_enabled=True.
@@ -2839,7 +2863,7 @@ async def get_capital():
             return {"capital": 0, "currency": "USDT", "mode": "live", "source": "error", "error": str(e)}
 
 @app.post("/api/capital")
-async def update_capital(request: Request):
+async def update_capital(request: Request, current_user: Dict = Depends(get_current_user)):
     """Update trading capital"""
     try:
         data = await request.json()
@@ -2889,7 +2913,7 @@ async def get_risk_params():
     }
 
 @app.post("/api/risk")
-async def update_risk_params(risk_per_trade: float, max_drawdown: float, max_trades: int):
+async def update_risk_params(risk_per_trade: float, max_drawdown: float, max_trades: int, current_user: Dict = Depends(get_current_user)):
     """Update risk parameters"""
     if not (0 < risk_per_trade <= 0.02):
         raise HTTPException(status_code=400, detail="Risk per trade must be between 0% and 2%")
@@ -2928,7 +2952,7 @@ class BacktestParams(BaseModel):
     sentiment_gate: float = -0.20
 
 @app.post("/api/backtest")
-async def run_backtest(params: BacktestParams):
+async def run_backtest(params: BacktestParams, current_user: Dict = Depends(get_current_user)):
     """Run REAL backtest on historical Binance data with actual bot signals."""
     import numpy as np
     import requests as req
@@ -3271,7 +3295,7 @@ class TradingMode(BaseModel):
     mode: str  # "paper" or "live"
 
 @app.post("/api/trading/mode")
-async def switch_trading_mode(mode_data: TradingMode):
+async def switch_trading_mode(mode_data: TradingMode, current_user: Dict = Depends(get_current_user)):
     """Switch between paper and live trading"""
     mode = mode_data.mode.lower()
     
@@ -3418,7 +3442,7 @@ async def create_account(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/accounts/{account_id}")
-async def get_account(account_id: int):
+async def get_account(account_id: int, current_user: Dict = Depends(get_current_user)):
     """Get account details"""
     try:
         account = account_mgr.get_account(account_id)
@@ -3434,7 +3458,7 @@ async def get_account(account_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/accounts/{account_id}")
-async def update_account(account_id: int, updates: AccountUpdate):
+async def update_account(account_id: int, updates: AccountUpdate, current_user: Dict = Depends(get_current_user)):
     """Update account settings"""
     try:
         # Build update dict
@@ -3464,7 +3488,7 @@ async def update_account(account_id: int, updates: AccountUpdate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/accounts/{account_id}")
-async def delete_account(account_id: int):
+async def delete_account(account_id: int, current_user: Dict = Depends(get_current_user)):
     """Delete an account"""
     try:
         success = account_mgr.delete_account(account_id)
@@ -3478,7 +3502,7 @@ async def delete_account(account_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/accounts/{account_id}/toggle")
-async def toggle_account(account_id: int):
+async def toggle_account(account_id: int, current_user: Dict = Depends(get_current_user)):
     """Toggle account active status"""
     try:
         success = account_mgr.toggle_account(account_id)
@@ -3499,7 +3523,7 @@ async def toggle_account(account_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/accounts/validate")
-async def validate_credentials(api_key: str, api_secret: str):
+async def validate_credentials(api_key: str, api_secret: str, current_user: Dict = Depends(get_current_user)):
     """Validate Binance API credentials"""
     try:
         valid = account_mgr.validate_credentials(api_key, api_secret)
@@ -4471,7 +4495,7 @@ _synced_training_data = {}
 _synced_ml_stats = {}
 
 @app.post("/api/ml/stats-sync")
-async def sync_ml_stats(data: dict):
+async def sync_ml_stats(data: dict, request: Request = None, _auth = Depends(verify_internal_api_key)):
     """Receive ML stats from Worker container — persist to PostgreSQL"""
     global _synced_ml_stats
     _synced_ml_stats = data
@@ -4490,7 +4514,7 @@ async def sync_ml_stats(data: dict):
     return {"ok": True}
 
 @app.post("/api/ml/training-sync")
-async def sync_training_data(data: dict):
+async def sync_training_data(data: dict, _auth = Depends(verify_internal_api_key)):
     """Receive training progress from local machines and cache it"""
     global _synced_training_data
     try:
@@ -4607,7 +4631,7 @@ async def get_backtest_results():
 
 
 @app.post("/api/ml/strategies/reset")
-async def reset_strategies():
+async def reset_strategies(current_user: Dict = Depends(get_current_admin)):
     """Clear old inflated strategies from PostgreSQL.
     Call this after switching to walk-forward validation to remove
     pre-walk-forward scores that would block new honest strategies."""
@@ -4673,7 +4697,7 @@ _training_process = None
 _training_active = False
 
 @app.post("/api/ml/training/start")
-async def start_training(model: str = "all", episodes: int = 500):
+async def start_training(model: str = "all", episodes: int = 500, current_user: Dict = Depends(get_current_user)):
     """Start continuous training. Just toggles _training_active flag.
     The actual training runs in auto_learning_background() which starts on boot."""
     global _training_active, _synced_training_data
@@ -4692,7 +4716,7 @@ async def start_training(model: str = "all", episodes: int = 500):
 
 
 @app.post("/api/ml/training/stop")
-async def stop_training():
+async def stop_training(current_user: Dict = Depends(get_current_user)):
     """Stop active training"""
     global _training_active, _synced_training_data
     

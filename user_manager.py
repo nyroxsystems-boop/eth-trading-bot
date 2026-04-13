@@ -963,33 +963,52 @@ class UserManager:
 
 
 def seed_initial_users():
-    """Seed admin and initial user accounts"""
+    """Seed admin and initial user accounts.
+    
+    SECURITY: All credentials are read from environment variables.
+    If not set, a secure random password is generated and printed ONCE.
+    """
     manager = UserManager()
+    
+    # Read credentials from environment (NEVER hardcode passwords)
+    admin_email = os.getenv("ADMIN_EMAIL", "nyroxsystems@gmail.com")
+    admin_username = os.getenv("ADMIN_USERNAME", "Nyrox")
+    admin_password = os.getenv("ADMIN_PASSWORD", "")
+    if not admin_password:
+        admin_password = secrets.token_urlsafe(16)
+        print(f"⚠️ ADMIN_PASSWORD not set! Generated: {admin_password} (save this NOW, it won't be shown again)")
+    
+    user_email = os.getenv("USER_EMAIL", "vogtaaron0@gmail.com")
+    user_username = os.getenv("USER_USERNAME", "Aaron")
+    user_password = os.getenv("USER_PASSWORD", "")
+    if not user_password:
+        user_password = secrets.token_urlsafe(16)
+        print(f"⚠️ USER_PASSWORD not set! Generated: {user_password} (save this NOW, it won't be shown again)")
     
     # 1. Create Admin account
     try:
         admin_id = manager.create_admin(
-            email="nyroxsystems@gmail.com",
-            username="Nyrox",
-            password="Test007!"
+            email=admin_email,
+            username=admin_username,
+            password=admin_password
         )
-        print(f"✅ Admin 'Nyrox' created (ID: {admin_id})")
+        print(f"✅ Admin '{admin_username}' created (ID: {admin_id})")
     except ValueError as e:
         if "already" in str(e).lower():
-            print(f"ℹ️ Admin 'Nyrox' already exists")
+            print(f"ℹ️ Admin '{admin_username}' already exists")
             # Get existing admin ID
-            admin = manager.get_user_by_email("nyroxsystems@gmail.com")
+            admin = manager.get_user_by_email(admin_email)
             admin_id = admin['id'] if admin else None
         else:
             print(f"⚠️ Admin creation error: {e}")
             admin_id = None
     
-    # 2. Create User account (Aaron) with Binance Keys from environment
+    # 2. Create User account with Binance Keys from environment
     try:
         user_id = manager.register_user(
-            email="vogtaaron0@gmail.com",
-            username="Aaron",
-            password="Masterlolli46_",
+            email=user_email,
+            username=user_username,
+            password=user_password,
             role="user"
         )
         print(f"✅ User 'Aaron' created (ID: {user_id})")

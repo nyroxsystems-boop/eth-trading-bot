@@ -286,8 +286,8 @@ class OrderExecutor:
             
         except Exception as e:
             logger.error(f"Guard check failed: {e}")
-            # Fail-safe: allow trade if guards error
-            return True
+            # Fail-CLOSED: block trade if guards error (safety first)
+            return False
     
     def place_buy(self, qty: float, price_hint: float) -> bool:
         """

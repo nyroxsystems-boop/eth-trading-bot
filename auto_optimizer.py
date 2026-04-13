@@ -70,30 +70,30 @@ def auto_optimize_parameters():
             if all(t == 0 for t in recent_trades):
                 log("[AUTO-OPT] ⚠️ NO TRADES FOR 3 DAYS! Emergency parameter relaxation...")
                 
-                # Emergency relaxation
-                current_params['ml_threshold'] = 0.30  # Very low threshold
-                current_params['position_size_mult'] = min(current_params.get('position_size_mult', 1.0) * 1.2, 2.0)
-                current_params['risk_pct'] = min(current_params.get('risk_pct', 0.006) * 1.1, 0.012)
+                # Emergency relaxation — lower THRESHOLDS only, NOT risk!
+                current_params['ml_threshold'] = 0.35  # Lower threshold to allow more trades
+                # FIXED: Do NOT increase position_size_mult or risk_pct in emergency
+                # That's Martingale behavior — betting bigger when losing
                 
-                log(f"[AUTO-OPT] Emergency params: ml_thresh=0.30, pos_mult={current_params['position_size_mult']:.2f}, risk={current_params['risk_pct']:.4f}")
+                log(f"[AUTO-OPT] Emergency params: ml_thresh=0.35 (risk unchanged at {current_params.get('risk_pct', 0.006):.4f})")
         
         # Adjust parameters based on performance
         elif avg_pnl < DAILY_TARGET_PCT * 0.5:
-            # Underperforming - increase aggression
-            log("[AUTO-OPT] Underperforming - increasing aggression")
+            # Underperforming — REDUCE risk (never chase losses!)
+            log("[AUTO-OPT] Underperforming — reducing risk (anti-martingale)")
             
-            # Increase position size
-            current_params['position_size_mult'] = min(current_params['position_size_mult'] * 1.1, 2.0)
+            # Decrease position size (protect capital)
+            current_params['position_size_mult'] = max(current_params['position_size_mult'] * 0.9, 0.5)
             
-            # Lower ML threshold (take more trades)
-            current_params['ml_threshold'] = max(current_params['ml_threshold'] * 0.95, 0.45)
+            # Raise ML threshold (be more selective, not less)
+            current_params['ml_threshold'] = min(current_params['ml_threshold'] * 1.05, 0.65)
             
-            # Increase risk per trade
-            current_params['risk_pct'] = min(current_params['risk_pct'] * 1.05, 0.01)  # Max 1%
+            # Decrease risk per trade
+            current_params['risk_pct'] = max(current_params['risk_pct'] * 0.95, 0.003)
             
-            # Increase TP targets
-            current_params['tp_min'] = min(current_params['tp_min'] * 1.05, 0.025)
-            current_params['tp_max'] = min(current_params['tp_max'] * 1.05, 0.03)
+            # Tighten TP targets (take profits earlier)
+            current_params['tp_min'] = max(current_params['tp_min'] * 0.95, 0.008)
+            current_params['tp_max'] = max(current_params['tp_max'] * 0.95, 0.012)
             
         elif avg_pnl > DAILY_TARGET_PCT * 1.5:
             # Overperforming - reduce risk to protect gains

@@ -305,10 +305,14 @@ class MLBacktester:
         avg_return = np.mean(pnls) if pnls else 0.0
         
         # Sharpe ratio (annualized)
+        # NOTE: Each trade spans ~12 bars (60 min). With ~24 trades/day max,
+        # we use sqrt(252 * 24) as a reasonable per-trade annualization factor.
+        # FIXED: was sqrt(252) which assumes daily returns — overestimates Sharpe by ~5x
         if len(pnls) > 1:
             daily_returns = np.array(pnls) / 100
             sharpe = np.mean(daily_returns) / np.std(daily_returns) if np.std(daily_returns) > 0 else 0
-            sharpe_ratio = sharpe * np.sqrt(252)  # Annualize
+            trades_per_year = 252 * 24  # ~24 trades/day * 252 trading days
+            sharpe_ratio = sharpe * np.sqrt(trades_per_year)
         else:
             sharpe_ratio = 0.0
         
