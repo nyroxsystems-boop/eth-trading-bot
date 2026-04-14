@@ -3906,12 +3906,18 @@ async def get_trading_mode_status(current_user: Optional[Dict] = Depends(get_cur
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Stripe Payment Endpoints
-from stripe_integration import create_checkout_session, verify_webhook_signature, handle_successful_payment
+# Stripe Payment Endpoints (optional — not needed for core trading)
+try:
+    from stripe_integration import create_checkout_session, verify_webhook_signature, handle_successful_payment
+    HAS_STRIPE = True
+except ImportError:
+    HAS_STRIPE = False
 
 @app.post("/api/subscription/checkout")
 async def create_subscription_checkout(current_user: Dict = Depends(get_current_user)):
     """Create Stripe checkout session for Premium upgrade"""
+    if not HAS_STRIPE:
+        raise HTTPException(status_code=503, detail="Stripe not configured")
     try:
         result = create_checkout_session(
             user_id=current_user['id'],
@@ -3936,6 +3942,8 @@ async def create_subscription_checkout(current_user: Dict = Depends(get_current_
 @app.post("/api/subscription/webhook")
 async def stripe_webhook(request):
     """Handle Stripe webhook events"""
+    if not HAS_STRIPE:
+        raise HTTPException(status_code=503, detail="Stripe not configured")
     from fastapi import Request
     
     payload = await request.body()
