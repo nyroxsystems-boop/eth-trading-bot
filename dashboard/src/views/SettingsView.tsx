@@ -24,9 +24,12 @@ const SettingsView = () => {
 
     const fetchSettings = async () => {
         try {
+            const headers: Record<string, string> = token 
+                ? { 'Authorization': `Bearer ${token}` } 
+                : {}
             const [modeRes, settingsRes] = await Promise.all([
-                fetch(`${API_URL}/api/trading/mode`),
-                fetch(`${API_URL}/api/settings/bot`)
+                fetch(`${API_URL}/api/trading/mode`, { headers }),
+                fetch(`${API_URL}/api/settings/bot`, { headers })
             ])
 
             const modeData = await modeRes.json()
@@ -108,7 +111,10 @@ const SettingsView = () => {
         try {
             const res = await fetch(`${API_URL}/api/trading/mode`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
                 body: JSON.stringify({ mode: newMode })
             })
 
@@ -130,7 +136,10 @@ const SettingsView = () => {
         try {
             const res = await fetch(`${API_URL}/api/capital`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
                 body: JSON.stringify({ capital })
             })
 
@@ -149,7 +158,10 @@ const SettingsView = () => {
         try {
             const res = await fetch(`${API_URL}/api/settings/telegram`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
                 body: JSON.stringify({
                     bot_token: telegramToken,
                     chat_id: telegramChatId

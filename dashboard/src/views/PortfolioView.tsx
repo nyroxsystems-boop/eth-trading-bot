@@ -21,6 +21,9 @@ export default function PortfolioView() {
     const [trades, setTrades] = useState<TradeEntry[]>([])
     const [ethPrice, setEthPrice] = useState(0)
 
+    // Get auth token
+    const token = localStorage.getItem('auth_token') || localStorage.getItem('token')
+
     useEffect(() => {
         fetchData()
         const interval = setInterval(fetchData, 30000)
@@ -29,10 +32,13 @@ export default function PortfolioView() {
 
     const fetchData = async () => {
         try {
+            const headers: Record<string, string> = token 
+                ? { 'Authorization': `Bearer ${token}` } 
+                : {}
             const [capitalRes, statusRes, tradesRes] = await Promise.all([
-                fetch(`${API}/api/capital`),
-                fetch(`${API}/api/status`),
-                fetch(`${API}/api/bot/journal`)
+                fetch(`${API}/api/capital`, { headers }),
+                fetch(`${API}/api/status`, { headers }),
+                fetch(`${API}/api/bot/journal`, { headers })
             ])
             const capitalData = await capitalRes.json()
             const statusData = await statusRes.json()
