@@ -139,8 +139,7 @@ from subscription_manager import SubscriptionManager
 # Import for chart data
 from src.core.market_data import MarketDataProvider
 
-# Initialize user manager (must be before endpoints)
-user_mgr = UserManager()
+# user_mgr is initialized below via auth_deps.get_user_manager()
 
 # Pydantic models for authentication (must be before endpoints)
 class UserRegister(BaseModel):
@@ -191,55 +190,19 @@ class PortfolioPairUpdate(BaseModel):
     stop_loss_pct: Optional[float] = None
     enabled: Optional[bool] = None
 
-# Authentication dependencies (must be before endpoints)
-security = HTTPBearer()
-
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Verify JWT token and return current user"""
-    token = credentials.credentials
-    payload = user_mgr.verify_jwt(token)
-    
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-    
-    user = user_mgr.get_user(payload['user_id'])
-    if not user or not user['active']:
-        raise HTTPException(status_code=401, detail="User not found or inactive")
-    
-    return user
-
-async def get_current_user_optional(authorization: Optional[str] = Header(None)):
-    """Get current user if token provided, otherwise None"""
-    if not authorization or not authorization.startswith("Bearer "):
-        return None
-    
-    token = authorization.replace("Bearer ", "")
-    payload = user_mgr.verify_jwt(token)
-    
-    if not payload:
-        return None
-    
-    return user_mgr.get_user(payload['user_id'])
-
-async def get_current_admin(current_user: dict = Depends(get_current_user)):
-    """Verify user is admin"""
-    if current_user['role'] != 'admin':
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return current_user
-
-# Internal API key for bot-to-API sync (Worker container → Web container)
-# Generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"
-INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
-
-async def verify_internal_api_key(request: Request):
-    """Verify internal API key for bot-to-API sync endpoints.
-    These endpoints are called by the Worker container, not by users.
-    If INTERNAL_API_KEY is not set, allow all requests (backward compat)."""
-    if not INTERNAL_API_KEY:
-        return  # No key configured = allow (dev/legacy mode)
-    key = request.headers.get("X-Internal-Key", "")
-    if key != INTERNAL_API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid internal API key")
+# Authentication dependencies — imported from shared module
+# (enables router splitting without circular imports)
+from auth_deps import (
+    get_current_user,
+    get_current_user_optional,
+    get_current_admin,
+    verify_internal_api_key,
+    get_user_manager,
+    security,
+    INTERNAL_API_KEY,
+)
+# Re-export user_mgr for backward compat (used throughout this file)
+user_mgr = get_user_manager()
 
 # Configuration
 DASHBOARD_SECRET = os.getenv("DASHBOARD_SECRET", "change_me")
