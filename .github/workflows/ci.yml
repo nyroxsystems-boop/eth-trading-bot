@@ -44,10 +44,30 @@ jobs:
       
       - name: Run unit tests
         env:
-          DATABASE_URL: postgresql://test:test@localhost:5432/ethbot_test
-          JWT_SECRET: test_secret_key_for_ci
+          JWT_SECRET: test_secret_key_for_ci_pipeline_12345
+          ENCRYPTION_KEY: ""
+          ADMIN_PASSWORD: testadmin123
+          USER_PASSWORD: testuser1234
+          DASHBOARD_SECRET: test_secret
         run: |
           python -m pytest tests/unit/ -v --tb=short -x
+      
+      - name: Run integration tests (API endpoints)
+        env:
+          JWT_SECRET: test_secret_key_for_ci_pipeline_12345
+          ENCRYPTION_KEY: ""
+          ADMIN_PASSWORD: testadmin123
+          USER_PASSWORD: testuser1234
+          DASHBOARD_SECRET: test_secret
+          CORS_ORIGINS: "*"
+        run: |
+          python -m pytest tests/integration/test_api_endpoints.py -v --tb=short -x
+      
+      - name: Run integration tests (pipeline)
+        env:
+          JWT_SECRET: test_secret_key_for_ci_pipeline_12345
+        run: |
+          python -m pytest tests/integration/test_pipeline.py -v --tb=short -x
       
       - name: Lint check (syntax only)
         run: |
@@ -55,6 +75,8 @@ jobs:
           python -m py_compile auto_apply.py
           python -m py_compile continuous_backtester.py
           python -m py_compile src/ml/strategy_backtester.py
+          python -m py_compile config.py
+          python -m py_compile auth_deps.py
           echo "✅ All critical files compile clean"
 
   build-dashboard:

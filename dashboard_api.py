@@ -65,6 +65,15 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
 import asyncio
+import logging
+
+# Structured logging — replaces all print() calls
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S"
+)
+logger = logging.getLogger("ethbot.api")
 import json
 import os
 from datetime import datetime, timedelta
@@ -461,7 +470,7 @@ async def read_trades_csv() -> List[Trade]:
                         entry_score=float(row['entry_score']) if row.get('entry_score') else None
                     ))
     except Exception as e:
-        print(f"Error reading trades CSV: {e}")
+        logger.warning(f" reading trades CSV: {e}")
     
     # If CSV empty/missing, fall back to PostgreSQL (survives deploys)
     if not trades and USE_POSTGRES:
@@ -482,9 +491,9 @@ async def read_trades_csv() -> List[Trade]:
                         pnl=float(r[4] or 0)
                     ))
                 if trades:
-                    print(f"📊 Loaded {len(trades)} trades from PostgreSQL (CSV was empty)")
+                    logger.info(f" Loaded {len(trades)} trades from PostgreSQL (CSV was empty)")
         except Exception as e:
-            print(f"⚠️ PG trades fallback error: {e}")
+            logger.warning(f" PG trades fallback error: {e}")
     
     return trades
 
@@ -536,7 +545,7 @@ async def get_performance_metrics() -> PerformanceMetrics:
                         pnl=float(r[4] or 0)
                     ))
         except Exception as e:
-            print(f"⚠️ PG performance trades read error: {e}")
+            logger.warning(f" PG performance trades read error: {e}")
     if not trades:
         trades = await read_trades_csv()
     
@@ -762,7 +771,7 @@ async def stop_bot(current_user: Dict = Depends(get_current_user)):
     return {"is_running": False, "message": "Bot paused"}
 
 @app.get("/api/bot/journal")
-async def get_trade_journal(limit: int = 200):
+async def get_trade_journal(limit: int = 200, _user: Optional[Dict] = Depends(get_current_user_optional)):
     """Full trade journal with P&L calculations for paper and live trades"""
     trades = await read_trades_csv()
     journal = []
@@ -822,7 +831,7 @@ async def clear_trade_journal(current_user = Depends(get_current_user)):
             with open(TRADES_CSV, 'w') as f:
                 f.write("timestamp,action,qty,price,pnl\n")
     except Exception as e:
-        print(f"Error clearing CSV: {e}")
+        logger.warning(f" clearing CSV: {e}")
     
     # Clear PostgreSQL trade_journal
     if USE_POSTGRES:
@@ -834,7 +843,7 @@ async def clear_trade_journal(current_user = Depends(get_current_user)):
                 cursor.execute("DELETE FROM trade_journal")
                 conn.commit()
         except Exception as e:
-            print(f"Error clearing DB trades: {e}")
+            logger.warning(f" clearing DB trades: {e}")
     
     # Also clear PostgreSQL paper_trades table (where /api/trades reads from)
     if USE_POSTGRES:
@@ -847,7 +856,7 @@ async def clear_trade_journal(current_user = Depends(get_current_user)):
                 conn.commit()
                 cleared["db"] += pt_count
         except Exception as e:
-            print(f"Error clearing paper_trades: {e}")
+            logger.warning(f" clearing paper_trades: {e}")
     
     return {
         "status": "success",
@@ -857,7 +866,7 @@ async def clear_trade_journal(current_user = Depends(get_current_user)):
     }
 
 @app.get("/api/trades", response_model=List[Trade])
-async def get_trades(limit: int = 100):
+async def get_trades(limit: int = 100, _user: Optional[Dict] = Depends(get_current_user_optional)):
     """Get recent trades — reads from PostgreSQL first, falls back to CSV"""
     # Try PostgreSQL first (survives deploys)
     if USE_POSTGRES:
@@ -874,7 +883,7 @@ async def get_trades(limit: int = 100):
                              "price": r[3], "pnl": r[4] or 0, "mode": r[5] or "paper"} 
                             for r in reversed(rows)]
         except Exception as e:
-            print(f"⚠️ PG trades read error: {e}")
+            logger.warning(f" PG trades read error: {e}")
     # Fallback to CSV
     trades = await read_trades_csv()
     return trades[-limit:]
@@ -924,7 +933,7 @@ async def record_trade(trade: dict = None, request: Request = None, _auth = Depe
                     """, (ts, action, float(qty), float(price), float(pnl),
                           trade.get("mode", "paper")))
             except Exception as e:
-                print(f"⚠️ PG trade save error: {e}")
+                logger.warning(f" PG trade save error: {e}")
         
         return {"status": "recorded", "action": action, "signals": signals}
     except Exception as e:
@@ -955,7 +964,7 @@ async def save_paper_balance(request: Request, _auth = Depends(verify_internal_a
                             ON CONFLICT (key) DO UPDATE SET value = %s
                         """, (payload, payload))
                 except Exception as e:
-                    print(f"⚠️ PG paper balance save error: {e}")
+                    logger.warning(f" PG paper balance save error: {e}")
             
             # Also save to file as fallback
             try:
@@ -971,7 +980,7 @@ async def save_paper_balance(request: Request, _auth = Depends(verify_internal_a
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/paper-balance")
-async def get_paper_balance():
+async def get_paper_balance(_user: Optional[Dict] = Depends(get_current_user_optional)):
     """Get persisted paper trading balance.
     Reads from PostgreSQL first (survives deploys), file fallback."""
     # Try PostgreSQL first
@@ -986,7 +995,7 @@ async def get_paper_balance():
                     if data.get("balance", 0) > 0:
                         return data
         except Exception as e:
-            print(f"⚠️ PG paper balance read error: {e}")
+            logger.warning(f" PG paper balance read error: {e}")
     
     # Fallback to file
     try:
@@ -1027,7 +1036,7 @@ async def save_ml_model_state(request: Request, _auth = Depends(verify_internal_
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/ml/model-state")
-async def get_ml_model_state():
+async def get_ml_model_state(_user: Optional[Dict] = Depends(get_current_user_optional)):
     """Get persisted ML model weights (called by Worker on startup)."""
     try:
         if USE_POSTGRES:
@@ -1077,7 +1086,7 @@ async def save_trade_state(request: Request, _auth = Depends(verify_internal_api
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/trade-state")
-async def get_trade_state():
+async def get_trade_state(_user: Optional[Dict] = Depends(get_current_user_optional)):
     """Get persisted open trade state (called by Worker on startup)."""
     try:
         if USE_POSTGRES:
@@ -1098,7 +1107,7 @@ async def get_trade_state():
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/performance", response_model=PerformanceMetrics)
-async def get_performance():
+async def get_performance(_user: Optional[Dict] = Depends(get_current_user_optional)):
     """Get performance metrics — v10: cached for 15s"""
     cached = _cached("perf_metrics", ttl=15)
     if cached:
@@ -1108,7 +1117,7 @@ async def get_performance():
     return result
 
 @app.get("/api/performance/history")
-async def get_performance_history(days: int = 7):
+async def get_performance_history(days: int = 7, _user: Optional[Dict] = Depends(get_current_user_optional)):
     """Get P&L history for chart — reads from PostgreSQL first, CSV fallback"""
     trades_raw = []
     
@@ -1130,7 +1139,7 @@ async def get_performance_history(days: int = 7):
                         "pnl": float(row[4] or 0)
                     })
         except Exception as e:
-            print(f"PG performance read error: {e}")
+            logger.warning(f"performance read error: {e}")
 
     # Fallback to CSV
     if not trades_raw:
@@ -1157,7 +1166,7 @@ async def get_performance_history(days: int = 7):
                     daily_pnl[date]["pnl"] += trade["pnl"]
                     daily_pnl[date]["trades"] += 1
             except Exception as e:
-                print(f"Error processing trade: {e}")
+                logger.warning(f" processing trade: {e}")
                 continue
     else:
         # CSV mode: calculate PnL via FIFO
@@ -1187,7 +1196,7 @@ async def get_performance_history(days: int = 7):
                     daily_pnl[date]["pnl"] += pnl_trade
                     daily_pnl[date]["trades"] += 1
             except Exception as e:
-                print(f"Error processing trade: {e}")
+                logger.warning(f" processing trade: {e}")
                 continue
 
     # Convert to sorted list with cumulative P&L
@@ -1205,7 +1214,7 @@ async def get_performance_history(days: int = 7):
     return history
 
 @app.get("/api/status", response_model=BotStatus)
-async def get_status():
+async def get_status(_user: Optional[Dict] = Depends(get_current_user_optional)):
     """Get bot status — v10: cached for 8s"""
     cached = _cached("bot_status", ttl=8)
     if cached:
@@ -1215,7 +1224,7 @@ async def get_status():
     return result
 
 @app.get("/api/chart/data")
-async def get_chart_data(symbol: str = "ETHUSDT", interval: str = "5m", limit: int = 100):
+async def get_chart_data(symbol: str = "ETHUSDT", interval: str = "5m", limit: int = 100, _user: Optional[Dict] = Depends(get_current_user_optional)):
     """Get OHLCV data for charts from Binance"""
     try:
         mdp = MarketDataProvider()
@@ -1239,7 +1248,7 @@ async def get_chart_data(symbol: str = "ETHUSDT", interval: str = "5m", limit: i
             "data": chart_data
         }
     except Exception as e:
-        print(f"Error fetching chart data: {e}")
+        logger.warning(f" fetching chart data: {e}")
         # Return empty data on error
         return {
             "symbol": symbol,
@@ -1276,25 +1285,25 @@ async def register(request: UserRegister):
 async def login(request: UserLogin):
     """Login user"""
     try:
-        print(f"🔐 Login attempt for: {request.email_or_username}")
+        logger.info(f" Login attempt for: {request.email_or_username}")
         result = user_mgr.login(request.email_or_username, request.password)
         
         if not result:
-            print(f"❌ Login failed: Invalid credentials for {request.email_or_username}")
+            logger.error(f" Login failed: Invalid credentials for {request.email_or_username}")
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
-        print(f"✅ Login successful for: {request.email_or_username}")
+        logger.info(f" Login successful for: {request.email_or_username}")
         return AuthResponse(**result)
         
     except ValueError as e:
-        print(f"❌ Login ValueError: {e}")
+        logger.error(f" Login ValueError: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
         import traceback
-        print(f"❌ Login Exception: {type(e).__name__}: {e}")
-        print(f"   Traceback: {traceback.format_exc()}")
+        logger.error(f" Login Exception: {type(e).__name__}: {e}")
+        logger.debug(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
 @app.post("/api/auth/logout")
@@ -1334,7 +1343,7 @@ async def get_current_user_info(authorization: Optional[str] = Header(None)):
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is
     except Exception as e:
-        print(f"Auth/me error: {e}")
+        logger.error(f"Auth/me error: {e}")
         raise HTTPException(status_code=401, detail="Authentication failed")
 
 @app.get("/api/users", response_model=List[UserResponse])
@@ -1368,7 +1377,7 @@ async def forgot_password(request: ForgotPasswordRequest):
         if token:
             # TODO: Send email with reset link containing token
             # In production, token should be delivered via email only
-            print(f"🔐 Password reset requested for {request.email} (token generated, expires in 1h)")
+            logger.info(f" Password reset requested for {request.email} (token generated, expires in 1h)")
             
             # In production, you would NOT return the token
             # Reset link would be: https://yourdomain.com/reset-password?token={token}
@@ -1487,7 +1496,7 @@ async def startup_event():
         from user_manager import seed_initial_users
         seed_initial_users()
     except Exception as e:
-        print(f"⚠️ User seeding error (may already exist): {e}")
+        logger.warning(f" User seeding error (may already exist): {e}")
     
     # AUTO-CREATE ACCOUNT FROM ENVIRONMENT VARIABLES
     # This ensures the Accounts page shows the configured account
@@ -1496,20 +1505,20 @@ async def startup_event():
         account_mgr_startup = AccountManager()
         result = account_mgr_startup.migrate_legacy_account()
         if result:
-            print(f"✅ Auto-created/verified Default Account from env vars (ID: {result})")
+            logger.info(f" Auto-created/verified Default Account from env vars (ID: {result})")
         else:
-            print("ℹ️ No BINANCE_API_KEY/SECRET in env - account must be added manually")
+            logger.info(" No BINANCE_API_KEY/SECRET in env - account must be added manually")
     except Exception as e:
-        print(f"⚠️ Account auto-creation error: {e}")
+        logger.warning(f" Account auto-creation error: {e}")
     
     # Load initial settings into config (respects user's saved mode)
     try:
         settings = load_settings()
         mode = "PAPER" if settings.get('dry_run', True) else "LIVE"
-        print(f"📄 Trading mode from saved settings: {mode}")
+        logger.info(f" Trading mode from saved settings: {mode}")
         reload_from_settings()
     except Exception as e:
-        print(f"⚠️ Could not load saved settings: {e}")
+        logger.warning(f" Could not load saved settings: {e}")
     
     # Initialize ML model store tables
     try:
@@ -1525,27 +1534,27 @@ async def startup_event():
                     )
                 """)
     except Exception as e:
-        print(f"⚠️ ML Model Store init error: {e}")
+        logger.warning(f" ML Model Store init error: {e}")
     
     # Start WebSocket price stream
     try:
         from src.data.price_stream import start_price_stream
         start_price_stream("ethusdt")
     except Exception as e:
-        print(f"⚠️ Price stream startup error: {e}")
+        logger.warning(f" Price stream startup error: {e}")
     
     # Start trade monitoring
     asyncio.create_task(monitor_trades())
     
     # v10: Start cached Binance price updater (async, non-blocking)
     asyncio.create_task(_binance_price_updater())
-    print("💰 Binance price updater started (10s refresh)")
+    logger.info(" Binance price updater started (10s refresh)")
     
     # Initialize learning store (PostgreSQL tables)
     try:
         learning_store.ensure_learning_tables()
     except Exception as e:
-        print(f"⚠️ Learning store init error: {e}")
+        logger.warning(f" Learning store init error: {e}")
     
     # Seed total_strategies_tested counter if not exists
     try:
@@ -1563,9 +1572,9 @@ async def startup_event():
                         INSERT INTO kv_store (key, value) VALUES ('total_strategies_tested', %s)
                         ON CONFLICT (key) DO UPDATE SET value = %s
                     """, (str(seed), str(seed)))
-                    print(f"✅ Seeded total_strategies_tested counter: {seed}")
+                    logger.info(f" Seeded total_strategies_tested counter: {seed}")
     except Exception as e:
-        print(f"⚠️ Counter seed error: {e}")
+        logger.warning(f" Counter seed error: {e}")
     
     # Fix old $100 allocated capital → $10,000
     try:
@@ -1577,9 +1586,9 @@ async def startup_event():
                     WHERE allocated_capital <= 100
                 """)
                 if cursor.rowcount > 0:
-                    print(f"Migrated {cursor.rowcount} portfolio pairs: $100 -> $100,000")
+                    logger.info(f"Migrated {cursor.rowcount} portfolio pairs: $100 -> $100,000")
     except Exception as e:
-        print(f"Capital migration: {e}")
+        logger.warning(f"Capital migration: {e}")
     
     # Create trade_journal table for per-user trade logging
     try:
@@ -1604,7 +1613,7 @@ async def startup_event():
                     ON trade_journal (user_id, created_at DESC)
                 """)
     except Exception as e:
-        print(f"Trade journal table: {e}")
+        logger.info(f"Trade journal table: {e}")
     
     # Create paper_trades table for trade persistence across deploys
     try:
@@ -1624,15 +1633,15 @@ async def startup_event():
                     )
                 """)
     except Exception as e:
-        print(f"Paper trades table: {e}")
+        logger.info(f"Paper trades table: {e}")
     
     # Start auto-learning background service
     asyncio.create_task(auto_learning_background())
-    print("🧠 Auto-Learning Background Service started!")
+    logger.info(" Auto-Learning Background Service started!")
     
     # Start cache warmer — pre-fetches slow endpoints so users never wait
     asyncio.create_task(_cache_warmer())
-    print("🔥 Cache Warmer started (learning_stats every 45s)")
+    logger.info(" Cache Warmer started (learning_stats every 45s)")
 
 
 async def _cache_warmer():
@@ -1658,7 +1667,7 @@ async def _cache_warmer():
                     result["stats"]["total_applied"] = max(result["stats"].get("total_applied", 0), 1)
             _set_cache("learning_stats", result)
         except Exception as e:
-            print(f"Cache warmer error: {e}")
+            logger.error(f"Cache warmer error: {e}")
         await asyncio.sleep(45)  # Refresh every 45s (cache TTL = 60s)
 
 
@@ -1674,8 +1683,8 @@ async def auto_learning_background():
     
     # Auto-start training on boot
     _training_active = True
-    print("Auto-Learning Background Service active - CONTINUOUS strategy optimization...")
-    print(f"   Storage backend: {'PostgreSQL' if learning_store.USE_POSTGRES else 'Local JSON (dev)'}")
+    logger.info("Auto-Learning Background Service active - CONTINUOUS strategy optimization...")
+    logger.info(f"Storage backend: {'PostgreSQL' if learning_store.USE_POSTGRES else 'Local JSON (dev)'}")
     
     # Import backtester with evolution support
     try:
@@ -1690,9 +1699,9 @@ async def auto_learning_background():
         )
         ensure_db()
         use_real_backtest = True
-        print("Using REAL historical backtesting with evolutionary optimization!")
+        logger.info("Using REAL historical backtesting with evolutionary optimization!")
     except ImportError as e:
-        print(f"Backtester not available, using mock data: {e}")
+        logger.info(f"Backtester not available, using mock data: {e}")
         use_real_backtest = False
     
     # Fetch historical data once and reuse (refresh every hour)
@@ -1726,16 +1735,16 @@ async def auto_learning_background():
             # v10: Fetch data with RANDOM period to diversify strategy results
             if use_real_backtest and (datetime.now() - last_data_fetch).total_seconds() > 1800:  # v10: refresh every 30min (was 1h)
                 period = get_random_backtest_period()
-                print(f"Fetching fresh historical data from Binance ({period} days)...")
+                logger.info(f"Fetching fresh historical data from Binance ({period} days)...")
                 try:
                     historical_candles = fetch_historical_data(period)
                     if historical_candles:
                         historical_candles = calculate_indicators(historical_candles)
-                        print(f"Got {len(historical_candles)} candles with indicators ({period}d)")
+                        logger.info(f"Got {len(historical_candles)} candles with indicators ({period}d)")
                     else:
-                        print("No candles returned, will retry next cycle")
+                        logger.info("No candles returned, will retry next cycle")
                 except Exception as fetch_err:
-                    print(f"Data fetch failed: {fetch_err}")
+                    logger.warning(f"Data fetch failed: {fetch_err}")
                 last_data_fetch = datetime.now()
             
             # Generate and test a single strategy with EVOLUTION
@@ -1821,7 +1830,7 @@ async def auto_learning_background():
                         best["applied"] = True
                         best["applied_at"] = datetime.now().isoformat()
                         learning_store.set_current_strategy(best)
-                        print(f"\nNEW BEST STRATEGY APPLIED! Score: {best['score']:.2f}")
+                        logger.info(f"NEW BEST STRATEGY APPLIED! Score: {best['score']:.2f}")
                 
                 # SYNC progress to dashboard
                 _synced_training_data = {
@@ -1842,7 +1851,7 @@ async def auto_learning_background():
                 
                 # Log every 10 strategies
                 if strategies_tested % 10 == 0:
-                    print(f"Strategy #{strategies_tested}: Score={strategy['score']:.2f} | Hour: {hour_tested} | Best: {best_score_session:.1f}")
+                    logger.info(f"Strategy #{strategies_tested}: Score={strategy['score']:.2f} | Hour: {hour_tested} | Best: {best_score_session:.1f}")
             
             # Wait 1-2 seconds between tests (~1800-3600/hour, 2x faster)
             wait_time = random.uniform(1.0, 2.0)
@@ -1850,7 +1859,7 @@ async def auto_learning_background():
             
         except Exception as e:
             import traceback
-            print(f"Auto-learning error: {e}")
+            logger.error(f"Auto-learning error: {e}")
             traceback.print_exc()
             await asyncio.sleep(60)
 
@@ -1875,7 +1884,7 @@ async def monitor_trades():
                         })
                     last_size = current_size
         except Exception as e:
-            print(f"Monitor error: {e}")
+            logger.error(f"Monitor error: {e}")
         
         await asyncio.sleep(1)
 
@@ -1947,7 +1956,7 @@ def save_settings(settings: dict):
             json.dump(settings, f, indent=2)
         return True
     except Exception as e:
-        print(f"Error saving settings: {e}")
+        logger.warning(f" saving settings: {e}")
         return False
 
 @app.get("/api/settings/bot")
@@ -2067,7 +2076,7 @@ async def get_user_api_keys(current_user: Dict = Depends(get_current_user)):
             }
         return keys
     except Exception as e:
-        print(f"❌ Error getting API keys: {e}")
+        logger.error(f" Error getting API keys: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/settings/api-keys")
@@ -2101,7 +2110,7 @@ async def save_user_api_keys(keys: UserApiKeysInput, current_user: Dict = Depend
             "trading_enabled": trading_enabled
         }
     except Exception as e:
-        print(f"❌ Error saving API keys: {e}")
+        logger.error(f" Error saving API keys: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2314,7 +2323,7 @@ async def get_available_pairs(search: Optional[str] = None):
                 "popular": POPULAR_PAIRS
             }
     except Exception as e:
-        print(f"Error fetching pairs: {e}")
+        logger.warning(f" fetching pairs: {e}")
     
     # Fallback to popular pairs
     return {"pairs": POPULAR_PAIRS, "total": len(POPULAR_PAIRS), "popular": POPULAR_PAIRS}
@@ -2459,7 +2468,7 @@ async def get_user_portfolio_pairs(current_user: Dict = Depends(get_current_user
                 "total_pnl_percent": (total_pnl / actual_capital * 100) if actual_capital > 0 else 0
             }
     except Exception as e:
-        print(f"Error fetching portfolio pairs: {e}")
+        logger.warning(f" fetching portfolio pairs: {e}")
         return {"pairs": [], "total_pairs": 0, "total_capital": 0, "total_pnl": 0}
 
 @app.post("/api/portfolio/pairs")
@@ -2541,7 +2550,7 @@ async def add_portfolio_pair(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error adding pair: {e}")
+        logger.warning(f" adding pair: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/portfolio/pairs/{pair_id}")
@@ -2771,7 +2780,7 @@ async def get_capital():
                             updated_at = data.get("updated_at")
                             loaded_from = "postgresql"
             except Exception as e:
-                print(f"⚠️ /api/capital PG read error: {e}")
+                logger.warning(f" /api/capital PG read error: {e}")
         
         # 2. Fallback to local file
         if loaded_from == "default":
@@ -3181,7 +3190,7 @@ async def run_backtest(params: BacktestParams, current_user: Dict = Depends(get_
             "bars_tested": len(df) - 60
         }
     except Exception as e:
-        print(f"Backtest error: {e}")
+        logger.error(f"Backtest error: {e}")
         import traceback
         traceback.print_exc()
         return {
@@ -3219,7 +3228,7 @@ async def get_learning_stats():
         _set_cache("learning_stats", result)
         return result
     except Exception as e:
-        print(f"Error getting learning stats: {e}")
+        logger.warning(f" getting learning stats: {e}")
         return {
             "stats": {
                 "total_tested": 0,
@@ -3238,7 +3247,7 @@ async def get_top_strategies(limit: int = 10):
     try:
         return learning_store.get_all_strategies(limit)
     except Exception as e:
-        print(f"Error getting top strategies: {e}")
+        logger.warning(f" getting top strategies: {e}")
         return []
 
 @app.get("/api/learning/evolution")
@@ -3247,7 +3256,7 @@ async def get_strategy_evolution(days: int = 7):
     try:
         return learning_store.get_evolution(days)
     except Exception as e:
-        print(f"Error getting evolution: {e}")
+        logger.warning(f" getting evolution: {e}")
         return []
 
 @app.get("/api/learning/current")
@@ -3256,7 +3265,7 @@ async def get_current_strategy():
     try:
         return learning_store.get_current_strategy()
     except Exception as e:
-        print(f"Error getting current strategy: {e}")
+        logger.warning(f" getting current strategy: {e}")
         return None
 
 # Trading Mode Switch
@@ -3290,7 +3299,7 @@ async def switch_trading_mode(mode_data: TradingMode, current_user: Dict = Depen
         else:
             raise HTTPException(status_code=500, detail="Failed to save settings")
     except Exception as e:
-        print(f"Error switching mode: {e}")
+        logger.warning(f" switching mode: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/trading/mode")
@@ -3304,7 +3313,7 @@ async def get_trading_mode():
             "dry_run": is_paper
         }
     except Exception as e:
-        print(f"Error getting mode: {e}")
+        logger.warning(f" getting mode: {e}")
         return {"mode": "paper", "dry_run": True}
 
 
@@ -3321,14 +3330,14 @@ try:
     _env_file = Path(__file__).parent / ".env.bot"
     if _env_file.exists():
         load_dotenv(_env_file)
-        print(f"📁 Loaded environment from .env.bot")
+        logger.info(f" Loaded environment from .env.bot")
 except ImportError:
-    print("⚠️ python-dotenv not installed, skipping .env.bot loading")
+    logger.warning(" python-dotenv not installed, skipping .env.bot loading")
 
 account_mgr = AccountManager()
 
 # Auto-seed account from BINANCE_API_KEY/SECRET env vars on startup
-print("🔑 Checking for Binance API credentials from environment...")
+logger.info(" Checking for Binance API credentials from environment...")
 # Check both possible env var names for the secret
 _api_key = os.getenv("BINANCE_API_KEY", "")
 _api_secret = os.getenv("BINANCE_API_SECRET", "") or os.getenv("BINANCE_SECRET_KEY", "")
@@ -3337,9 +3346,9 @@ if _api_key and _api_secret:
     os.environ["BINANCE_API_SECRET"] = _api_secret
 _seeded_account = account_mgr.migrate_legacy_account()
 if _seeded_account:
-    print(f"✅ Auto-seeded account from env vars (ID: {_seeded_account})")
+    logger.info(f" Auto-seeded account from env vars (ID: {_seeded_account})")
 else:
-    print("ℹ️ No BINANCE_API_KEY/SECRET found in env, or account already exists")
+    logger.info(" No BINANCE_API_KEY/SECRET found in env, or account already exists")
 
 class AccountCreate(BaseModel):
     name: str
@@ -3839,7 +3848,7 @@ async def toggle_trading_mode(current_user: Dict = Depends(get_current_user)):
         reload_from_settings()
         
         # Log the change
-        print(f"User {current_user['id']} switched to {new_mode} mode")
+        logger.info(f"User {current_user['id']} switched to {new_mode} mode")
         
         return {
             "success": True,
@@ -3962,11 +3971,11 @@ async def stripe_webhook(request):
         
         if user_id:
             handle_successful_payment(user_id, tier)
-            print(f"✅ Checkout completed for user {user_id}, tier: {tier}")
+            logger.info(f" Checkout completed for user {user_id}, tier: {tier}")
     
         session = event["data"]["object"]
         # Note: Would need to implement user lookup by Stripe customer ID
-        print(f"Subscription cancelled: {session.get('id')}")
+        logger.info(f"Subscription cancelled: {session.get('id')}")
     
     return {"status": "success"}
 
@@ -4344,7 +4353,7 @@ async def get_all_models_status():
         if current and current.get("timestamp"):
             backtester_stats["last_tested"] = current["timestamp"]
     except Exception as e:
-        print(f"Error reading learning stats for models: {e}")
+        logger.warning(f" reading learning stats for models: {e}")
     
     # Format last trained time
     def format_age(iso_str):
@@ -4487,7 +4496,7 @@ async def sync_ml_stats(data: dict, request: Request = None, _auth = Depends(ver
                     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
                 """, (json.dumps(data),))
     except Exception as e:
-        print(f"ML stats persist: {e}")
+        logger.warning(f"ML stats persist: {e}")
     return {"ok": True}
 
 @app.post("/api/ml/training-sync")
