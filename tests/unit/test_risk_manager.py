@@ -84,20 +84,24 @@ class TestStopLossCalculation:
         assert sl_pct == pytest.approx(atr_mult * (atr / entry), rel=0.01)
     
     def test_break_even_trigger(self):
-        """Test break-even stop loss trigger"""
+        """Test break-even stop loss trigger tightens stop to near zero"""
         entry = 3500.0
         current_px = 3521.0  # +0.6% profit
         break_even_trigger = 0.006  # 0.6%
+        original_sl = 0.01  # 1% original stop
         
         upnl = (current_px / entry) - 1.0
         
         if upnl >= break_even_trigger:
-            sl_pct = max(0.0, 0.0)  # Move to break-even
+            # FIXED: was max(sl_pct, 0.0) which is a no-op for positive sl_pct
+            # Now uses min() to actually tighten the stop to near break-even
+            sl_pct = min(original_sl, 0.001)  # Tighten to 0.1% (fee buffer)
         else:
-            sl_pct = 0.01  # Keep original stop
+            sl_pct = original_sl
         
         assert upnl >= break_even_trigger
-        assert sl_pct == 0.0
+        assert sl_pct == 0.001, "Break-even should tighten stop to 0.1%"
+        assert sl_pct < original_sl, "Break-even stop must be tighter than original"
 
 
 class TestDrawdownProtection:
@@ -175,7 +179,9 @@ class TestTrailingStop:
         initial_stop = 0.01  # 1%
         trail_pct = 0.008  # 0.8%
         
-        # As price moves up, trailing stop should tighten
-        final_stop = max(initial_stop, trail_pct)
+        # Trailing stop should TIGHTEN (use min, not max)
+        # FIXED: was max() which takes the WIDER stop — defeated the purpose
+        final_stop = min(initial_stop, trail_pct)
         
-        assert final_stop >= trail_pct
+        assert final_stop <= initial_stop, "Trailing should tighten the stop"
+        assert final_stop == trail_pct, "Should use the tighter trailing stop"
