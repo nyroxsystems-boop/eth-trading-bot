@@ -177,10 +177,10 @@ const LearningView = () => {
     }, [])
 
     const fetchLearningData = async () => {
+        const token = localStorage.getItem('auth_token') || localStorage.getItem('token')
         try {
-            const token = localStorage.getItem('auth_token')
             const res = await fetch(`${API_URL}/api/learning/stats`, {
-                headers: { 'Authorization': `Bearer ${token}` }
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
             })
             if (res.ok) {
                 const data = await res.json()
