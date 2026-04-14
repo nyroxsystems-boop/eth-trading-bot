@@ -58,10 +58,8 @@ class TrainingOrchestrator:
     """
     Orchestrates 24/7 training for all ML models:
     - DQN (Reinforcement Learning)
-    - Rainbow DQN (State-of-the-Art RL)
     - Strategy Backtester (Parameter Optimization)
     - Gradient Boosting (Classification)
-    - LSTM (Sequence Prediction)
     - Signal Generator (Multi-model voting)
     """
     
@@ -72,13 +70,6 @@ class TrainingOrchestrator:
                 "last_train": None,
                 "train_interval_hours": 4,
                 "episodes": 500,
-                "status": "idle"
-            },
-            "rainbow_dqn": {
-                "name": "Rainbow DQN",
-                "last_train": None,
-                "train_interval_hours": 6,
-                "episodes": 300,
                 "status": "idle"
             },
             "strategy_backtester": {
@@ -258,95 +249,6 @@ class TrainingOrchestrator:
             self.models["dqn"]["status"] = "error"
             return {"error": str(e)}
     
-    def train_rainbow_dqn(self, episodes: int = 300) -> dict:
-        """Train Rainbow DQN agent (state-of-the-art)"""
-        self.models["rainbow_dqn"]["status"] = "training"
-        
-        try:
-            from src.ml.rainbow_dqn import RainbowAgent
-            from src.ml.enhanced_dqn_agent import AdvancedTradingEnvironment
-            
-            if self.prices is None or len(self.prices) < 100:
-                self.prices = self.fetch_training_data(60)
-            
-            # Create environment and agent
-            env = AdvancedTradingEnvironment(window_size=30)
-            agent = RainbowAgent(
-                state_size=env._get_state().shape[0] if hasattr(env, '_get_state') else 50,
-                action_size=3,
-                n_step=3,  # N-step returns
-                atom_size=51  # Distributional RL atoms
-            )
-            
-            logger.info(f"🌈 Starting Rainbow DQN Training - {episodes} episodes")
-            
-            best_reward = float('-inf')
-            episode_rewards = []
-            
-            for episode in range(episodes):
-                if stop_event.is_set():
-                    break
-                
-                state = env.reset(self.prices)
-                total_reward = 0
-                trades = 0
-                
-                while not env.done:
-                    action = agent.select_action(state)
-                    next_state, reward, done, info = env.step(action)
-                    agent.store_transition(state, action, reward, next_state, done)
-                    
-                    # Train
-                    loss = agent.train()
-                    
-                    state = next_state
-                    total_reward += reward
-                    
-                    if info.get('action') in ['BUY', 'SELL']:
-                        trades += 1
-                
-                episode_rewards.append(total_reward)
-                
-                if total_reward > best_reward:
-                    best_reward = total_reward
-                    agent.save(str(LOG_DIR / "rainbow_dqn.pt"))
-                
-                # Sync progress every 10 episodes
-                if (episode + 1) % 10 == 0:
-                    portfolio_value = env.get_portfolio_value()
-                    roi = (portfolio_value - 10000) / 10000 * 100
-                    
-                    self._sync_progress({
-                        "model": "Rainbow DQN",
-                        "model_type": "rainbow_dqn",
-                        "architecture": "C51 + N-Step + Dueling + Double",
-                        "episode": episode + 1,
-                        "total_episodes": episodes,
-                        "progress_pct": round((episode + 1) / episodes * 100, 1),
-                        "reward": round(total_reward, 2),
-                        "best_reward": round(best_reward, 2),
-                        "roi": round(roi, 1),
-                        "trades": trades,
-                        "status": "training"
-                    })
-                    
-                    logger.info(f"   Rainbow Episode {episode+1}/{episodes} | Reward: {total_reward:.2f} | ROI: {roi:.1f}%")
-            
-            self.models["rainbow_dqn"]["status"] = "idle"
-            self.models["rainbow_dqn"]["last_train"] = datetime.now()
-            self.total_episodes += episodes
-            
-            return {
-                "model": "rainbow_dqn",
-                "episodes": episodes,
-                "best_reward": best_reward
-            }
-            
-        except Exception as e:
-            logger.error(f"Rainbow DQN training error: {e}")
-            self.models["rainbow_dqn"]["status"] = "error"
-            return {"error": str(e)}
-    
     def train_strategy_backtester(self) -> dict:
         """Run single strategy backtest"""
         self.models["strategy_backtester"]["status"] = "training"
@@ -445,11 +347,16 @@ class TrainingOrchestrator:
             with open(PROGRESS_FILE, "w") as f:
                 json.dump(data, f)
             
-            # Sync to dashboard
+            # Sync to dashboard (with internal API key for auth)
+            headers = {"Content-Type": "application/json"}
+            internal_key = os.getenv("INTERNAL_API_KEY")
+            if internal_key:
+                headers["X-Internal-API-Key"] = internal_key
+            
             response = self.session.post(
                 SYNC_ENDPOINT,
                 json=data,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 timeout=10
             )
             
