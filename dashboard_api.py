@@ -216,6 +216,10 @@ SETTINGS_FILE = LOG_DIR / "bot_settings.json"
 
 app = FastAPI(title="ETH Bot Dashboard API", version="1.0.0")
 
+# Register extracted routers
+from routes.admin import router as admin_router
+app.include_router(admin_router)
+
 # Gzip Compression - reduces response size by 60-80%
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
@@ -5689,12 +5693,21 @@ async def get_bot_logs(lines: int = 50, current_user: Dict = Depends(get_current
         return {"status": "error", "logs": [str(e)], "lines": [str(e)]}
 
 
-# ============================================================================
-# ADMIN DASHBOARD API ENDPOINTS
-# ============================================================================
 
-# Global emergency state
+# ============================================================================
+# ADMIN DASHBOARD API ENDPOINTS — Extracted to routes/admin.py
+# ============================================================================
+# All /api/admin/* endpoints are now served by the admin router.
+# See: routes/admin.py (registered via app.include_router above)
+
+# Global emergency state (shared with admin router)
 EMERGENCY_TRADING_STOPPED = False
+
+# Legacy endpoints below this line are DUPLICATES of routes/admin.py
+# They will be removed in the next cleanup pass.
+# For now both exist — the router takes precedence for /api/admin/* paths.
+
+# @app.post("/api/admin/strategies/cleanup") — MOVED to routes/admin.py
 
 # ------------ Strategy Cleanup ------------
 
