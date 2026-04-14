@@ -1,3 +1,4 @@
-# Routes package - reserved for future router extraction
-# Currently dashboard_api.py is the monolith, but admin/learning/trading
-# routes can be extracted here as the codebase grows.
+"""
+Extracted API routers from dashboard_api.py.
+Register new routers in dashboard_api.py via app.include_router().
+"""
