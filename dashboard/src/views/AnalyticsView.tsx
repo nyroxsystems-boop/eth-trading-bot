@@ -80,7 +80,11 @@ const AnalyticsView = () => {
         const mockSignal = { score: 0.2, direction: "bullish", confidence: 0.6 }
 
         try {
-            const response = await fetch(`${API_URL}/api/analytics/combined`)
+            const token = localStorage.getItem('auth_token') || localStorage.getItem('token')
+            const headers: Record<string, string> = token 
+                ? { 'Authorization': `Bearer ${token}` } 
+                : {}
+            const response = await fetch(`${API_URL}/api/analytics/combined`, { headers })
             if (response.ok) {
                 const data = await response.json()
                 // Always set data - use API data if available, otherwise mock

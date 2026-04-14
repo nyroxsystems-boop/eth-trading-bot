@@ -202,7 +202,9 @@ const LearningView = () => {
 
         // Also fetch models status
         try {
-            const modelsRes = await fetch(`${API_URL}/api/ml/models/status`)
+            const modelsRes = await fetch(`${API_URL}/api/ml/models/status`, {
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            })
             if (modelsRes.ok) {
                 const modelsData = await modelsRes.json()
                 if (modelsData.models && modelsData.models.length > 0) {
@@ -217,7 +219,10 @@ const LearningView = () => {
     const fetchTrainingProgress = async () => {
         try {
             // Try training-progress endpoint first
-            const res = await fetch(`${API_URL}/api/ml/training-progress`)
+            const token = localStorage.getItem('auth_token') || localStorage.getItem('token')
+            const res = await fetch(`${API_URL}/api/ml/training-progress`, {
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+            })
             if (res.ok) {
                 const data = await res.json()
                 if (data.training_active && data.episode) {

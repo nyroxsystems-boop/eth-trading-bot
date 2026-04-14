@@ -83,7 +83,11 @@ const DashboardView = ({ metrics, status }: DashboardViewProps) => {
 
     const fetchPnlHistory = async () => {
         try {
-            const res = await fetch(`${API_URL}/api/performance/history?days=${chartDays}`)
+            const token = localStorage.getItem('auth_token') || localStorage.getItem('token')
+            const headers: Record<string, string> = token 
+                ? { 'Authorization': `Bearer ${token}` } 
+                : {}
+            const res = await fetch(`${API_URL}/api/performance/history?days=${chartDays}`, { headers })
             if (res.ok) {
                 const data = await res.json()
                 setPnlHistory(data)

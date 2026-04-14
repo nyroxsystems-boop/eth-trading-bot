@@ -68,14 +68,18 @@ export default function MLMonitorView() {
 
     const fetchData = async () => {
         try {
+            const token = localStorage.getItem('auth_token') || localStorage.getItem('token')
+            const opts = token 
+                ? { headers: { 'Authorization': `Bearer ${token}` } } 
+                : {}
             // Fetch all data in parallel for better performance
             const [statusRes, progressRes, liveRes, dqnRes, predRes, featRes] = await Promise.allSettled([
-                fetch(`${API_URL}/api/ml/status`),
-                fetch(`${API_URL}/api/ml/training-progress`),
-                fetch(`${API_URL}/api/ml/dqn/live`),
-                fetch(`${API_URL}/api/ml/dqn/info`),
-                fetch(`${API_URL}/api/ml/dqn/predict`),
-                fetch(`${API_URL}/api/ml/feature-importance`)
+                fetch(`${API_URL}/api/ml/status`, opts),
+                fetch(`${API_URL}/api/ml/training-progress`, opts),
+                fetch(`${API_URL}/api/ml/dqn/live`, opts),
+                fetch(`${API_URL}/api/ml/dqn/info`, opts),
+                fetch(`${API_URL}/api/ml/dqn/predict`, opts),
+                fetch(`${API_URL}/api/ml/feature-importance`, opts)
             ])
 
             // Process results gracefully - don't fail if one endpoint fails
