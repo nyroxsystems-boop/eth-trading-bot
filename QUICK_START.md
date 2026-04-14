@@ -13,6 +13,18 @@
 5. Paste in Railway → **"Save"**
 6. **Wiederhole für "web" Service**
 
+### ⚠️ Neue Security Variables (PFLICHT!)
+
+Diese 3 Variables müssen in **beiden** Services gesetzt sein:
+
+```
+ADMIN_PASSWORD=<dein-admin-passwort>
+USER_PASSWORD=<dein-user-passwort>
+INTERNAL_API_KEY=<generiert-mit: python3 -c "import secrets; print(secrets.token_urlsafe(32))">
+```
+
+> Ohne diese Variables funktioniert das Dashboard-Login nicht!
+
 ### 2. Region ändern (KRITISCH!)
 📄 **Anleitung:** `MANUAL_REGION_CHANGE.md`
 
