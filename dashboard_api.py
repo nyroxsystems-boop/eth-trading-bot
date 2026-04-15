@@ -83,24 +83,23 @@ import sqlite3
 import aiosqlite
 import time as _time
 
-# Simple timed cache for slow endpoints
-_endpoint_cache = {}  # {key: (data, timestamp)}
+# Centralized state manager — replaces scattered globals
+from state import state
+
+# Simple timed cache for slow endpoints (delegates to StateManager)
+_endpoint_cache = {}  # {key: (data, timestamp)} — legacy compat
 def _cached(key: str, ttl: int = 30):
     """Return cached data if fresh, else None."""
-    if key in _endpoint_cache:
-        data, ts = _endpoint_cache[key]
-        if _time.time() - ts < ttl:
-            return data
-    return None
+    return state.cache_get(key, ttl)
 def _set_cache(key: str, data):
-    _endpoint_cache[key] = (data, _time.time())
+    state.cache_set(key, data)
 
 # v10: Cached Binance price (background refresh every 10s)
 # Eliminates synchronous requests.get() on every /api/status call
-_binance_price_cache = {"price": 0.0, "ts": 0.0}
+_binance_price_cache = {"price": 0.0, "ts": 0.0}  # legacy compat
 def _get_cached_eth_price() -> float:
     """Return cached ETH price. Background task refreshes it."""
-    return _binance_price_cache["price"]
+    return state.eth_price or _binance_price_cache["price"]
 
 async def _binance_price_updater():
     """Background task: refresh ETH price every 10 seconds.
@@ -116,8 +115,11 @@ async def _binance_price_updater():
                 timeout=5
             )
             if resp.status_code == 200:
-                _binance_price_cache["price"] = float(resp.json().get("price", 0))
+                price = float(resp.json().get("price", 0))
+                _binance_price_cache["price"] = price
                 _binance_price_cache["ts"] = _time.time()
+                state.eth_price = price
+                state.eth_price_ts = _time.time()
         except Exception:
             pass  # Keep last known price on error
         await asyncio.sleep(10)
@@ -284,6 +286,27 @@ async def rate_limit_middleware(request: Request, call_next):
         return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded."})
     
     return await call_next(request)
+
+# ═══════════════════════════════════════════════════════
+# SECURITY HEADERS
+# ═══════════════════════════════════════════════════════
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    return response
+
+# Public paths that intentionally don't require authentication
+PUBLIC_PATHS = {
+    "/health", "/api/health", "/",
+    "/api/auth/login", "/api/auth/register",
+    "/api/auth/forgot-password", "/api/auth/reset-password", "/api/auth/verify-reset-token",
+    "/api/price/live",
+}
 
 # ═══════════════════════════════════════════════════════
 # HEALTH CHECK (for Railway & monitoring)
@@ -1675,13 +1698,14 @@ async def auto_learning_background():
     """Background task that continuously tests strategies using historical data.
     Stores results in PostgreSQL (via learning_store) for persistence across deploys.
     Syncs progress to _synced_training_data so dashboard shows live updates."""
-    global _training_active, _synced_training_data
+    global _training_active
     import random
     
     # Wait 30 seconds before starting (let API fully initialize)
     await asyncio.sleep(30)
     
     # Auto-start training on boot
+    state.training_active = True
     _training_active = True
     logger.info("Auto-Learning Background Service active - CONTINUOUS strategy optimization...")
     logger.info(f"Storage backend: {'PostgreSQL' if learning_store.USE_POSTGRES else 'Local JSON (dev)'}")
@@ -1832,8 +1856,8 @@ async def auto_learning_background():
                         learning_store.set_current_strategy(best)
                         logger.info(f"NEW BEST STRATEGY APPLIED! Score: {best['score']:.2f}")
                 
-                # SYNC progress to dashboard
-                _synced_training_data = {
+                # SYNC progress to dashboard via StateManager
+                state.training_data = {
                     "status": "training",
                     "model_type": "strategy_backtester",
                     "model": "strategy_backtester",
@@ -1853,8 +1877,8 @@ async def auto_learning_background():
                 if strategies_tested % 10 == 0:
                     logger.info(f"Strategy #{strategies_tested}: Score={strategy['score']:.2f} | Hour: {hour_tested} | Best: {best_score_session:.1f}")
             
-            # Wait 1-2 seconds between tests (~1800-3600/hour, 2x faster)
-            wait_time = random.uniform(1.0, 2.0)
+            # TURBO: 0.5-1.0s between tests (~3600-7200/hour)
+            wait_time = random.uniform(0.5, 1.0)
             await asyncio.sleep(wait_time)
             
         except Exception as e:
@@ -4475,16 +4499,15 @@ async def get_dqn_live_training():
         return {"status": "error", "message": str(e)}
 
 
-# In-memory cache for synced training data (from local machines)
-_synced_training_data = {}
+# In-memory cache for synced training data — now in StateManager
+_synced_training_data = state.training_data   # legacy alias
 # In-memory cache for ML stats synced from Worker container
-_synced_ml_stats = {}
+_synced_ml_stats = state.ml_stats             # legacy alias
 
 @app.post("/api/ml/stats-sync")
 async def sync_ml_stats(data: dict, request: Request = None, _auth = Depends(verify_internal_api_key)):
     """Receive ML stats from Worker container — persist to PostgreSQL"""
-    global _synced_ml_stats
-    _synced_ml_stats = data
+    state.ml_stats = data
     # Persist to PostgreSQL so stats survive redeploys
     try:
         if USE_POSTGRES:
@@ -4502,10 +4525,9 @@ async def sync_ml_stats(data: dict, request: Request = None, _auth = Depends(ver
 @app.post("/api/ml/training-sync")
 async def sync_training_data(data: dict, _auth = Depends(verify_internal_api_key)):
     """Receive training progress from local machines and cache it"""
-    global _synced_training_data
     try:
-        # Store all the training data directly
-        _synced_training_data = {
+        # Store all the training data in StateManager
+        state.training_data = {
             "timestamp": data.get("timestamp", datetime.now().isoformat()),
             "episode": data.get("episode", 0),
             "total_episodes": data.get("total_episodes", 500),
@@ -4536,7 +4558,8 @@ async def sync_training_data(data: dict, _auth = Depends(verify_internal_api_key
 @app.get("/api/ml/training-sync")
 async def get_synced_training():
     """Get synced training data from local machine"""
-    if not _synced_training_data:
+    synced = state.training_data
+    if not synced:
         return {
             "status": "success",
             "training_active": False,
@@ -4546,7 +4569,7 @@ async def get_synced_training():
     return {
         "status": "success",
         "training_active": True,
-        **_synced_training_data
+        **synced
     }
 
 
@@ -4678,21 +4701,23 @@ async def get_retrain_status():
 
 # ============ Training Control Endpoints ============
 
-# Global training state
+# Training state — managed by StateManager
+# Legacy aliases for backward compat
 _training_process = None
-_training_active = False
+_training_active = state.training_active
 
 @app.post("/api/ml/training/start")
 async def start_training(model: str = "all", episodes: int = 500, current_user: Dict = Depends(get_current_user)):
     """Start continuous training. Just toggles _training_active flag.
     The actual training runs in auto_learning_background() which starts on boot."""
-    global _training_active, _synced_training_data
+    global _training_active
     
-    if _training_active:
+    if state.training_active:
         return {"status": "already_running", "message": "Training is already active"}
     
+    state.training_active = True
     _training_active = True
-    _synced_training_data = {
+    state.training_data = {
         "status": "training", "model_type": "strategy_backtester",
         "model": "strategy_backtester", "architecture": "Parameter Optimization",
         "episode": 0, "total_episodes": 0, "progress_pct": 0,
@@ -4704,9 +4729,9 @@ async def start_training(model: str = "all", episodes: int = 500, current_user: 
 @app.post("/api/ml/training/stop")
 async def stop_training(current_user: Dict = Depends(get_current_user)):
     """Stop active training"""
-    global _training_active, _synced_training_data
+    global _training_active
     
-    if not _training_active:
+    if not state.training_active:
         return {
             "status": "not_running",
             "message": "No training is currently active"
@@ -4714,8 +4739,9 @@ async def stop_training(current_user: Dict = Depends(get_current_user)):
     
     try:
         # Signal stop (the training loop checks this)
+        state.training_active = False
         _training_active = False
-        _synced_training_data = {
+        state.training_data = {
             "status": "stopped",
             "message": "Training stopped by user",
             "received_at": datetime.now().isoformat()
@@ -4733,7 +4759,6 @@ async def stop_training(current_user: Dict = Depends(get_current_user)):
 @app.get("/api/ml/training/status")
 async def get_training_status():
     """Get detailed training status for all models"""
-    global _training_active, _synced_training_data
     
     try:
         log_dir = Path(os.getenv("LOG_DIR", "./logs"))
