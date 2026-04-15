@@ -27,14 +27,12 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
     const isAdmin = user?.role === 'admin'
     const [adminExpanded, setAdminExpanded] = useState(false)
 
-    // Regular menu items
+    // Regular menu items — user-facing only
     const menuItems: MenuItem[] = [
         { id: 'dashboard', icon: Home, labelKey: 'nav.dashboard' },
-        { id: 'edge-monitor', icon: Crosshair, labelKey: 'nav.edge' },
         { id: 'portfolio', icon: TrendingUp, labelKey: 'nav.portfolio' },
         { id: 'trading', icon: Bot, labelKey: 'nav.trading' },
         { id: 'analytics', icon: BarChart3, labelKey: 'nav.analytics' },
-        { id: 'learning', icon: Brain, labelKey: 'nav.learning' },
         { id: 'journal', icon: BookOpen, labelKey: 'nav.journal' },
         { id: 'account', icon: Users, labelKey: 'settings.account' },
     ]

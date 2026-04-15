@@ -2,7 +2,7 @@
     "$schema": "https://railway.app/railway.schema.json",
     "build": {
         "builder": "NIXPACKS",
-        "buildCommand": "cd dashboard && npm install && npm run build && cd .."
+        "buildCommand": "cd dashboard && npm install && npm run build && cd ../admin-dashboard && npm install && npm run build && cd ../strategy-monitor && npm install && npm run build && cd .."
     },
     "deploy": {
         "region": "eu-west1",

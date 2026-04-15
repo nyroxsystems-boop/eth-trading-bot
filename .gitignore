@@ -73,3 +73,5 @@ trades.csv
 
 # Archived old files
 archive/
+admin-dashboard/node_modules/
+strategy-monitor/node_modules/

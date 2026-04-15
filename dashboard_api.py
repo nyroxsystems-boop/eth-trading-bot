@@ -353,11 +353,17 @@ def cached_response(key: str, ttl_seconds: int = 30):
         return wrapper
     return decorator
 
-# Mount static files for dashboard (if built)
+# Mount static files for all 3 dashboard apps
 DASHBOARD_DIST = Path(__file__).parent / "dashboard" / "dist"
+ADMIN_DIST = Path(__file__).parent / "admin-dashboard" / "dist"
+MONITOR_DIST = Path(__file__).parent / "strategy-monitor" / "dist"
+
 if DASHBOARD_DIST.exists():
-    # Serve static assets
     app.mount("/assets", StaticFiles(directory=str(DASHBOARD_DIST / "assets")), name="assets")
+if ADMIN_DIST.exists() and (ADMIN_DIST / "assets").exists():
+    app.mount("/admin/assets", StaticFiles(directory=str(ADMIN_DIST / "assets")), name="admin-assets")
+if MONITOR_DIST.exists() and (MONITOR_DIST / "assets").exists():
+    app.mount("/monitor/assets", StaticFiles(directory=str(MONITOR_DIST / "assets")), name="monitor-assets")
 
 # WebSocket Connection Manager
 class ConnectionManager:
@@ -5584,26 +5590,39 @@ EMERGENCY_TRADING_STOPPED = False
 
 
 # SPA Catch-all handler - MUST be at the end after all API routes
-# This serves index.html for all non-API routes so React Router can handle them
+# Serves the correct frontend app based on URL prefix
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
     """Serve SPA for all non-API routes (catch-all handler)"""
-    # Skip API routes (they should be handled by their own endpoints)
+    # Skip API routes
     if full_path.startswith("api/"):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="API endpoint not found")
     
-    # Skip asset requests (they're served by StaticFiles mount)
-    if full_path.startswith("assets/"):
+    # Skip asset requests
+    if full_path.startswith("assets/") or full_path.startswith("admin/assets/") or full_path.startswith("monitor/assets/"):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Asset not found")
     
-    # Serve index.html for all other routes (SPA routing)
+    # Admin Dashboard — /admin, /admin/*, etc.
+    if full_path.startswith("admin"):
+        admin_index = ADMIN_DIST / "index.html"
+        if admin_index.exists():
+            return FileResponse(admin_index)
+        return {"status": "ok", "service": "Admin Dashboard", "note": "Not built yet. Run: cd admin-dashboard && npm run build"}
+    
+    # Strategy Monitor — /monitor, /monitor/*, etc.
+    if full_path.startswith("monitor"):
+        monitor_index = MONITOR_DIST / "index.html"
+        if monitor_index.exists():
+            return FileResponse(monitor_index)
+        return {"status": "ok", "service": "Strategy Monitor", "note": "Not built yet. Run: cd strategy-monitor && npm run build"}
+    
+    # User Dashboard — everything else
     dashboard_index = DASHBOARD_DIST / "index.html"
     if dashboard_index.exists():
         return FileResponse(dashboard_index)
     
-    # Fallback if dashboard not built
     return {"status": "ok", "service": "ETH Bot Dashboard API", "note": "Dashboard not built yet"}
 
 
