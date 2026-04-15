@@ -1666,6 +1666,129 @@ async def startup_event():
     asyncio.create_task(_cache_warmer())
     logger.info(" Cache Warmer started (learning_stats every 45s)")
 
+    # ═══ v2 EDGE-FIRST SYSTEM ═══
+    asyncio.create_task(_v2_data_collector())
+    asyncio.create_task(_v2_signal_loop())
+    logger.info("📊 v2 Data Collector + Signal Engine started!")
+
+
+async def _v2_data_collector():
+    """Background: collect market data every 60s for edge validation."""
+    try:
+        from data_collector import collector
+        await collector.run()
+    except Exception as e:
+        logger.error(f"v2 Data Collector failed: {e}")
+
+
+async def _v2_signal_loop():
+    """Background: run signal engine on collected data, log predictions."""
+    await asyncio.sleep(120)  # Wait for collector to gather initial data
+    try:
+        from data_collector import collector
+        from signal_engine_v2 import signal_engine
+        from edge_validator import validator
+
+        logger.info("🎯 v2 Signal Loop started — predictions will be LOGGED, not traded")
+        
+        while True:
+            try:
+                # Get latest market data
+                market_data = await collector.collect_once()
+                
+                if market_data.get("price", 0) > 0:
+                    # Evaluate pending predictions against current price
+                    validator.evaluate_outcomes(market_data["price"])
+                    
+                    # Generate new signal
+                    signal = await signal_engine.generate_signal(market_data)
+                    
+                    if signal:
+                        # Log prediction for validation — DO NOT TRADE
+                        direction = signal["direction"]
+                        confidence = signal["confidence"]
+                        reasons = signal.get("reasons", [])
+                        consensus = signal.get("consensus", False)
+                        
+                        # Only log consensus signals or very strong singles
+                        if consensus or confidence >= 0.75:
+                            validator.log_prediction(
+                                signal_name=reasons[0].split(" —")[0] if reasons else "unknown",
+                                direction=direction,
+                                confidence=confidence,
+                                price=market_data["price"]
+                            )
+                
+            except Exception as e:
+                logger.debug(f"Signal loop tick error: {e}")
+            
+            await asyncio.sleep(60)  # Check every minute
+    except ImportError as e:
+        logger.warning(f"v2 signal modules not available: {e}")
+
+
+# ═══ v2 API ENDPOINTS ═══
+
+@app.get("/api/v2/edge-report")
+async def get_edge_report(_user: Optional[Dict] = Depends(get_current_user_optional)):
+    """Get edge validation report — the most important endpoint in the system."""
+    try:
+        from edge_validator import validator
+        return validator.get_report()
+    except ImportError:
+        return {"status": "not_initialized", "message": "Edge validator not loaded"}
+
+@app.get("/api/v2/signal-status")
+async def get_signal_status(_user: Optional[Dict] = Depends(get_current_user_optional)):
+    """Get current signal engine status."""
+    try:
+        from signal_engine_v2 import signal_engine
+        return signal_engine.get_status()
+    except ImportError:
+        return {"status": "not_initialized"}
+
+@app.get("/api/v2/collector-status")
+async def get_collector_status(_user: Optional[Dict] = Depends(get_current_user_optional)):
+    """Get data collector status."""
+    try:
+        from data_collector import collector
+        return collector.get_status()
+    except ImportError:
+        return {"status": "not_initialized"}
+
+@app.get("/api/v2/market-data")
+async def get_recent_market_data(limit: int = 60, _user: Optional[Dict] = Depends(get_current_user_optional)):
+    """Get recent collected market data points."""
+    try:
+        if not USE_POSTGRES:
+            return {"data": [], "message": "No PostgreSQL"}
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT timestamp, price, funding_rate, open_interest, 
+                       volume_spike_ratio, vwap_deviation_pct, rsi_1m,
+                       long_short_ratio, bb_position
+                FROM market_data_1m 
+                ORDER BY timestamp DESC LIMIT %s
+            """, (limit,))
+            rows = cursor.fetchall()
+            data = []
+            for row in rows:
+                data.append({
+                    "timestamp": row[0].isoformat() if row[0] else None,
+                    "price": row[1],
+                    "funding_rate": row[2],
+                    "open_interest": row[3],
+                    "volume_spike_ratio": row[4],
+                    "vwap_deviation_pct": row[5],
+                    "rsi_1m": row[6],
+                    "long_short_ratio": row[7],
+                    "bb_position": row[8]
+                })
+            return {"data": data, "count": len(data)}
+    except Exception as e:
+        return {"data": [], "error": str(e)}
+
 
 async def _cache_warmer():
     """Background task: pre-fetches slow endpoints so users always get cached results."""
