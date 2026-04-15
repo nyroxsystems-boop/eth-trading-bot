@@ -28,6 +28,7 @@ const TradingJournalView = lazy(() => import('./views/TradingJournalView'))
 
 const TradingView = lazy(() => import('./views/TradingView'))
 const AccountView = lazy(() => import('./views/AccountView'))
+const EdgeMonitorView = lazy(() => import('./views/EdgeMonitorView'))
 import './views/AdminDashboardView.css'
 
 // Loading fallback component
@@ -301,6 +302,7 @@ function Dashboard() {
                 {activePage === 'analytics' && <AnalyticsView />}
                 {activePage === 'journal' && <TradingJournalView />}
                 {activePage === 'account' && <AccountView />}
+                {activePage === 'edge-monitor' && <EdgeMonitorView />}
                 {activePage === 'admin' && <AdminDashboardView activeTab="overview" />}
                 {activePage === 'admin-users' && <AdminDashboardView activeTab="users" />}
                 {activePage === 'admin-system' && <AdminDashboardView activeTab="system" />}

@@ -19,6 +19,7 @@ const translations: Translations = {
     'nav.learning': { en: 'Learning', de: 'Lernen' },
     'nav.portfolio': { en: 'Portfolio', de: 'Portfolio' },
     'nav.journal': { en: 'Journal', de: 'Journal' },
+    'nav.edge': { en: 'Edge Monitor', de: 'Edge Monitor' },
     'nav.earnings': { en: 'Earnings', de: 'Einnahmen' },
     'nav.settings': { en: 'Settings', de: 'Einstellungen' },
 

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Home, TrendingUp, Bot, Brain, Users, Shield, BarChart3, BookOpen, ChevronDown, ChevronRight, Server, DollarSign, ScrollText, Power, Settings, Database } from 'lucide-react'
+import { Home, TrendingUp, Bot, Brain, Users, Shield, BarChart3, BookOpen, ChevronDown, ChevronRight, Server, DollarSign, ScrollText, Power, Settings, Database, Crosshair } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 
@@ -30,6 +30,7 @@ export default function Sidebar({ activePage, onPageChange }: SidebarProps) {
     // Regular menu items
     const menuItems: MenuItem[] = [
         { id: 'dashboard', icon: Home, labelKey: 'nav.dashboard' },
+        { id: 'edge-monitor', icon: Crosshair, labelKey: 'nav.edge' },
         { id: 'portfolio', icon: TrendingUp, labelKey: 'nav.portfolio' },
         { id: 'trading', icon: Bot, labelKey: 'nav.trading' },
         { id: 'analytics', icon: BarChart3, labelKey: 'nav.analytics' },
