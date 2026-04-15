@@ -6,7 +6,8 @@
     "scripts": {
         "dev": "vite --port 3002",
         "build": "npx tsc && npx vite build",
-        "preview": "vite preview"
+        "preview": "vite preview",
+        "start": "npx serve dist -s -l $PORT"
     },
     "dependencies": {
         "framer-motion": "^10.18.0",
