@@ -5589,6 +5589,145 @@ EMERGENCY_TRADING_STOPPED = False
 # @app.post("/api/admin/strategies/cleanup") — MOVED to routes/admin.py
 
 
+# ============================================================================
+# SECTION 11: JARVIS WEBHOOK — External LLM Control Interface
+# ============================================================================
+# POST /api/jarvis/update_regime — Webhook for n8n/Claude to push macro params
+# GET  /api/jarvis/state         — Current BotState readout (admin-only)
+# ============================================================================
+
+import hmac
+import hashlib
+
+_JARVIS_SECRET = os.getenv("JARVIS_WEBHOOK_SECRET", "")
+
+def _verify_jarvis_signature(request: Request, body: bytes) -> bool:
+    """Verify HMAC-SHA256 signature from Jarvis webhook.
+    If no secret is configured, falls back to admin JWT auth."""
+    if not _JARVIS_SECRET:
+        return False  # No HMAC configured, caller must use JWT
+    sig = request.headers.get("X-Jarvis-Signature", "")
+    if not sig:
+        return False
+    expected = hmac.new(
+        _JARVIS_SECRET.encode(), body, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(sig, expected)
+
+
+@app.post("/api/jarvis/update_regime")
+async def jarvis_update_regime(request: Request):
+    """
+    Jarvis Webhook — Receive macro parameter updates from external LLM.
+    
+    Authentication: HMAC-SHA256 via X-Jarvis-Signature header,
+    OR admin JWT Bearer token.
+    
+    Example payload:
+    {
+        "ml_confidence_threshold": 0.55,
+        "active_edges": ["BREAKOUT", "NORMAL"],
+        "risk_multiplier": 0.8,
+        "reason": "High volatility — tightening ML gate"
+    }
+    """
+    body = await request.body()
+    
+    # Auth: HMAC signature OR admin JWT
+    hmac_ok = _verify_jarvis_signature(request, body)
+    if not hmac_ok:
+        # Fall back to JWT admin auth
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(status_code=401, detail="Missing authentication (HMAC or JWT)")
+        try:
+            from auth_deps import get_current_user
+            token = auth_header.split(" ", 1)[1]
+            import jwt as _jwt
+            payload_jwt = _jwt.decode(token, os.getenv("JWT_SECRET", ""), algorithms=["HS256"])
+            if payload_jwt.get("role") != "admin":
+                raise HTTPException(status_code=403, detail="Admin only")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+    
+    # Parse and validate payload
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    
+    # Validate with Pydantic schema
+    try:
+        from jarvis.webhook_schema import JarvisRegimeUpdate
+        validated = JarvisRegimeUpdate(**payload)
+        update_dict = validated.model_dump(exclude_none=True)
+    except ImportError:
+        # Schema not available — accept raw dict with basic validation
+        update_dict = payload
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Validation error: {e}")
+    
+    # Apply to in-memory state
+    changes = state.apply_jarvis_update(update_dict)
+    
+    # Persist to kv_store (PostgreSQL) for cross-service visibility
+    # The worker (bot) polls kv_store every 30s and picks up these changes
+    try:
+        import learning_store
+        learning_store.set_kv("jarvis_bot_state", json.dumps(state.get_jarvis_state()))
+        
+        # Also set emergency stop flag for backward compat
+        if "emergency_stop" in changes:
+            learning_store.set_kv(
+                "emergency_trading_stopped",
+                "true" if changes["emergency_stop"] else "false"
+            )
+    except Exception as e:
+        logger.warning(f"Jarvis: kv_store persistence failed: {e}")
+    
+    # Audit log
+    reason = update_dict.get("reason", "no reason given")
+    logger.info(f"JARVIS UPDATE: {changes} | reason: {reason}")
+    
+    return {
+        "status": "ok",
+        "applied": changes,
+        "reason": reason,
+        "state": state.get_jarvis_state()
+    }
+
+
+@app.get("/api/jarvis/state")
+async def jarvis_get_state(current_user: Dict = Depends(get_current_user)):
+    """Get current Jarvis BotState (admin-only)."""
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    
+    # Also try to refresh from kv_store (worker may have modified state)
+    try:
+        import learning_store
+        kv_state = learning_store.get_kv("jarvis_bot_state")
+        if kv_state:
+            persisted = json.loads(kv_state)
+            return {
+                "status": "ok",
+                "in_memory": state.get_jarvis_state(),
+                "persisted": persisted,
+                "source": "kv_store + memory"
+            }
+    except Exception:
+        pass
+    
+    return {
+        "status": "ok",
+        "in_memory": state.get_jarvis_state(),
+        "persisted": None,
+        "source": "memory_only"
+    }
+
+
 # SPA Catch-all handler - MUST be at the end after all API routes
 # Serves the correct frontend app based on URL prefix
 @app.get("/{full_path:path}")

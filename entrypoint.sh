@@ -29,6 +29,11 @@ case "${RAILWAY_SERVICE_NAME}" in
     fi
     exec uvicorn dashboard_server:app --host 0.0.0.0 --port "${PORT}"
     ;;
+  "backtester")
+    echo "ERROR: Backtester is LOCAL-ONLY. Do NOT deploy on Railway."
+    echo "Use: ./tools/run_backtest_local.sh"
+    exit 1
+    ;;
   *)
     echo "ERROR: Unknown service '${RAILWAY_SERVICE_NAME}'"
     echo "Valid services: worker, web, auto-learning, dashboard"

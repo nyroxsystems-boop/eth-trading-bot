@@ -270,8 +270,9 @@ _last_emergency_check = 0.0
 _emergency_check_cache = False
 
 def _check_emergency_stop() -> bool:
-    """Check if admin has triggered emergency stop via dashboard.
-    Uses flag file (fast) + database (reliable). Cached for 30s to avoid I/O spam."""
+    """Check if admin has triggered emergency stop via dashboard or Jarvis.
+    Uses flag file (fast) + database (reliable) + Jarvis kv_store.
+    Cached for 30s to avoid I/O spam."""
     global _last_emergency_check, _emergency_check_cache
     
     # Only check every 30 seconds
@@ -294,8 +295,70 @@ def _check_emergency_stop() -> bool:
     except Exception:
         pass
     
+    # Method 3: Jarvis BotState in kv_store (external LLM control)
+    try:
+        import learning_store
+        jarvis_raw = learning_store.get_kv("jarvis_bot_state")
+        if jarvis_raw:
+            jarvis_state = json.loads(jarvis_raw)
+            if jarvis_state.get("emergency_stop", False):
+                log("🚨 JARVIS EMERGENCY STOP active")
+                _emergency_check_cache = True
+                return True
+    except Exception:
+        pass
+    
     _emergency_check_cache = False
     return False
+
+
+# === JARVIS DYNAMIC PARAMETER GETTERS ===
+# These replace hardcoded globals — check kv_store for Jarvis overrides first,
+# then fall back to strategy-blended values, then to ENV defaults.
+_jarvis_cache = {"data": None, "ts": 0.0}  # Cached Jarvis state from kv_store
+_JARVIS_POLL_INTERVAL = 30  # seconds between kv_store polls
+
+def _get_jarvis_state() -> dict:
+    """Get cached Jarvis BotState from kv_store. Polls every 30s."""
+    if time.time() - _jarvis_cache["ts"] < _JARVIS_POLL_INTERVAL:
+        return _jarvis_cache["data"] or {}
+    try:
+        import learning_store
+        raw = learning_store.get_kv("jarvis_bot_state")
+        if raw:
+            _jarvis_cache["data"] = json.loads(raw)
+            _jarvis_cache["ts"] = time.time()
+            return _jarvis_cache["data"]
+    except Exception:
+        pass
+    _jarvis_cache["ts"] = time.time()
+    return _jarvis_cache["data"] or {}
+
+def get_ml_threshold() -> float:
+    """Get ML confidence threshold.
+    Priority: Jarvis override → strategy-blended SEC_PML_MIN → ENV default (0.42)."""
+    jarvis = _get_jarvis_state()
+    if jarvis.get("override_active") and "ml_confidence_threshold" in jarvis:
+        return float(jarvis["ml_confidence_threshold"])
+    return SEC_PML_MIN  # Strategy-blended or ENV default
+
+def get_risk_pct() -> float:
+    """Get risk percentage per trade.
+    Priority: Jarvis risk_multiplier × strategy-blended RISK_PCT_PER_TRADE → default."""
+    jarvis = _get_jarvis_state()
+    base_risk = RISK_PCT_PER_TRADE
+    if jarvis.get("override_active") and "risk_multiplier" in jarvis:
+        multiplier = float(jarvis["risk_multiplier"])
+        return min(base_risk * multiplier, 0.05)  # Hard cap 5%
+    return base_risk
+
+def get_active_edges() -> list:
+    """Get list of active strategy edges.
+    Priority: Jarvis override → all edges."""
+    jarvis = _get_jarvis_state()
+    if jarvis.get("override_active") and "active_edges" in jarvis:
+        return jarvis["active_edges"]
+    return ["BREAKOUT", "DRAWDOWN", "OS-FAST", "NORMAL", "BB_BOUNCE", "MACD_CROSS", "RANGE_SUP"]
 
 # ML — GradientBoosting: 100 trees, depth 4, warm_start for incremental learning
 clf = Pipeline([
@@ -1846,7 +1909,8 @@ def get_4h_bias() -> str:
         _4h_cache = {"bias": "NEUTRAL", "ts": time.time()}
         return "NEUTRAL"
 
-RISK_MIN = RISK_PCT_PER_TRADE   # v7: use strategy-optimized value (was hardcoded 0.01)
+# RISK_MIN is now dynamic via get_risk_pct() — Jarvis can override via risk_multiplier
+RISK_MIN = RISK_PCT_PER_TRADE   # v7: fallback for non-Jarvis code paths
 RISK_MAX = 0.05   # 5% — maximum on high-conviction setups
 
 def dynamic_risk_factor(p_ml, entry_score=0.0, vol_ok=False, trend_15m_ok=False):
@@ -1949,7 +2013,9 @@ def position_size_for_risk(px, sl_pct, eq, risk_factor=1.0):
     v2: Kelly Criterion integration for smarter sizing.
     """
     kelly_mult = _kelly_fraction()
-    effective_risk_pct = RISK_MIN * risk_factor * kelly_mult
+    # Use dynamic risk getter — Jarvis risk_multiplier is applied inside get_risk_pct()
+    base_risk = get_risk_pct()
+    effective_risk_pct = base_risk * risk_factor * kelly_mult
     # Hard cap: never risk more than 5% per trade
     effective_risk_pct = min(effective_risk_pct, 0.05)
     risk_usd = max(0.0, float(eq) * effective_risk_pct)
@@ -2230,7 +2296,9 @@ def decide_and_trade():
 
     p_ml         = ml_predict_row(row)
     # ML check is ALWAYS required — paper mode must trade like live mode for valid results
-    secondary_ok = trend_ok and (rsi14 >= RSI_MIN) and (p_ml >= SEC_PML_MIN) and (px > ema20)
+    # ML gate uses dynamic threshold — Jarvis can override via webhook
+    _ml_gate = get_ml_threshold()
+    secondary_ok = trend_ok and (rsi14 >= RSI_MIN) and (p_ml >= _ml_gate) and (px > ema20)
 
     # Sync regime/ML to kv_store directly (no HTTP self-call — fails on Railway)
     try:
@@ -2407,7 +2475,7 @@ def decide_and_trade():
                 today_trades += 1
                 bars_in_position = 0
                 _last_trade_ts = time.time()  # Reset adaptive threshold timer
-                _active_sigs = [s for s, ok in [("OVERSOLD", True), ("DRAWDOWN", drawdown_ok), ("BB_BOUNCE", bb_bounce_ok), ("RSI", rsi_ok_band), ("TREND", trend_ok), ("ML", p_ml >= SEC_PML_MIN)] if ok]
+                _active_sigs = [s for s, ok in [("OVERSOLD", True), ("DRAWDOWN", drawdown_ok), ("BB_BOUNCE", bb_bounce_ok), ("RSI", rsi_ok_band), ("TREND", trend_ok), ("ML", p_ml >= get_ml_threshold())] if ok]
                 sync_paper_trade("BUY", qty, px, signals={"entry_type": "OS-FAST", "active_signals": _active_sigs, "ml_confidence": p_ml, "entry_score": entry_score})
                 _save_open_position()  # Persist trade state
                 tg(f"▶️ LONG {BASE_ASSET} (OS-FAST) @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | adx={regime['adx']:.1f} | rsi={rsi14:.1f} | vol={vol_ok} 15m={trend_15m_ok}")
@@ -2545,7 +2613,7 @@ def decide_and_trade():
             today_trades += 1
             bars_in_position = 0
             _last_trade_ts = time.time()  # Reset adaptive threshold timer
-            _active_sigs = [s for s, ok in [("BREAKOUT", breakout_ok), ("TREND", trend_ok), ("OVERSOLD", oversold_ok), ("EMA_BOUNCE", ema_bounce_ok), ("BB_BOUNCE", bb_bounce_ok), ("MACD_CROSS", macd_cross_ok), ("RANGE_SUP", range_support_ok), ("ML", p_ml >= SEC_PML_MIN), ("VOL", vol_ok), ("15M_TREND", trend_15m_ok)] if ok]
+            _active_sigs = [s for s, ok in [("BREAKOUT", breakout_ok), ("TREND", trend_ok), ("OVERSOLD", oversold_ok), ("EMA_BOUNCE", ema_bounce_ok), ("BB_BOUNCE", bb_bounce_ok), ("MACD_CROSS", macd_cross_ok), ("RANGE_SUP", range_support_ok), ("ML", p_ml >= get_ml_threshold()), ("VOL", vol_ok), ("15M_TREND", trend_15m_ok)] if ok]
             sync_paper_trade("BUY", qty, px, signals={"entry_type": "NORMAL", "active_signals": _active_sigs, "ml_confidence": p_ml, "entry_score": entry_score})
             _save_open_position()  # Persist trade state
             tg(f"▶️ LONG {BASE_ASSET} @ {px:.2f} | size≈${qty*px:.2f} | TP {TP_MIN*100:.1f}–{TP_MAX*100:.1f}% | p_ml={p_ml:.2f} | adx={regime['adx']:.1f} | vol={vol_ok} 15m={trend_15m_ok} risk={r_factor:.1f}x")
@@ -2656,7 +2724,7 @@ def backtest(days=30, interval="5m"):
 
         macd_gain = float(row["macd"] - row["macd_sig"])
         p_ml = 0.5 + np.tanh(macd_gain)*0.2
-        secondary_ok = trend_ok and (rsi14 >= RSI_MIN) and (p_ml >= SEC_PML_MIN) and (px > ema20)
+        secondary_ok = trend_ok and (rsi14 >= RSI_MIN) and (p_ml >= get_ml_threshold()) and (px > ema20)
 
         # --- Sideways signals (SYNCHRONIZED with live trading) ---
         oversold_ok = (rsi14 <= max(40.0, RSI_MIN)) and drawdown_ok and (px >= bb_lo * 1.0005)
