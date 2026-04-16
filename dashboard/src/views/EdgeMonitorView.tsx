@@ -268,7 +268,7 @@ export default function EdgeMonitorView() {
   const [marketData, setMarketData] = useState<MarketDataPoint[]>([])
   const [loading, setLoading] = useState(true)
 
-  const headers = token ? { Authorization: `Bearer ${token}` } : {}
+  const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
 
   const fetchAll = useCallback(async () => {
     try {

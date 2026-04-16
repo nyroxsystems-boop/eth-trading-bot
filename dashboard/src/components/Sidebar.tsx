@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Home, TrendingUp, Bot, Brain, Users, Shield, BarChart3, BookOpen, ChevronDown, ChevronRight, Server, DollarSign, ScrollText, Power, Settings, Database, Crosshair } from 'lucide-react'
+import { Home, TrendingUp, Bot, Users, Shield, BarChart3, BookOpen, ChevronDown, ChevronRight, Server, DollarSign, ScrollText, Power, Settings, Database } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 
