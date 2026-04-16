@@ -21,7 +21,9 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+// API URL: Use env var at build time, or detect production, or fallback to localhost
+const API_URL = import.meta.env.VITE_API_URL || 
+    (window.location.hostname.includes('railway.app') ? 'https://web-production-d57ac.up.railway.app' : 'http://localhost:8000')
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [user, setUser] = useState<User | null>(null)

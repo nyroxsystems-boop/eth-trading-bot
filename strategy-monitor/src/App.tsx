@@ -3,7 +3,8 @@ import { BrowserRouter } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { Crosshair, Brain, Cpu, Activity, LogOut, BarChart3, RefreshCw } from 'lucide-react'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_API_URL || 
+    (window.location.hostname.includes('railway.app') ? 'https://web-production-d57ac.up.railway.app' : 'http://localhost:8000')
 
 // ─── Terminal Sidebar ───
 function MonitorSidebar({ active, onChange }: { active: string; onChange: (p: string) => void }) {

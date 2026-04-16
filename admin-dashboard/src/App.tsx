@@ -3,7 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { Shield, Users, Server, Power, ScrollText, DollarSign, Database, Settings, LogOut, TrendingUp } from 'lucide-react'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_API_URL || 
+    (window.location.hostname.includes('railway.app') ? 'https://web-production-d57ac.up.railway.app' : 'http://localhost:8000')
 
 // ─── Sidebar ───
 function AdminSidebar({ active, onChange }: { active: string; onChange: (p: string) => void }) {
