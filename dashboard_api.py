@@ -5633,24 +5633,30 @@ async def jarvis_update_regime(request: Request):
     """
     body = await request.body()
     
-    # Auth: HMAC signature OR admin JWT
-    hmac_ok = _verify_jarvis_signature(request, body)
-    if not hmac_ok:
-        # Fall back to JWT admin auth
-        auth_header = request.headers.get("authorization", "")
-        if not auth_header.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Missing authentication (HMAC or JWT)")
-        try:
-            from auth_deps import get_current_user
-            token = auth_header.split(" ", 1)[1]
-            import jwt as _jwt
-            payload_jwt = _jwt.decode(token, os.getenv("JWT_SECRET", ""), algorithms=["HS256"])
-            if payload_jwt.get("role") != "admin":
-                raise HTTPException(status_code=403, detail="Admin only")
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
+    # Auth chain: Simple Token → HMAC signature → JWT admin
+    # Method 1: Simple token (easiest for n8n — just send the secret as header)
+    token_header = request.headers.get("X-Jarvis-Token", "")
+    token_ok = _JARVIS_SECRET and token_header == _JARVIS_SECRET
+    
+    if not token_ok:
+        # Method 2: HMAC-SHA256 signature (most secure)
+        hmac_ok = _verify_jarvis_signature(request, body)
+        if not hmac_ok:
+            # Method 3: Fall back to JWT admin auth
+            auth_header = request.headers.get("authorization", "")
+            if not auth_header.startswith("Bearer "):
+                raise HTTPException(status_code=401, detail="Missing authentication (Token, HMAC, or JWT)")
+            try:
+                from auth_deps import get_current_user
+                token = auth_header.split(" ", 1)[1]
+                import jwt as _jwt
+                payload_jwt = _jwt.decode(token, os.getenv("JWT_SECRET", ""), algorithms=["HS256"])
+                if payload_jwt.get("role") != "admin":
+                    raise HTTPException(status_code=403, detail="Admin only")
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(status_code=401, detail=f"Invalid token: {e}")
     
     # Parse and validate payload
     try:
