@@ -5734,6 +5734,177 @@ async def jarvis_get_state(current_user: Dict = Depends(get_current_user)):
     }
 
 
+# ============================================================================
+# JARVIS AUTO-ANALYZE — Server-side Claude analysis
+# ============================================================================
+# POST /api/jarvis/auto_analyze — Fetches market data + calls Claude + applies regime
+# n8n only needs to call THIS endpoint. No LLM node required.
+# ============================================================================
+
+_ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
+@app.post("/api/jarvis/auto_analyze")
+async def jarvis_auto_analyze(request: Request):
+    """
+    Jarvis Auto-Analyze: Fetches market data, sends to Claude, applies regime.
+    n8n just calls this one endpoint on a schedule — everything else is server-side.
+    
+    Auth: X-Jarvis-Token header required.
+    """
+    # Auth check
+    token_header = request.headers.get("X-Jarvis-Token", "")
+    if not (_JARVIS_SECRET and token_header == _JARVIS_SECRET):
+        raise HTTPException(status_code=401, detail="Missing or invalid X-Jarvis-Token")
+    
+    if not _ANTHROPIC_KEY:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on Railway")
+    
+    # Step 1: Gather market data internally
+    try:
+        import learning_store
+        market_data = {
+            "is_running": True,
+            "today_trades": 0,
+            "ml_confidence": 0.0,
+            "sentiment_score": 0,
+            "regime": "unknown",
+            "current_price": 0,
+        }
+        
+        # Get current state from StateManager
+        try:
+            current_state = state.to_dict() if hasattr(state, 'to_dict') else {}
+            if current_state:
+                market_data.update({
+                    "is_running": current_state.get("bot_running", True),
+                    "today_trades": current_state.get("trades_today", 0),
+                    "current_price": current_state.get("current_price", 0),
+                    "regime": str(current_state.get("market_regime", "unknown")),
+                    "ml_confidence": current_state.get("ml_confidence", 0),
+                    "paper_balance": current_state.get("paper_balance", 0),
+                    "daily_pnl": current_state.get("daily_pnl", 0),
+                })
+        except Exception:
+            pass
+        
+        # Get latest from kv_store
+        try:
+            for key in ["current_price", "market_regime", "ml_confidence", "paper_balance", "daily_pnl"]:
+                val = learning_store.get_kv(key)
+                if val:
+                    market_data[key] = val
+        except Exception:
+            pass
+        
+        # Strip all non-ASCII to prevent encoding issues
+        clean_data = {}
+        for k, v in market_data.items():
+            if isinstance(v, str):
+                clean_data[k] = v.encode('ascii', 'ignore').decode('ascii')
+            else:
+                clean_data[k] = v
+                
+    except Exception as e:
+        clean_data = {"error": f"Could not fetch market data: {str(e)}"}
+    
+    # Step 2: Call Claude API
+    import httpx
+    
+    system_prompt = (
+        "You are Jarvis, an AI trading regime manager for an ETH spot trading bot. "
+        "Based on the market data, respond with ONLY a valid JSON object (no markdown, no explanation): "
+        '{"ml_confidence_threshold": 0.42, "risk_multiplier": 1.0, "emergency_stop": false, '
+        '"active_edges": ["BREAKOUT","NORMAL","BB_BOUNCE","MACD_CROSS","RANGE_SUP"], "reason": "short reason"}. '
+        "Rules: ml_confidence_threshold 0.30-0.90 (higher=fewer trades, default 0.42). "
+        "risk_multiplier 0.1-5.0 (default 1.0, lower in high volatility). "
+        "emergency_stop true ONLY for extreme danger. Be conservative."
+    )
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": _ANTHROPIC_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 300,
+                    "temperature": 0.3,
+                    "system": system_prompt,
+                    "messages": [
+                        {"role": "user", "content": f"Current ETH market data: {json.dumps(clean_data)}"}
+                    ]
+                }
+            )
+            
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"Claude API error: {resp.status_code} - {resp.text[:200]}")
+            
+            claude_response = resp.json()
+            ai_text = claude_response["content"][0]["text"].strip()
+            
+            # Parse Claude's JSON response
+            # Strip markdown code fences if present
+            if ai_text.startswith("```"):
+                ai_text = ai_text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+            
+            regime_update = json.loads(ai_text)
+            
+    except json.JSONDecodeError as e:
+        return {"status": "error", "detail": f"Claude returned invalid JSON: {ai_text[:200]}", "raw": ai_text}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Claude API call failed: {str(e)}")
+    
+    # Step 3: Apply the regime update (same logic as update_regime)
+    try:
+        import learning_store
+        
+        jarvis_state = {"override_active": True}
+        try:
+            old_raw = learning_store.get_kv("jarvis_bot_state")
+            if old_raw:
+                jarvis_state = json.loads(old_raw)
+        except Exception:
+            pass
+        
+        applied = {}
+        ts = time.time()
+        
+        for field in ["ml_confidence_threshold", "risk_multiplier", "emergency_stop", "active_edges"]:
+            if field in regime_update:
+                jarvis_state[field] = regime_update[field]
+                applied[field] = regime_update[field]
+        
+        jarvis_state["override_active"] = True
+        jarvis_state["last_update"] = ts
+        jarvis_state["last_update_iso"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        
+        learning_store.set_kv("jarvis_bot_state", json.dumps(jarvis_state))
+        
+        # Also update in-memory state
+        try:
+            state.update_jarvis(jarvis_state)
+        except Exception:
+            pass
+        
+        return {
+            "status": "ok",
+            "market_data_used": clean_data,
+            "claude_analysis": regime_update,
+            "applied": applied,
+            "reason": regime_update.get("reason", ""),
+            "state": jarvis_state
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to apply regime: {str(e)}")
+
+
 # SPA Catch-all handler - MUST be at the end after all API routes
 # Serves the correct frontend app based on URL prefix
 @app.get("/{full_path:path}")
