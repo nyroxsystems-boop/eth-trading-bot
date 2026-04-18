@@ -28,14 +28,48 @@ from bot.executor import execute_buy, execute_sell, fetch_klines, get_current_pr
 
 logger = logging.getLogger("ethbot.engine")
 
-# Default pairs to trade (configurable via PAIRS env var)
-DEFAULT_PAIRS = [
-    {"pair": "ETHUSDT", "base": "ETH"},
+# Fallback pairs if Binance API is down
+FALLBACK_PAIRS = [
     {"pair": "BTCUSDT", "base": "BTC"},
+    {"pair": "ETHUSDT", "base": "ETH"},
     {"pair": "SOLUSDT", "base": "SOL"},
-    {"pair": "LINKUSDT", "base": "LINK"},
-    {"pair": "AVAXUSDT", "base": "AVAX"},
+    {"pair": "BNBUSDT", "base": "BNB"},
+    {"pair": "XRPUSDT", "base": "XRP"},
 ]
+
+
+def _get_pairs(n: int = 20) -> list:
+    """
+    Get trading pairs — dynamic from Binance or env override.
+    Priority: PAIRS env var > Dynamic scanner > Fallback.
+    """
+    # 1. Check env var override
+    pairs_env = os.getenv("PAIRS", "").strip()
+    if pairs_env:
+        result = []
+        for item in pairs_env.split(","):
+            item = item.strip()
+            if ":" in item:
+                pair, base = item.split(":", 1)
+                result.append({"pair": pair.strip(), "base": base.strip()})
+            else:
+                base = item.replace("USDT", "").replace("BUSD", "")
+                result.append({"pair": item, "base": base})
+        if result:
+            return result
+
+    # 2. Dynamic scanner — top N by volume
+    try:
+        from bot.pair_scanner import get_top_pairs
+        n_pairs = int(os.getenv("NUM_PAIRS", str(n)))
+        dynamic = get_top_pairs(n_pairs)
+        if dynamic:
+            return dynamic
+    except Exception as e:
+        logger.warning(f"Dynamic pair scan failed: {e}")
+
+    # 3. Fallback
+    return FALLBACK_PAIRS
 
 # Graceful shutdown
 _shutdown = threading.Event()
@@ -73,25 +107,6 @@ def _log_trade(action: str, pair: str, qty: float, price: float, pnl: float = 0.
             f.write("timestamp,action,pair,qty,price,pnl\n")
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         csv.writer(f).writerow([ts, action, pair, f"{qty:.6f}", f"{price:.2f}", f"{pnl:.2f}"])
-
-
-def _get_pairs() -> list:
-    """Get trading pairs from env or defaults."""
-    pairs_env = os.getenv("PAIRS", "").strip()
-    if pairs_env:
-        # Format: "ETHUSDT:ETH,BTCUSDT:BTC,SOLUSDT:SOL"
-        result = []
-        for item in pairs_env.split(","):
-            item = item.strip()
-            if ":" in item:
-                pair, base = item.split(":", 1)
-                result.append({"pair": pair.strip(), "base": base.strip()})
-            else:
-                # Auto-detect base from pair name
-                base = item.replace("USDT", "").replace("BUSD", "")
-                result.append({"pair": item, "base": base})
-        return result if result else DEFAULT_PAIRS
-    return DEFAULT_PAIRS
 
 
 def _trade_pair(
@@ -297,6 +312,24 @@ def run(config: TradingConfig | None = None):
     while not _shutdown.is_set():
         try:
             loop_count += 1
+
+            # ── Refresh pairs every 30 loops (~1 hour) ──
+            if loop_count % 30 == 1 and loop_count > 1:
+                try:
+                    new_pairs = _get_pairs()
+                    if new_pairs and new_pairs != pairs:
+                        # Add states for new pairs
+                        for p in new_pairs:
+                            pk = p["pair"]
+                            if pk not in states:
+                                st = BotState.load(f"logs/state_{pk}.json")
+                                st.paper_balance = config.paper_balance / len(new_pairs)
+                                st.check_new_day()
+                                states[pk] = st
+                        pairs = new_pairs
+                        logger.info(f"Pairs refreshed: {[p['pair'] for p in pairs]}")
+                except Exception:
+                    pass  # Keep using current pairs
 
             for pair_info in pairs:
                 if _shutdown.is_set():
