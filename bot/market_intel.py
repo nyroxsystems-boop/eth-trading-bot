@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 # ─── Configuration ───────────────────────────────────────────────────────
 SCRAPERAPI_KEY = os.getenv("SCRAPERAPI_KEY", "").strip()
-MARKET_INTEL_ENABLED = os.getenv("MARKET_INTEL_ENABLED", "0").strip() in ("1", "true", "yes")
+# Always enabled — Fear&Greed, Funding Rate, OI work without API keys
+# ScraperAPI only needed for news scraping
+MARKET_INTEL_ENABLED = True
 
 CACHE_DIR = Path(os.getenv("LOG_DIR", "./logs")) / "intel_cache"
 CACHE_DIR.mkdir(parents=True, exist_ok=True)

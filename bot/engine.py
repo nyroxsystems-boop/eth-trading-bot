@@ -354,6 +354,23 @@ def _trade_pair(
         try:
             from bot.swarm import get_swarm
             swarm = get_swarm()
+            # Gather real intel data for the swarm
+            fg_value = 0
+            news_sentiment = 0
+            funding_rate = 0
+            oi_signal = 0
+            intel_composite = 0
+            try:
+                if mi:
+                    idata = mi.get_market_intelligence()
+                    fg_value = idata.get("fear_greed", {}).get("value", 0)
+                    news_sentiment = idata.get("news_sentiment", {}).get("signal", 0)
+                    funding_rate = idata.get("funding_rate", {}).get("rate", 0)
+                    oi_signal = idata.get("open_interest", {}).get("signal", 0)
+                    intel_composite = mi.get_composite_score()
+            except Exception:
+                pass
+
             swarm_data = {
                 "pair": pair, "rsi": signal.rsi, "adx": signal.adx,
                 "macd": float(row.get("macd", 0)),
@@ -365,9 +382,12 @@ def _trade_pair(
                 "atr_pct": atr / max(px, 1) * 100,
                 "regime": signal.regime, "score": signal.score,
                 "mtf_boost": mtf_boost if 'mtf_boost' in dir() else 0,
-                "fg_value": 0, "news_sentiment": 0,
-                "funding_rate": 0, "oi_signal": 0,
-                "intel_composite": 0, "signal_count": len(signal.signals),
+                "fg_value": fg_value,
+                "news_sentiment": news_sentiment,
+                "funding_rate": funding_rate,
+                "oi_signal": oi_signal,
+                "intel_composite": intel_composite,
+                "signal_count": len(signal.signals),
             }
             decision = swarm.decide(swarm_data)
             swarm_approved = decision.approved
