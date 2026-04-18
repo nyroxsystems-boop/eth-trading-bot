@@ -40,6 +40,11 @@ def position_size(price: float, atr: float, config: TradingConfig, state: BotSta
         return 0.0
 
     qty = risk_usd / denom
+
+    # Cap position at 40% of equity (prevents oversized trades when SL is very tight)
+    max_qty = (equity * 0.40) / max(price, 1)
+    qty = min(qty, max_qty)
+
     return max(0.0001, qty)
 
 
