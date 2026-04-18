@@ -32,3 +32,7 @@ python-telegram-bot==20.7
 python-dotenv==1.0.0
 aiofiles==23.2.1
 stripe>=7.0.0
+
+# Multi-Asset (Stocks)
+alpaca-py>=0.30.0
+pytz>=2024.1

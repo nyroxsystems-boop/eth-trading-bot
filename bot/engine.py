@@ -114,9 +114,19 @@ def _trade_pair(
     config: TradingConfig,
     state: BotState,
 ) -> None:
-    """Execute one trading cycle for a single pair."""
+    """Execute one trading cycle for a single pair (crypto or stock)."""
     pair = pair_info["pair"]
     base = pair_info["base"]
+    market = pair_info.get("market", "crypto")
+
+    # ── Stock market hours check ──
+    if market == "stock":
+        try:
+            from bot.stocks import is_market_open
+            if not is_market_open():
+                return  # Skip stocks outside trading hours
+        except Exception:
+            pass
 
     # ── Step 1: Pre-trade guards ──
     if not state.is_in_position:
@@ -124,9 +134,16 @@ def _trade_pair(
         if guard:
             return  # Skip this pair
 
-    # ── Step 2: Fetch market data ──
+    # ── Step 2: Fetch market data (route by market type) ──
     try:
-        df = fetch_klines(pair, config.interval, lookback=300)
+        if market == "stock":
+            from bot.stocks import fetch_stock_klines
+            df = fetch_stock_klines(pair, config.interval, lookback=300)
+        else:
+            df = fetch_klines(pair, config.interval, lookback=300)
+
+        if df is None or len(df) < 20:
+            return
         df = add_indicators(df)
         if len(df) < 50:
             return
@@ -294,15 +311,34 @@ def run(config: TradingConfig | None = None):
         state.check_new_day()
         states[pair_key] = state
 
+    # ── Add stock pairs if enabled ──
+    enable_stocks = os.getenv("ENABLE_STOCKS", "true").lower() in ("true", "1", "yes")
+    if enable_stocks:
+        try:
+            from bot.stocks import DEFAULT_STOCK_PAIRS
+            stock_pairs = DEFAULT_STOCK_PAIRS[:int(os.getenv("NUM_STOCKS", "10"))]
+            for sp in stock_pairs:
+                if sp["pair"] not in states:
+                    st = BotState.load(f"logs/state_{sp['pair']}.json")
+                    st.paper_balance = config.paper_balance / (len(pairs) + len(stock_pairs))
+                    st.check_new_day()
+                    states[sp["pair"]] = st
+            pairs = pairs + stock_pairs
+            logger.info(f"📈 Stocks enabled: {[s['pair'] for s in stock_pairs]}")
+        except Exception as e:
+            logger.warning(f"Stock init failed: {e}")
+
     mode = "PAPER" if config.paper_mode else "LIVE"
+    crypto_count = sum(1 for p in pairs if p.get("market", "crypto") == "crypto")
+    stock_count = sum(1 for p in pairs if p.get("market") == "stock")
     total_balance = sum(s.paper_balance for s in states.values())
-    logger.info(f"═══ Ethbot v3 Multi-Pair Starting ═══")
-    logger.info(f"Mode: {mode} | Pairs: {[p['pair'] for p in pairs]}")
+    logger.info(f"═══ Ethbot v3 Multi-Asset Starting ═══")
+    logger.info(f"Mode: {mode} | Crypto: {crypto_count} | Stocks: {stock_count} | Total: {len(pairs)}")
     logger.info(f"Interval: {config.interval} | Total Balance: ${total_balance:,.2f}")
-    logger.info(f"Per-Pair Balance: ${config.paper_balance / len(pairs):,.2f}")
+    logger.info(f"Per-Pair Balance: ${config.paper_balance / max(len(pairs), 1):,.2f}")
     logger.info(f"Max trades/day: {config.max_trades_per_day} | Entry min: {config.entry_score_min}")
 
-    _notify(config, f"🤖 Ethbot v3 Multi-Pair [{mode}] | {len(pairs)} pairs | ${total_balance:,.0f}")
+    _notify(config, f"🤖 Ethbot v3 [{mode}] | {crypto_count} crypto + {stock_count} stocks | ${total_balance:,.0f}")
 
     loop_count = 0
 
