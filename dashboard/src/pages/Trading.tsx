@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { TrendingUp, TrendingDown, Clock, BarChart3 } from 'lucide-react'
+import { TrendingUp, Clock } from 'lucide-react'
 import type { BotStatus } from '../App'
 
 const API_URL = import.meta.env.VITE_API_URL || ''

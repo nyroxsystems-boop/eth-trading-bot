@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Settings as SettingsIcon, Shield, Bell, Sliders, Save } from 'lucide-react'
+import { Settings as SettingsIcon, Shield, Bell, Sliders } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 

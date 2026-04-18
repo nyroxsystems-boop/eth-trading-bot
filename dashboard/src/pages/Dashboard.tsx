@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, BarChart, Bar
+  ResponsiveContainer
 } from 'recharts'
-import { TrendingUp, TrendingDown, Target, Activity, Zap, DollarSign } from 'lucide-react'
+// Icons available if needed: TrendingUp, TrendingDown, Target, Activity
 import type { BotStatus } from '../App'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
