@@ -193,6 +193,101 @@ async def get_config():
         return {"error": "Config not available"}
 
 
+# ── Brain Intelligence ──────────────────────────
+
+@router.get("/brain")
+async def get_brain_status():
+    """Get brain learning status."""
+    try:
+        from bot.brain import get_brain
+        brain = get_brain()
+        return brain.get_status()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.get("/swarm")
+async def get_swarm_status():
+    """Get swarm intelligence status — all agents and their accuracy."""
+    try:
+        from bot.swarm import get_swarm
+        return get_swarm().get_status()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.get("/experience")
+async def get_experience_status():
+    """Get experience memory and genetic evolver status."""
+    try:
+        from bot.experience import get_memory, get_evolver
+        mem = get_memory()
+        evo = get_evolver()
+        return {
+            "memory": mem.get_stats(),
+            "evolver": {
+                "generation": evo.generation,
+                "population_size": len(evo.population),
+                "best_fitness": round(max((s.get("fitness", 0) for s in evo.population), default=0), 4),
+            },
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.get("/shield")
+async def get_shield_status():
+    """Get risk shield status — circuit breaker and portfolio guard."""
+    try:
+        from bot.shield import get_circuit_breaker, get_portfolio_guard, get_cost_simulator
+        cb = get_circuit_breaker()
+        pg = get_portfolio_guard()
+        cs = get_cost_simulator()
+        return {
+            "circuit_breaker": cb.get_status(),
+            "portfolio_guard": pg.get_status(),
+            "costs": cs.get_stats(),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.get("/ml")
+async def get_ml_status():
+    """Get ML training data status."""
+    try:
+        from bot.ml_collector import get_stats
+        return get_stats()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ── Multi-Pair Status ──────────────────────────
+
+@router.get("/pairs")
+async def get_pairs_status():
+    """Get status of all trading pairs."""
+    pairs_status = []
+    try:
+        state_dir = LOG_DIR
+        for f in sorted(state_dir.glob("state_*.json")):
+            pair = f.stem.replace("state_", "")
+            with open(f) as fh:
+                data = json.load(fh)
+            pairs_status.append({
+                "pair": pair,
+                "in_position": data.get("position", {}).get("entry_price") is not None and data.get("position", {}).get("entry_price", 0) > 0,
+                "daily_pnl": data.get("daily_pnl", 0),
+                "today_trades": data.get("today_trades", 0),
+                "paper_balance": data.get("paper_balance", 0),
+                "win_streak": data.get("win_streak", 0),
+                "loss_streak": data.get("loss_streak", 0),
+            })
+    except Exception as e:
+        logger.warning(f"Failed to read pair states: {e}")
+    return pairs_status
+
+
 # ── Helpers ─────────────────────────────────────
 
 def _read_trades() -> List[Dict]:
