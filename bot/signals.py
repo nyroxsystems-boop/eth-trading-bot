@@ -70,6 +70,13 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     except Exception:
         out["adx14"] = 25.0
 
+    # VWAP (session-anchored: rolling 48-bar ≈ 4h on 5m)
+    typical_price = (out["high"] + out["low"] + out["close"]) / 3.0
+    cum_vol = out["volume"].rolling(48).sum()
+    cum_tp_vol = (typical_price * out["volume"]).rolling(48).sum()
+    out["vwap"] = cum_tp_vol / cum_vol.clip(lower=1e-9)
+    out["vwap_dev"] = (out["close"] - out["vwap"]) / out["vwap"].clip(lower=1e-9)  # % deviation
+
     out.dropna(inplace=True)
     return out
 
@@ -196,6 +203,13 @@ def compute_signals(
     if adx > 25:
         score += min(0.10, (adx - 20) / 200)
         active_signals.append("ADX_STRONG")
+
+    # 10. VWAP Reversion: price below VWAP → mean reversion buy
+    vwap_dev = float(row.get("vwap_dev", 0.0))
+    if vwap_dev < -0.005:  # Price > 0.5% below VWAP
+        vwap_bonus = min(0.15, abs(vwap_dev) * 10)
+        score += vwap_bonus
+        active_signals.append(f"VWAP({vwap_dev*100:+.1f}%)")
 
     # ===== FINAL DECISION =====
     should_buy = score >= entry_score_min and len(active_signals) >= 2

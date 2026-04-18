@@ -381,6 +381,91 @@ def fetch_funding_rate() -> dict:
     return result
 
 
+# ─── 5. Open Interest Divergence ─────────────────────────────────────────
+TTL_OI = 900  # 15 min
+
+def fetch_open_interest() -> dict:
+    """
+    Fetch Open Interest from Binance Futures API (free, 0 credits).
+    Detects OI divergence:
+      - Rising OI + falling price = shorts accumulating = potential squeeze (bullish)
+      - Falling OI + rising price = positions closing = weak trend (bearish)
+    Returns: { "oi": float, "oi_change": float, "signal": -1.0 to +1.0 }
+    """
+    cached = _read_cache("open_interest", TTL_OI)
+    if cached:
+        return cached
+
+    result = {"oi": 0.0, "oi_change_pct": 0.0, "signal": 0.0, "source": "open_interest"}
+
+    try:
+        import urllib.request
+        # Get current OI
+        url = "https://fapi.binance.com/fapi/v1/openInterest?symbol=ETHUSDT"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; EthBot/1.0)"
+        })
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode())
+
+        current_oi = float(data.get("openInterest", 0))
+
+        # Get recent klines to check price direction
+        url2 = "https://fapi.binance.com/fapi/v1/klines?symbol=ETHUSDT&interval=1h&limit=4"
+        req2 = urllib.request.Request(url2, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; EthBot/1.0)"
+        })
+        with urllib.request.urlopen(req2, timeout=10) as r2:
+            klines = json.loads(r2.read().decode())
+
+        if klines and len(klines) >= 2:
+            price_now = float(klines[-1][4])   # Close
+            price_prev = float(klines[0][4])   # Close 4h ago
+            price_change = (price_now / price_prev - 1.0) if price_prev > 0 else 0
+
+            # Compare with cached OI
+            prev_oi_data = _read_cache("open_interest_prev", 7200)
+            prev_oi = prev_oi_data.get("oi", current_oi) if prev_oi_data else current_oi
+            oi_change = (current_oi / prev_oi - 1.0) if prev_oi > 0 else 0
+
+            # Store current OI for next comparison
+            _write_cache("open_interest_prev", {"oi": current_oi})
+
+            # Divergence logic
+            signal = 0.0
+            if oi_change > 0.02 and price_change < -0.005:
+                # OI rising + price falling = shorts accumulating = squeeze potential
+                signal = 0.5
+            elif oi_change > 0.05 and price_change < -0.01:
+                # Strong OI rise + strong price fall = very likely squeeze
+                signal = 0.8
+            elif oi_change < -0.02 and price_change > 0.005:
+                # OI falling + price rising = positions closing = weak rally
+                signal = -0.3
+            elif oi_change > 0.02 and price_change > 0.01:
+                # OI rising + price rising = strong trend confirmation
+                signal = 0.3
+
+            result = {
+                "oi": round(current_oi, 2),
+                "oi_change_pct": round(oi_change * 100, 2),
+                "price_change_pct": round(price_change * 100, 2),
+                "signal": round(signal, 3),
+                "source": "open_interest",
+            }
+            if abs(signal) > 0.1:
+                logger.info(
+                    f"INTEL OI: {current_oi:.0f} ({oi_change*100:+.1f}%) "
+                    f"Price: {price_change*100:+.1f}% → signal={signal:.3f}"
+                )
+
+    except Exception as e:
+        logger.warning(f"INTEL OI fetch failed: {e}")
+
+    _write_cache("open_interest", result)
+    return result
+
+
 # ─── Composite Signal ────────────────────────────────────────────────────
 class MarketIntelligence:
     """Main interface for the market intelligence module."""
@@ -391,8 +476,8 @@ class MarketIntelligence:
 
     def get_market_intelligence(self) -> Dict[str, dict]:
         """
-        Fetch all 4 signals. Returns dict with keys:
-        fear_greed, news_sentiment, whale_activity, funding_rate
+        Fetch all 5 signals. Returns dict with keys:
+        fear_greed, news_sentiment, whale_activity, funding_rate, open_interest
         """
         if not self.enabled:
             return {
@@ -400,6 +485,7 @@ class MarketIntelligence:
                 "news_sentiment": {"sentiment": 0.0, "signal": 0.0},
                 "whale_activity": {"large_txns": 0, "signal": 0.0},
                 "funding_rate": {"rate": 0.0, "signal": 0.0},
+                "open_interest": {"oi": 0.0, "signal": 0.0},
             }
 
         return {
@@ -407,6 +493,7 @@ class MarketIntelligence:
             "news_sentiment": fetch_news_sentiment(),
             "whale_activity": fetch_whale_activity(),
             "funding_rate": fetch_funding_rate(),
+            "open_interest": fetch_open_interest(),
         }
 
     def get_composite_score(self) -> float:
@@ -425,12 +512,14 @@ class MarketIntelligence:
         ns_sig = data["news_sentiment"].get("signal", 0.0)
         wh_sig = data["whale_activity"].get("signal", 0.0)
         fr_sig = data["funding_rate"].get("signal", 0.0)
+        oi_sig = data["open_interest"].get("signal", 0.0)
 
         composite = (
-            W_FEAR_GREED * fg_sig +
-            W_NEWS * ns_sig +
-            W_WHALE * wh_sig +
-            W_FUNDING * fr_sig
+            0.30 * fg_sig +
+            0.25 * ns_sig +
+            0.10 * wh_sig +
+            0.20 * fr_sig +
+            0.15 * oi_sig
         )
 
         composite = max(-1.0, min(1.0, composite))
@@ -441,7 +530,7 @@ class MarketIntelligence:
             self._last_log = now
             logger.info(
                 f"MARKET_INTEL composite={composite:.3f} "
-                f"[FG={fg_sig:.2f} News={ns_sig:.2f} Whale={wh_sig:.2f} Fund={fr_sig:.2f}]"
+                f"[FG={fg_sig:.2f} News={ns_sig:.2f} Whale={wh_sig:.2f} Fund={fr_sig:.2f} OI={oi_sig:.2f}]"
             )
 
         return round(composite, 4)
