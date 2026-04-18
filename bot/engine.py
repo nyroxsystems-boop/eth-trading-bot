@@ -331,17 +331,42 @@ def _trade_pair(
         except Exception:
             pass  # ML collection is optional
 
-        # Log status
-        logger.info(
-            f"[{pair}] {'→' if signal.should_buy else '·'} "
-            f"Score: {signal.score:.3f}/{config.entry_score_min:.2f} | "
-            f"Signals: {signal.signals} | "
-            f"RSI: {signal.rsi:.1f} | ADX: {signal.adx:.1f} | "
-            f"Regime: {signal.regime} | "
-            f"Price: ${signal.price:,.2f}"
-        )
+        # ── SWARM CONSENSUS: All agents vote ──
+        swarm_approved = False
+        try:
+            from bot.swarm import get_swarm
+            swarm = get_swarm()
+            swarm_data = {
+                "pair": pair, "rsi": signal.rsi, "adx": signal.adx,
+                "macd": float(row.get("macd", 0)),
+                "macd_signal": float(row.get("macd_signal", 0)),
+                "macd_hist": float(row.get("macd_hist", 0)),
+                "bb_pct": float(row.get("bb_pct", 0.5)),
+                "volume_ratio": float(row.get("volume", 0)) / max(float(df["volume"].mean()), 1),
+                "vwap_dev": float(row.get("vwap_dev", 0)),
+                "atr_pct": atr / max(px, 1) * 100,
+                "regime": signal.regime, "score": signal.score,
+                "mtf_boost": mtf_boost if 'mtf_boost' in dir() else 0,
+                "fg_value": 0, "news_sentiment": 0,
+                "funding_rate": 0, "oi_signal": 0,
+                "intel_composite": 0, "signal_count": len(signal.signals),
+            }
+            decision = swarm.decide(swarm_data)
+            swarm_approved = decision.approved
 
-        if signal.should_buy:
+            # Log swarm decision
+            logger.info(
+                f"[{pair}] 🐝 Swarm: {decision.buy_votes}/{decision.total_agents} BUY "
+                f"({decision.consensus_pct:.0%}) | "
+                f"Weight: {decision.weighted_score:+.3f} | "
+                f"{'✅ APPROVED' if decision.approved else '· SKIP'} | "
+                f"{decision.reasoning}"
+            )
+        except Exception:
+            # Fallback to old score-based decision
+            swarm_approved = signal.should_buy
+
+        if swarm_approved:
             qty = position_size(px, atr, config, state)
             cost = qty * px
 
@@ -352,11 +377,10 @@ def _trade_pair(
                 state.open_position(px, qty, atr)
                 _log_trade("BUY", pair, qty, px)
 
-                entry_type = signal.signals[0] if signal.signals else "SIGNAL"
                 msg = (
-                    f"[{pair}] ▶️ LONG {base} ({entry_type}) "
+                    f"[{pair}] ▶️ LONG {base} (SWARM {decision.buy_votes}/{decision.total_agents}) "
                     f"@ ${px:,.2f} | Size: ${qty*px:,.2f} | "
-                    f"Score: {signal.score:.3f} | "
+                    f"Consensus: {decision.consensus_pct:.0%} | "
                     f"Signals: {', '.join(signal.signals)}"
                 )
                 logger.info(msg)
@@ -402,6 +426,12 @@ def run(config: TradingConfig | None = None):
         logger.info(f"🧬 Genetic Evolver: Gen #{evolver.generation} | {len(evolver.population)} strategies")
     except Exception as e:
         logger.warning(f"Experience init: {e}")
+
+    try:
+        from bot.swarm import get_swarm
+        swarm = get_swarm()
+    except Exception as e:
+        logger.warning(f"Swarm init: {e}")
 
     # Get pairs and create per-pair states
     pairs = _get_pairs()
