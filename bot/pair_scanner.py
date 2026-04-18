@@ -33,13 +33,20 @@ BLACKLIST = {
     "1000SHIBUPUSDT", "1000SHIBDOWNUSDT",
     # Stablecoins (don't trade stable-to-stable)
     "BUSDUSDT", "USDCUSDT", "TUSDUSDT", "DAIUSDT", "FDUSDUSDT",
-    "USDPUSDT", "EURUSDT", "GBPUSDT",
+    "USDPUSDT", "EURUSDT", "GBPUSDT", "USD1USDT", "RLUSDUSDT",
+    "PYUSDUSDT", "USTCUSDT", "AEURUSDT", "BIDUSDUSDT",
     # Wrapped tokens
     "WBTCUSDT", "WBETHUSDT",
 }
 
+# Patterns that indicate stablecoins (auto-detect)
+STABLECOIN_PATTERNS = {"USD", "EUR", "GBP", "JPY", "BUSD", "TUSD", "DAI"}
+
 # Minimum 24h volume in USDT to be eligible
 MIN_VOLUME_USDT = 10_000_000  # $10M minimum daily volume
+
+# Maximum price change filter — skip coins moving <0.1% (likely pegged)
+MIN_PRICE_CHANGE_PCT = 0.1
 
 
 def fetch_all_binance_pairs() -> List[Dict]:
@@ -87,7 +94,17 @@ def fetch_all_binance_pairs() -> List[Dict]:
             if volume_usdt < MIN_VOLUME_USDT:
                 continue
 
+            # Skip pegged tokens (price change < 0.1% = stablecoin)
+            change_pct = abs(float(t.get("priceChangePercent", 0)))
+            if change_pct < MIN_PRICE_CHANGE_PCT:
+                continue
+
             base = symbol.replace("USDT", "")
+
+            # Auto-detect stablecoins by name pattern
+            if any(pat in base.upper() for pat in STABLECOIN_PATTERNS):
+                continue
+
             pairs.append({
                 "pair": symbol,
                 "base": base,
