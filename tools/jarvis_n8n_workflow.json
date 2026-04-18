@@ -1,0 +1,147 @@
+{
+  "name": "Jarvis ETH Bot Controller",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 4
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Alle 4 Stunden",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://web-production-d57ac.up.railway.app/api/status",
+        "options": {}
+      },
+      "id": "get-market-data",
+      "name": "Marktdaten holen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "inputSource": "auto",
+        "text": "={{ JSON.stringify($json) }}",
+        "options": {
+          "systemMessage": "Du bist Jarvis, der KI-Regime-Manager für einen ETH Spot Trading Bot auf Binance.\n\nDu erhältst aktuelle Marktdaten (Preis, Regime, ML-Status, offene Position, PnL).\n\nAnalysiere die Daten und antworte NUR mit einem validen JSON-Objekt (kein Markdown, keine Erklärung, nur JSON):\n\n{\n  \"ml_confidence_threshold\": 0.42,\n  \"risk_multiplier\": 1.0,\n  \"emergency_stop\": false,\n  \"active_edges\": [\"BREAKOUT\", \"DRAWDOWN\", \"OS-FAST\", \"NORMAL\", \"BB_BOUNCE\", \"MACD_CROSS\", \"RANGE_SUP\"],\n  \"reason\": \"Kurze Begründung deiner Entscheidung\"\n}\n\nRegeln:\n- ml_confidence_threshold: 0.30-0.90. Höher = weniger aber bessere Trades. Standard: 0.42\n- risk_multiplier: 0.1-5.0. Standard: 1.0. Bei hoher Volatilität senken, bei klarem Trend erhöhen\n- emergency_stop: true NUR bei extremer Gefahr (Flash Crash, >5% Drawdown in einer Stunde)\n- active_edges: Welche Strategien aktiv sein sollen. Bei Seitwärtsmarkt: OS-FAST, BB_BOUNCE, RANGE_SUP. Bei Trend: BREAKOUT, NORMAL, MACD_CROSS\n- reason: Max 100 Zeichen, deutsch oder englisch\n\nSei konservativ. Im Zweifel: Standard-Werte beibehalten."
+        }
+      },
+      "id": "claude-analysis",
+      "name": "Claude Analyse",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.4,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "model": "claude-sonnet-4-20250514",
+        "options": {
+          "maxTokensToSample": 500,
+          "temperature": 0.3
+        }
+      },
+      "id": "anthropic-model",
+      "name": "Anthropic Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [720, 520],
+      "credentials": {
+        "anthropicApi": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://web-production-d57ac.up.railway.app/api/jarvis/update_regime",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Jarvis-Token",
+              "value": "29bfff2625fe5726dfd9bae5810fec62aee1f92c96a0a0803f0e0b11c42bffaf"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json.text }}",
+        "options": {}
+      },
+      "id": "jarvis-webhook",
+      "name": "Jarvis Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [980, 300]
+    }
+  ],
+  "connections": {
+    "Alle 4 Stunden": {
+      "main": [
+        [
+          {
+            "node": "Marktdaten holen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marktdaten holen": {
+      "main": [
+        [
+          {
+            "node": "Claude Analyse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Analyse": {
+      "main": [
+        [
+          {
+            "node": "Jarvis Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Claude": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Claude Analyse",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "Jarvis"
+    }
+  ]
+}

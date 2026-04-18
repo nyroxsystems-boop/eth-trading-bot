@@ -1,0 +1,49 @@
+{
+  "name": "Jarvis ETH Bot (Ollama)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 4
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Alle 4 Stunden",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Jarvis Brain: Market Data -> Ollama -> Jarvis Webhook\nconst JARVIS_TOKEN = '29bfff2625fe5726dfd9bae5810fec62aee1f92c96a0a0803f0e0b11c42bffaf';\nconst API_BASE = 'https://web-production-d57ac.up.railway.app';\nconst OLLAMA_URL = 'http://host.docker.internal:11434';\n\n// Step 1: Fetch market data from Railway\nlet marketData = {};\ntry {\n  const statusResp = await this.helpers.httpRequest({\n    method: 'GET',\n    url: `${API_BASE}/api/status`,\n    returnFullResponse: true,\n  });\n  marketData = statusResp.body || {};\n} catch (e) {\n  marketData = { error: 'Could not fetch market data', detail: e.message };\n}\n\n// Clean non-ASCII characters\nconst cleanData = {};\nfor (const [k, v] of Object.entries(marketData)) {\n  if (typeof v === 'string') {\n    cleanData[k] = v.replace(/[^\\x20-\\x7E]/g, '');\n  } else {\n    cleanData[k] = v;\n  }\n}\n\n// Step 2: Call Ollama locally\nlet ollamaResult = {};\ntry {\n  const prompt = `Current ETH trading bot data: ${JSON.stringify(cleanData)}\\n\\nAnalyze this data and respond ONLY with a valid JSON object:\\n{\"ml_confidence_threshold\": 0.42, \"risk_multiplier\": 1.0, \"emergency_stop\": false, \"active_edges\": [\"BREAKOUT\",\"NORMAL\",\"BB_BOUNCE\",\"MACD_CROSS\",\"RANGE_SUP\"], \"reason\": \"short reason\"}\\n\\nRules:\\n- ml_confidence_threshold: 0.30-0.90 (higher=fewer trades, default 0.42)\\n- risk_multiplier: 0.1-5.0 (default 1.0, lower in high volatility)\\n- emergency_stop: true ONLY for extreme danger\\n- active_edges: sideways market use OS-FAST,BB_BOUNCE,RANGE_SUP. trending use BREAKOUT,NORMAL,MACD_CROSS\\n- Be conservative. When in doubt, use defaults.`;\n\n  // Try localhost first, then host.docker.internal (for Docker-based n8n)\n  let ollamaHost = 'http://localhost:11434';\n  let ollamaResp;\n  try {\n    ollamaResp = await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${ollamaHost}/api/generate`,\n      body: {\n        model: 'qwen2.5-coder:14b',\n        prompt: prompt,\n        stream: false,\n        format: 'json'\n      },\n      returnFullResponse: true,\n      timeout: 120000,\n    });\n  } catch (e1) {\n    // Fallback: try host.docker.internal (Docker)\n    ollamaHost = 'http://host.docker.internal:11434';\n    ollamaResp = await this.helpers.httpRequest({\n      method: 'POST',\n      url: `${ollamaHost}/api/generate`,\n      body: {\n        model: 'qwen2.5-coder:14b',\n        prompt: prompt,\n        stream: false,\n        format: 'json'\n      },\n      returnFullResponse: true,\n      timeout: 120000,\n    });\n  }\n\n  const responseText = ollamaResp.body?.response || '{}';\n  ollamaResult = JSON.parse(responseText);\n} catch (e) {\n  ollamaResult = {\n    ml_confidence_threshold: 0.42,\n    risk_multiplier: 1.0,\n    emergency_stop: false,\n    reason: `Ollama error, using defaults: ${e.message}`\n  };\n}\n\n// Step 3: Push to Jarvis Webhook\nlet webhookResult = {};\ntry {\n  const postResp = await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${API_BASE}/api/jarvis/update_regime`,\n    headers: {\n      'X-Jarvis-Token': JARVIS_TOKEN,\n      'Content-Type': 'application/json',\n    },\n    body: ollamaResult,\n    returnFullResponse: true,\n  });\n  webhookResult = postResp.body || {};\n} catch (e) {\n  webhookResult = { error: 'Webhook failed', detail: e.message };\n}\n\nreturn [{\n  json: {\n    status: 'ok',\n    timestamp: new Date().toISOString(),\n    market_data: cleanData,\n    ollama_analysis: ollamaResult,\n    webhook_result: webhookResult,\n  }\n}];"
+      },
+      "id": "jarvis-brain",
+      "name": "Jarvis Brain (Ollama)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    }
+  ],
+  "connections": {
+    "Alle 4 Stunden": {
+      "main": [
+        [
+          {
+            "node": "Jarvis Brain (Ollama)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
