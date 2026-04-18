@@ -21,19 +21,19 @@ class TradingConfig:
     paper_balance: float = 100_000.0
 
     # --- Risk Management ---
-    risk_per_trade: float = 0.01        # 1% of equity per trade
-    max_risk_per_trade: float = 0.03    # Hard cap 3%
-    stop_atr_mult: float = 2.0         # SL = 2x ATR
-    stop_floor: float = 0.012          # Minimum SL: 1.2%
-    tp_min: float = 0.015              # TP: 1.5%
-    tp_max: float = 0.025              # TP: 2.5%
-    max_drawdown_day: float = 0.03     # 3% daily max drawdown → stop
+    risk_per_trade: float = 0.02        # 2% of equity per trade
+    max_risk_per_trade: float = 0.04    # Hard cap 4%
+    stop_atr_mult: float = 1.8         # SL = 1.8x ATR
+    stop_floor: float = 0.010          # Minimum SL: 1.0%
+    tp_min: float = 0.012              # TP: 1.2%
+    tp_max: float = 0.030              # TP: 3.0%
+    max_drawdown_day: float = 0.05     # 5% daily max drawdown → stop
 
     # --- Entry ---
-    entry_score_min: float = 0.20      # Minimum score to enter (lenient)
-    max_trades_per_day: int = 15
-    rsi_min: float = 30.0
-    rsi_max: float = 75.0
+    entry_score_min: float = 0.15      # Lower threshold for more entries
+    max_trades_per_day: int = 25       # Aggressive data collection
+    rsi_min: float = 25.0
+    rsi_max: float = 78.0
 
     # --- Position Management ---
     break_even_trigger: float = 0.012  # Move SL to BE after +1.2%
@@ -45,8 +45,8 @@ class TradingConfig:
     ml_threshold: float = 0.52         # Min ML confidence for entry
 
     # --- Cooldowns ---
-    loss_streak_cooldown: int = 5      # N losses → cooldown
-    cooldown_minutes: int = 120        # 2h pause after streak
+    loss_streak_cooldown: int = 6      # N losses → cooldown
+    cooldown_minutes: int = 60         # 1h pause after streak
 
     # --- Notifications ---
     telegram_token: str = ""
@@ -57,7 +57,7 @@ class TradingConfig:
     binance_api_secret: str = ""
 
     # --- Timing ---
-    loop_sleep_seconds: int = 120      # 2min between loops
+    loop_sleep_seconds: int = 90       # 90s between loops — faster learning
 
     @classmethod
     def from_env(cls) -> "TradingConfig":

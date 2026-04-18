@@ -328,7 +328,12 @@ def _trade_pair(
             pass
 
         # Recheck buy after all enrichments
-        signal.should_buy = signal.score >= config.entry_score_min and brain_confidence >= 0.6
+        # Brain is advisory, not a hard gate — let the Swarm decide
+        signal.should_buy = signal.score >= config.entry_score_min
+        if brain_confidence < 0.4 and brain_confidence > 0:
+            # Brain actively says NO — apply score penalty
+            signal.score -= 0.05
+            signal.signals.append(f"BRAIN_WARN({brain_confidence:.2f})")
 
         # ── ML Feature Collection: record EVERY evaluation ──
         try:

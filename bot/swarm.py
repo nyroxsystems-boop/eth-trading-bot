@@ -469,10 +469,15 @@ class TradingSwarm:
     """
 
     # Minimum weighted consensus to approve a trade (0-1)
-    CONSENSUS_THRESHOLD = 0.55
+    CONSENSUS_THRESHOLD = 0.50
 
     # Minimum number of BUY votes required
-    MIN_BUY_VOTES = 4
+    MIN_BUY_VOTES = 3
+
+    # Cold-start: relaxed thresholds while agents have <N votes
+    COLD_START_THRESHOLD = 10
+    COLD_START_CONSENSUS = 0.45
+    COLD_START_MIN_BUY = 3
 
     def __init__(self):
         self.agents: list[SwarmAgent] = [
@@ -546,11 +551,26 @@ class TradingSwarm:
         active_voters = len(buy_votes) + len(skip_votes)
         consensus_pct = len(buy_votes) / max(active_voters, 1)
 
+        # Cold-start detection: are most agents still newborns?
+        total_agent_votes = sum(a.total_votes for a in self.agents)
+        avg_agent_votes = total_agent_votes / max(len(self.agents), 1)
+        cold_start = avg_agent_votes < self.COLD_START_THRESHOLD
+
+        # Use relaxed thresholds during cold-start (learning phase)
+        if cold_start:
+            req_consensus = self.COLD_START_CONSENSUS
+            req_min_buy = self.COLD_START_MIN_BUY
+            req_weight = 0.0  # Any positive weighted score
+        else:
+            req_consensus = self.CONSENSUS_THRESHOLD
+            req_min_buy = self.MIN_BUY_VOTES
+            req_weight = 0.1
+
         # Decision
         approved = (
-            consensus_pct >= self.CONSENSUS_THRESHOLD and
-            len(buy_votes) >= self.MIN_BUY_VOTES and
-            weighted_score > 0.1
+            consensus_pct >= req_consensus and
+            len(buy_votes) >= req_min_buy and
+            weighted_score > req_weight
         )
 
         if approved:
