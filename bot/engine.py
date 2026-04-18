@@ -198,6 +198,25 @@ def _trade_pair(
         # Recheck buy after enrichments
         signal.should_buy = signal.score >= config.entry_score_min
 
+        # ── ML Feature Collection: record EVERY evaluation ──
+        try:
+            from bot.ml_collector import record_evaluation
+            intel_data = None
+            try:
+                intel_data = mi.get_market_intelligence() if mi else None
+            except Exception:
+                pass
+            record_evaluation(
+                pair=pair,
+                df=df,
+                signal=signal,
+                intel_data=intel_data,
+                mtf_boost=mtf_boost if 'mtf_boost' in dir() else 0.0,
+                action="BUY" if signal.should_buy else "SKIP",
+            )
+        except Exception:
+            pass  # ML collection is optional
+
         # Log status
         logger.info(
             f"[{pair}] {'→' if signal.should_buy else '·'} "
@@ -294,6 +313,23 @@ def run(config: TradingConfig | None = None):
 
                 # Small delay between pairs to avoid rate limits
                 time.sleep(2)
+
+            # ── Periodic ML backfill: label past evaluations with outcomes ──
+            if loop_count % 10 == 0:
+                try:
+                    from bot.ml_collector import backfill_outcomes, get_stats
+                    for p in pairs:
+                        backfill_outcomes(p["pair"])
+                    stats = get_stats()
+                    if stats["total_evaluations"] > 0:
+                        logger.info(
+                            f"ML Data: {stats['total_evaluations']} evals | "
+                            f"{stats['total_labeled']} labeled | "
+                            f"{stats['total_buys']} buys | "
+                            f"Ready: {stats['ready_for_training']}"
+                        )
+                except Exception:
+                    pass
 
             # ── Sleep between full rotations ──
             _shutdown.wait(config.loop_sleep_seconds)
