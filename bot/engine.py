@@ -128,6 +128,15 @@ def _trade_pair(
         except Exception:
             pass
 
+    # ── Step 0: Circuit Breaker check ──
+    try:
+        from bot.shield import get_circuit_breaker
+        cb = get_circuit_breaker()
+        if not cb.is_trading_allowed():
+            return  # ALL trading halted
+    except Exception:
+        pass
+
     # ── Step 1: Pre-trade guards ──
     if not state.is_in_position:
         guard = check_guards(config, state)
@@ -213,6 +222,14 @@ def _trade_pair(
             try:
                 from bot.experience import get_memory
                 get_memory().record_outcome(pair, pnl_pct)
+            except Exception:
+                pass
+
+            # ── Shield: Circuit Breaker + Portfolio Guard ──
+            try:
+                from bot.shield import get_circuit_breaker, get_portfolio_guard
+                get_circuit_breaker().record_trade(pnl, state.paper_balance)
+                get_portfolio_guard().close_position(pair)
             except Exception:
                 pass
 
@@ -373,9 +390,27 @@ def _trade_pair(
             if cost < 10:
                 qty = max(qty, 50.0 / max(px, 1))
 
-            if execute_buy(px, qty, config, state):
+            # ── Portfolio Guard: check exposure ──
+            can_trade = True
+            try:
+                from bot.shield import get_portfolio_guard
+                pg = get_portfolio_guard()
+                allowed, reason = pg.can_open_position(pair, qty * px)
+                if not allowed:
+                    logger.info(f"[{pair}] 🛡️ Portfolio Guard: {reason}")
+                    can_trade = False
+            except Exception:
+                pass
+
+            if can_trade and execute_buy(px, qty, config, state):
                 state.open_position(px, qty, atr)
                 _log_trade("BUY", pair, qty, px)
+
+                # Register position with portfolio guard
+                try:
+                    get_portfolio_guard().register_position(pair, qty * px)
+                except Exception:
+                    pass
 
                 msg = (
                     f"[{pair}] ▶️ LONG {base} (SWARM {decision.buy_votes}/{decision.total_agents}) "
@@ -432,6 +467,14 @@ def run(config: TradingConfig | None = None):
         swarm = get_swarm()
     except Exception as e:
         logger.warning(f"Swarm init: {e}")
+
+    try:
+        from bot.shield import get_circuit_breaker, get_portfolio_guard
+        cb = get_circuit_breaker()
+        pg = get_portfolio_guard()
+        logger.info(f"🛡️ Shield: Circuit Breaker (max -{cb.max_daily_loss_pct}% daily) | Portfolio Guard (max {pg.max_positions} positions)")
+    except Exception as e:
+        logger.warning(f"Shield init: {e}")
 
     # Get pairs and create per-pair states
     pairs = _get_pairs()

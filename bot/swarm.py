@@ -12,7 +12,7 @@ Architecture:
 - Agent weights are SELF-LEARNING: agents with better track records get more influence
 - Minimum consensus threshold must be met before any trade
 
-Think of it like a hedge fund with 12 portfolio managers who all vote.
+Think of it like a hedge fund with 13 portfolio managers who all vote.
 The ones with the best track record have the loudest voice.
 
 This is how Renaissance Technologies and Citadel actually work.
@@ -425,6 +425,37 @@ class MLAgent(SwarmAgent):
             return AgentVote(self.name, Vote.NEUTRAL, 0.20, "ML model not trained yet")
 
 
+class OrderFlowAgent(SwarmAgent):
+    """Order Flow Agent — analyzes real-time buy/sell pressure (CVD)."""
+
+    def __init__(self):
+        super().__init__("OrderFlow", weight=1.2)
+
+    def analyze(self, data: dict) -> AgentVote:
+        try:
+            from bot.shield import get_order_flow
+            pair = data.get("pair", "")
+            if not pair or not pair.endswith("USDT"):
+                return AgentVote(self.name, Vote.NEUTRAL, 0.20, "Non-crypto pair")
+
+            flow = get_order_flow().analyze(pair)
+            signal = flow.get("signal", 0)
+            buy_ratio = flow.get("buy_ratio", 0.5)
+
+            if signal > 0.3 and buy_ratio > 0.6:
+                return AgentVote(self.name, Vote.BUY, min(0.85, 0.5 + signal),
+                                 f"Buyers dominate ({buy_ratio:.0%} buy, CVD +{flow['cvd']:.0f})")
+            elif signal < -0.3 and buy_ratio < 0.4:
+                return AgentVote(self.name, Vote.SKIP, min(0.80, 0.5 + abs(signal)),
+                                 f"Sellers dominate ({buy_ratio:.0%} buy, CVD {flow['cvd']:.0f})")
+            else:
+                return AgentVote(self.name, Vote.NEUTRAL, 0.30,
+                                 f"Order flow balanced ({buy_ratio:.0%} buy)")
+
+        except Exception:
+            return AgentVote(self.name, Vote.NEUTRAL, 0.20, "Order flow unavailable")
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SWARM CONSENSUS ENGINE
 # ═══════════════════════════════════════════════════════════════════════════
@@ -457,6 +488,7 @@ class TradingSwarm:
             BrainAgent(),
             MemoryAgent(),
             MLAgent(),
+            OrderFlowAgent(),
         ]
         self._load_weights()
         logger.info(
