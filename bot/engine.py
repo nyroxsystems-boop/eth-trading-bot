@@ -188,6 +188,27 @@ def _trade_pair(
             logger.info(msg)
             _notify(config, msg)
 
+            # ── Brain: Learn from this trade ──
+            try:
+                from bot.brain import get_brain
+                brain = get_brain()
+                brain.record_trade_result(
+                    pair=pair,
+                    entry_price=pos.entry_price,
+                    exit_price=px,
+                    pnl=pnl,
+                    pnl_pct=pnl_pct,
+                    signals_used=getattr(pos, 'entry_signals', []),
+                    regime=getattr(pos, 'entry_regime', 'unknown'),
+                    hold_bars=pos.bars_held,
+                )
+                # Track strategy combo
+                sig_combo = "+".join(sorted(getattr(pos, 'entry_signals', [])))
+                if sig_combo:
+                    brain.record_strategy_result(sig_combo, pnl_pct, getattr(pos, 'entry_regime', 'unknown'))
+            except Exception:
+                pass
+
             if state.loss_streak >= config.loss_streak_cooldown:
                 state.trigger_cooldown(config.cooldown_minutes)
                 logger.info(f"[{pair}] ⏸️ Cooldown: {config.cooldown_minutes}min")
@@ -227,8 +248,29 @@ def _trade_pair(
         except Exception:
             pass
 
-        # Recheck buy after enrichments
-        signal.should_buy = signal.score >= config.entry_score_min
+        # ── Brain: Record evaluation + get intelligence ──
+        brain_confidence = 1.0
+        try:
+            from bot.brain import get_brain
+            brain = get_brain()
+            brain.record_evaluation(pair, signal, signal.regime, px,
+                                    "BUY" if signal.should_buy else "SKIP",
+                                    market=market)
+            # Brain confidence adjustment
+            brain_confidence = brain.get_pair_confidence(pair)
+            regime_adj = brain.get_regime_adjustment(signal.regime)
+            if abs(regime_adj) > 0.001:
+                signal.score += regime_adj
+                signal.signals.append(f"BRAIN({regime_adj:+.3f})")
+
+            # Brain blocks underperforming pairs
+            if not brain.should_trade_pair(pair):
+                signal.should_buy = False
+        except Exception:
+            pass
+
+        # Recheck buy after all enrichments
+        signal.should_buy = signal.score >= config.entry_score_min and brain_confidence >= 0.6
 
         # ── ML Feature Collection: record EVERY evaluation ──
         try:
@@ -300,6 +342,17 @@ def run(config: TradingConfig | None = None):
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+    # Initialize Brain
+    try:
+        from bot.brain import get_brain
+        brain = get_brain()
+        status = brain.get_status()
+        logger.info(f"🧠 Brain Stage: {status['stage']}")
+        logger.info(f"🧠 Known pairs: {status['pairs_known']} | Lessons: {status['lessons_learned']} | Patterns: {status['patterns_discovered']}")
+    except Exception as e:
+        logger.warning(f"Brain init: {e}")
+        brain = None
 
     # Get pairs and create per-pair states
     pairs = _get_pairs()
@@ -400,6 +453,28 @@ def run(config: TradingConfig | None = None):
                 except Exception:
                     pass
 
+            # ── Brain: Periodic evolution tasks ──
+            if loop_count % 20 == 0:
+                try:
+                    from bot.brain import get_brain
+                    b = get_brain()
+                    # Auto-train ML model when enough data
+                    b.maybe_train_model()
+                    # Discover patterns every 50 loops
+                    if loop_count % 50 == 0:
+                        b.discover_patterns()
+                    # Log brain status
+                    bs = b.get_status()
+                    logger.info(
+                        f"🧠 Brain: {bs['stage']} | "
+                        f"{bs['total_trades']} trades | "
+                        f"{bs['winrate']:.0%} WR | "
+                        f"${bs['lifetime_pnl']:+,.2f} | "
+                        f"{bs['pairs_known']} pairs known"
+                    )
+                except Exception:
+                    pass
+
             # ── Sleep between full rotations ──
             _shutdown.wait(config.loop_sleep_seconds)
 
@@ -409,10 +484,17 @@ def run(config: TradingConfig | None = None):
             logger.error(f"Loop error: {e}", exc_info=True)
             _shutdown.wait(30)
 
-    # Shutdown — save all states
+    # Shutdown — save all states + brain
     logger.info("Ethbot shutting down...")
     for pair_key, state in states.items():
         state.save(f"logs/state_{pair_key}.json")
+    try:
+        from bot.brain import get_brain
+        get_brain().save_memory()
+        get_brain().save_strategies()
+        logger.info("🧠 Brain memory saved")
+    except Exception:
+        pass
     _notify(config, "🛑 Ethbot gestoppt")
 
 
