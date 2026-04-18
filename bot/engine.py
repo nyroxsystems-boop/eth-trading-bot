@@ -209,6 +209,13 @@ def _trade_pair(
             except Exception:
                 pass
 
+            # ── Experience Memory: record outcome ──
+            try:
+                from bot.experience import get_memory
+                get_memory().record_outcome(pair, pnl_pct)
+            except Exception:
+                pass
+
             if state.loss_streak >= config.loss_streak_cooldown:
                 state.trigger_cooldown(config.cooldown_minutes)
                 logger.info(f"[{pair}] ⏸️ Cooldown: {config.cooldown_minutes}min")
@@ -266,6 +273,39 @@ def _trade_pair(
             # Brain blocks underperforming pairs
             if not brain.should_trade_pair(pair):
                 signal.should_buy = False
+        except Exception:
+            pass
+
+        # ── Experience Memory: "Have I seen this before?" ──
+        try:
+            from bot.experience import get_memory
+            exp_mem = get_memory()
+            # Build feature dict for similarity search
+            exp_features = {
+                "rsi14": signal.rsi, "adx14": signal.adx,
+                "atr_pct": float(row.get("atr", 0)) / max(px, 1) * 100,
+                "macd_norm": float(row.get("macd", 0)),
+                "volume_ratio": float(row.get("volume", 0)) / max(float(df["volume"].mean()), 1),
+                "bb_position": float(row.get("bb_pct", 0.5)),
+                "vwap_dev": float(row.get("vwap_dev", 0)),
+                "trend_strength": signal.score,
+                "fg_value": 0, "news_sentiment": 0,
+                "funding_rate": 0, "oi_signal": 0,
+                "mtf_boost": mtf_boost if 'mtf_boost' in dir() else 0,
+                "score": signal.score,
+            }
+            # Record this experience
+            exp_mem.record(pair, exp_features,
+                          "BUY" if signal.should_buy else "SKIP",
+                          signal.signals, signal.regime)
+            # Get wisdom from similar past experiences
+            wisdom = exp_mem.get_wisdom(exp_features, pair)
+            if wisdom["similar_count"] >= 5:
+                if wisdom["recommendation"] == "SKIP" and wisdom["confidence"] > 0.6:
+                    signal.signals.append(f"MEMORY(SKIP:{wisdom['historical_winrate']:.0%})")
+                    signal.should_buy = False
+                elif wisdom["recommendation"] == "BUY" and wisdom["confidence"] > 0.5:
+                    signal.signals.append(f"MEMORY(BUY:{wisdom['historical_winrate']:.0%})")
         except Exception:
             pass
 
@@ -343,7 +383,7 @@ def run(config: TradingConfig | None = None):
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Initialize Brain
+    # Initialize Brain + Experience Memory + Genetic Evolver
     try:
         from bot.brain import get_brain
         brain = get_brain()
@@ -353,6 +393,15 @@ def run(config: TradingConfig | None = None):
     except Exception as e:
         logger.warning(f"Brain init: {e}")
         brain = None
+
+    try:
+        from bot.experience import get_memory, get_evolver
+        exp_mem = get_memory()
+        evolver = get_evolver()
+        logger.info(f"💾 Experience Memory: {exp_mem.get_stats()['total_experiences']} experiences")
+        logger.info(f"🧬 Genetic Evolver: Gen #{evolver.generation} | {len(evolver.population)} strategies")
+    except Exception as e:
+        logger.warning(f"Experience init: {e}")
 
     # Get pairs and create per-pair states
     pairs = _get_pairs()
