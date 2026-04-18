@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Risk Manager — Position sizing, stop loss, take profit.
 Simple, transparent, no 7-layer guard stacking.

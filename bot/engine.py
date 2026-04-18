@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Trading Engine — The Main Loop (Multi-Pair).
 

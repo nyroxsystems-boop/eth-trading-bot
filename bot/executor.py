@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Order Executor — Handles paper and live order placement.
 Clean separation between paper mode (local state) and live mode (Binance API).

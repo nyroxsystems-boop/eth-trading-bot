@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 ML Feature Collector — Records every signal evaluation for ML training.
 
