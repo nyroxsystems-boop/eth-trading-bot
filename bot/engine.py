@@ -450,11 +450,139 @@ def _trade_pair(
                 state.save(f"logs/state_{pair}.json")
 
 
+def _run_strategy_cycle(config: TradingConfig, loop_count: int):
+    """
+    Execute one strategy evaluation cycle.
+    Runs S1/S2/S4/S5 strategies + Master Allocator risk checks.
+    """
+    # ── Allocator Risk Check (EVERY loop — this is the kill switch) ──
+    try:
+        from bot.strategies.allocator import get_allocator
+        allocator = get_allocator()
+        risk = allocator.check_global_risk()
+        if risk["kill_switch"]:
+            logger.error("🚨 ALLOCATOR KILL SWITCH ACTIVE — Halting all strategy trades")
+            return
+    except Exception as e:
+        logger.debug(f"Allocator check: {e}")
+
+    # ── S5: Liquidation Hunter — Check EVERY loop (time-critical) ──
+    try:
+        from bot.strategies.liquidation_hunter import get_liq_hunter
+        hunter = get_liq_hunter()
+
+        # Start monitoring on first call
+        if not hunter._running:
+            hunter.start_monitoring()
+
+        cascade = hunter.detect_cascade()
+        if cascade:
+            logger.info(
+                f"🎯 LIQ CASCADE: {cascade.symbol} | ${cascade.cascade_usd/1e6:.1f}M | "
+                f"Direction: {cascade.direction} | Confidence: {cascade.confidence:.0%}"
+            )
+            # Check allocator allows this trade
+            capital = allocator.get_allocation("S5_LiqHunter") if allocator else 0
+            if capital and capital > 0:
+                logger.info(
+                    f"🎯 S5 Signal: {cascade.direction} {cascade.symbol} | "
+                    f"Entry: ${cascade.entry_price:,.2f} | "
+                    f"TP: +{cascade.target_pct:.1%} | SL: -{cascade.stop_pct:.1%} | "
+                    f"Capital: ${capital:,.0f}"
+                )
+                # TODO: Execute via executor when Futures API integrated
+    except Exception as e:
+        logger.debug(f"S5 check: {e}")
+
+    # ── S1: Funding Rate Arb — Scan every 30 loops (~1 hour) ──
+    if loop_count % 30 == 5:  # Offset from pair refresh at %30==1
+        try:
+            from bot.strategies.funding_arb import get_funding_arb
+            arb = get_funding_arb()
+            opps = arb.scan_opportunities()
+
+            for opp in opps:
+                if arb.should_enter(opp):
+                    capital = allocator.get_allocation("S1_FundingArb") if allocator else 0
+                    if capital and capital > 0:
+                        logger.info(
+                            f"💰 S1 Opportunity: {opp.symbol} | "
+                            f"Funding: {opp.funding_rate:.4%}/8h ({opp.annualized:.1%} p.a.) | "
+                            f"Net edge: {opp.net_edge_per_8h:.4%} | OI: ${opp.oi_usd/1e6:.0f}M | "
+                            f"Capital: ${capital:,.0f}"
+                        )
+                        # TODO: Execute Long Spot + Short Perp when Futures API integrated
+
+            # Check exits
+            for sym in list(arb.positions.keys()):
+                if arb.should_exit(sym):
+                    logger.info(f"💰 S1 EXIT: {sym} — funding rate dropped")
+                    # TODO: Execute unwind
+
+        except Exception as e:
+            logger.debug(f"S1 scan: {e}")
+
+    # ── S2: Stat Arb — Rescan pairs daily, check signals every 10 loops ──
+    if loop_count % 10 == 3:  # Offset from ML backfill at %10==0
+        try:
+            from bot.strategies.stat_arb import get_stat_arb
+            stat = get_stat_arb()
+
+            # Daily cointegration rescan
+            if loop_count % 720 == 3:  # ~24 hours at 2-min loops
+                stat.find_cointegrated_pairs()
+
+            # Generate signals on existing pairs
+            if stat.pairs:
+                signals = stat.generate_signals()
+                for sig_data in signals:
+                    pair = sig_data["pair"]
+                    action = sig_data["action"]
+                    z = sig_data["zscore"]
+                    capital = allocator.get_allocation("S2_StatArb") if allocator else 0
+
+                    if action in ("LONG_A_SHORT_B", "SHORT_A_LONG_B") and capital and capital > 0:
+                        logger.info(
+                            f"📊 S2 Signal: {action} {pair.asset_a}/{pair.asset_b} | "
+                            f"Z-Score: {z:.2f} | Hedge: {pair.hedge_ratio:.4f} | "
+                            f"p-value: {pair.pvalue:.4f} | Capital: ${capital:,.0f}"
+                        )
+                        # TODO: Execute paired trade when margin available
+
+                    elif action in ("EXIT", "STOP"):
+                        logger.info(
+                            f"📊 S2 {action}: {pair.asset_a}/{pair.asset_b} | "
+                            f"Z-Score: {z:.2f} | Reason: {sig_data.get('reason', 'n/a')}"
+                        )
+
+        except Exception as e:
+            logger.debug(f"S2 check: {e}")
+
+    # ── Strategy status log (every 50 loops) ──
+    if loop_count % 50 == 0:
+        try:
+            from bot.strategies.allocator import get_allocator
+            alloc = get_allocator()
+            status = alloc.get_status()
+            logger.info(
+                f"🎛️ Allocator: ${status['total_equity']:,.0f} equity | "
+                f"DD: {status['drawdown_pct']:.1f}% | Kill: {status['kill_switch']} | "
+                + " | ".join(
+                    f"{sid}: {s['weight']:.0f}%({s['status'][0]})"
+                    for sid, s in status['strategies'].items()
+                    if s['weight'] > 0
+                )
+            )
+        except Exception as e:
+            logger.debug(f"Allocator status: {e}")
+
+
 def run(config: TradingConfig | None = None):
     """
-    Main trading loop — Multi-Pair.
+    Main trading loop — Multi-Pair + Multi-Strategy.
 
     Rotates through all configured pairs, each with independent state.
+    Additionally runs S1/S2/S4/S5 strategies as periodic tasks.
     """
     if config is None:
         config = TradingConfig.from_env()
@@ -503,6 +631,44 @@ def run(config: TradingConfig | None = None):
     except Exception as e:
         logger.warning(f"Shield init: {e}")
 
+    # ── Initialize Strategy Framework ──
+    allocator = None
+    try:
+        from bot.strategies.allocator import get_allocator
+        allocator = get_allocator()
+        logger.info(f"🎛️ Master Allocator: ${allocator.state.total_equity:,.0f} | 5 strategies registered")
+    except Exception as e:
+        logger.warning(f"Allocator init: {e}")
+
+    try:
+        from bot.strategies.funding_arb import get_funding_arb
+        fa = get_funding_arb()
+        logger.info(f"💰 S1 Funding Arb: {len(fa.UNIVERSE)} pairs monitored")
+    except Exception as e:
+        logger.warning(f"S1 init: {e}")
+
+    try:
+        from bot.strategies.stat_arb import get_stat_arb
+        sa = get_stat_arb()
+        logger.info(f"📊 S2 Stat Arb: {len(sa.UNIVERSE)} assets")
+    except Exception as e:
+        logger.warning(f"S2 init: {e}")
+
+    try:
+        from bot.strategies.momentum_v2 import get_momentum
+        mom = get_momentum()
+        logger.info(f"📈 S4 Momentum V2: Hurst regime filter active")
+    except Exception as e:
+        logger.warning(f"S4 init: {e}")
+
+    try:
+        from bot.strategies.liquidation_hunter import get_liq_hunter
+        lh = get_liq_hunter()
+        lh.start_monitoring()
+        logger.info(f"🎯 S5 Liquidation Hunter: Monitoring {len(lh.MONITOR_SYMBOLS)} symbols")
+    except Exception as e:
+        logger.warning(f"S5 init: {e}")
+
     # Get pairs and create per-pair states
     pairs = _get_pairs()
     states: dict[str, BotState] = {}
@@ -534,22 +700,29 @@ def run(config: TradingConfig | None = None):
     crypto_count = sum(1 for p in pairs if p.get("market", "crypto") == "crypto")
     stock_count = sum(1 for p in pairs if p.get("market") == "stock")
     total_balance = sum(s.paper_balance for s in states.values())
-    logger.info(f"═══ Ethbot v3 Multi-Asset Starting ═══")
+    logger.info(f"═══ Ethbot v3 Multi-Strategy Starting ═══")
     logger.info(f"Mode: {mode} | Crypto: {crypto_count} | Stocks: {stock_count} | Total: {len(pairs)}")
+    logger.info(f"Strategies: S1(FundingArb) + S2(StatArb) + S4(Momentum) + S5(LiqHunter)")
     logger.info(f"Interval: {config.interval} | Total Balance: ${total_balance:,.2f}")
     logger.info(f"Per-Pair Balance: ${config.paper_balance / max(len(pairs), 1):,.2f}")
     logger.info(f"Max trades/day: {config.max_trades_per_day} | Entry min: {config.entry_score_min}")
 
-    _notify(config, f"🤖 Ethbot v3 [{mode}] | {crypto_count} crypto + {stock_count} stocks | ${total_balance:,.0f}")
+    _notify(config, f"🤖 Ethbot v3 [{mode}] | {crypto_count} crypto + {stock_count} stocks | S1+S2+S4+S5 | ${total_balance:,.0f}")
 
     loop_count = 0
 
     # ═══════════════════════════════════════════════
-    # MAIN LOOP — rotate through all pairs
+    # MAIN LOOP — rotate through all pairs + run strategies
     # ═══════════════════════════════════════════════
     while not _shutdown.is_set():
         try:
             loop_count += 1
+
+            # ── Run strategy framework (S1/S2/S4/S5 + Allocator) ──
+            try:
+                _run_strategy_cycle(config, loop_count)
+            except Exception as e:
+                logger.error(f"Strategy cycle error: {e}", exc_info=True)
 
             # ── Refresh pairs every 30 loops (~1 hour) ──
             if loop_count % 30 == 1 and loop_count > 1:
@@ -569,6 +742,7 @@ def run(config: TradingConfig | None = None):
                 except Exception as e:
                     logger.debug(f"Non-critical: {e}")  # Keep using current pairs
 
+            # ── S4: Momentum V2 — Evaluate during per-pair loop ──
             for pair_info in pairs:
                 if _shutdown.is_set():
                     break
@@ -581,6 +755,34 @@ def run(config: TradingConfig | None = None):
                     _trade_pair(pair_info, config, state)
                 except Exception as e:
                     logger.error(f"[{pair_key}] Error: {e}", exc_info=True)
+
+                # S4: Run Momentum V2 on same data (if crypto)
+                if pair_info.get("market", "crypto") == "crypto":
+                    try:
+                        from bot.strategies.momentum_v2 import get_momentum
+                        mom = get_momentum()
+                        df = fetch_klines(pair_key, config.interval, lookback=300)
+                        if df is not None and len(df) >= 200:
+                            df = add_indicators(df)
+                            signal = mom.analyze(pair_key, df)
+                            if signal and signal.rr_ratio >= 1.5:
+                                from bot.strategies.allocator import get_allocator
+                                capital = get_allocator().get_allocation("S4_MomentumV2")
+                                if capital and capital > 0:
+                                    size = mom.volatility_target_size(
+                                        capital, signal.atr, signal.entry
+                                    )
+                                    logger.info(
+                                        f"📈 S4 Signal: {signal.side} {pair_key} | "
+                                        f"Regime: {signal.regime} (H={signal.hurst:.2f}) | "
+                                        f"Entry: ${signal.entry:,.2f} → "
+                                        f"TP: ${signal.target:,.2f} / SL: ${signal.stop:,.2f} | "
+                                        f"R:R {signal.rr_ratio:.1f} | "
+                                        f"Vol-sized: {size:.4f} units | "
+                                        f"{'✅ VOL' if signal.volume_confirmed else '⚠️ no vol'}"
+                                    )
+                    except Exception as e:
+                        logger.debug(f"S4 {pair_key}: {e}")
 
                 # Small delay between pairs to avoid rate limits
                 time.sleep(2)
@@ -595,7 +797,7 @@ def run(config: TradingConfig | None = None):
                     if stats["total_evaluations"] > 0:
                         logger.info(
                             f"ML Data: {stats['total_evaluations']} evals | "
-                            f"{stats['total_labeled']} labeled | "
+                            f"{stats['total_labeled']} labeled (Triple-Barrier) | "
                             f"{stats['total_buys']} buys | "
                             f"Ready: {stats['ready_for_training']}"
                         )
@@ -624,6 +826,14 @@ def run(config: TradingConfig | None = None):
                 except Exception as e:
                     logger.debug(f"Non-critical: {e}")
 
+            # ── Allocator: Weekly rebalance ──
+            if loop_count % 5040 == 0:  # ~weekly at 2-min loops
+                try:
+                    from bot.strategies.allocator import get_allocator
+                    get_allocator().rebalance()
+                except Exception as e:
+                    logger.debug(f"Rebalance: {e}")
+
             # ── Sleep between full rotations ──
             _shutdown.wait(config.loop_sleep_seconds)
 
@@ -633,7 +843,7 @@ def run(config: TradingConfig | None = None):
             logger.error(f"Loop error: {e}", exc_info=True)
             _shutdown.wait(30)
 
-    # Shutdown — save all states + brain
+    # Shutdown — save all states + brain + strategies
     logger.info("Ethbot shutting down...")
     for pair_key, state in states.items():
         state.save(f"logs/state_{pair_key}.json")
@@ -644,7 +854,19 @@ def run(config: TradingConfig | None = None):
         logger.info("🧠 Brain memory saved")
     except Exception as e:
         logger.debug(f"Non-critical: {e}")
-    _notify(config, "🛑 Ethbot gestoppt")
+    try:
+        from bot.strategies.liquidation_hunter import get_liq_hunter
+        get_liq_hunter().stop_monitoring()
+        logger.info("🎯 Liquidation Hunter stopped")
+    except Exception as e:
+        logger.debug(f"Non-critical: {e}")
+    try:
+        from bot.strategies.allocator import get_allocator
+        get_allocator()._save_state()
+        logger.info("🎛️ Allocator state saved")
+    except Exception as e:
+        logger.debug(f"Non-critical: {e}")
+    _notify(config, "🛑 Ethbot v3 gestoppt — alle Strategien beendet")
 
 
 if __name__ == "__main__":
