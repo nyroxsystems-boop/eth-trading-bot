@@ -34,7 +34,6 @@ const STATUS_EMOJI: Record<string, string> = {
 }
 
 const STRATEGY_ICONS: Record<string, string> = {
-  'S1_FundingArb': '💰',
   'S2_StatArb': '📊',
   'S3_MarketMaker': '🏛️',
   'S4_MomentumV2': '📈',
@@ -42,11 +41,10 @@ const STRATEGY_ICONS: Record<string, string> = {
 }
 
 const STRATEGY_NAMES: Record<string, string> = {
-  'S1_FundingArb': 'Funding Rate Arb',
   'S2_StatArb': 'Statistical Arb',
   'S3_MarketMaker': 'Market Making',
   'S4_MomentumV2': 'Momentum Breakout',
-  'S5_LiqHunter': 'Liquidation Hunter',
+  'S5_LiqHunter': 'Liquidation Bounce',
 }
 
 export default function StrategyPanel() {

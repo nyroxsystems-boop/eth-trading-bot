@@ -2,11 +2,14 @@ from __future__ import annotations
 """
 Master Strategy Allocator
 
-Manages capital allocation across all 5 strategies using:
+Manages capital allocation across strategies using:
   - Fractional Kelly Criterion for position sizing
   - Rolling Sharpe Ratio per strategy
   - Correlation-aware allocation (Risk Parity)
   - Auto kill-switch for underperformers
+
+Note: S1 FundingArb removed — requires perpetual futures (not available in DE).
+Trading now uses Binance Cross Margin for shorting via asset borrowing.
 
 Global Risk Limits (HARD, non-negotiable):
   - Max total leverage: 3.0x
@@ -32,7 +35,7 @@ logger = logging.getLogger("ethbot.allocator")
 # ═══════════════════════════════════════════════════════════════════
 
 GLOBAL_RISK = {
-    "max_total_leverage": 3.0,
+    "max_total_leverage": 1.0,   # Margin safety — no leverage trading
     "max_daily_loss_pct": 3.0,
     "max_weekly_loss_pct": 7.0,
     "max_drawdown_from_peak_pct": 15.0,
@@ -84,11 +87,11 @@ class MasterAllocator:
 
     # Default strategy weights (initial allocation)
     DEFAULT_WEIGHTS = {
-        "S1_FundingArb":    {"weight": 0.30, "min": 0.05, "max": 0.40},
-        "S2_StatArb":       {"weight": 0.20, "min": 0.05, "max": 0.30},
+        # S1_FundingArb removed — requires perpetual futures (not available in DE)
+        "S2_StatArb":       {"weight": 0.25, "min": 0.05, "max": 0.35},
         "S3_MarketMaking":  {"weight": 0.00, "min": 0.00, "max": 0.20},  # Phase 4
-        "S4_MomentumV2":    {"weight": 0.30, "min": 0.05, "max": 0.40},
-        "S5_LiqHunter":     {"weight": 0.10, "min": 0.05, "max": 0.20},
+        "S4_MomentumV2":    {"weight": 0.50, "min": 0.10, "max": 0.60},
+        "S5_LiqHunter":     {"weight": 0.15, "min": 0.05, "max": 0.25},
     }
 
     def __init__(self, initial_equity: float = 100_000.0):

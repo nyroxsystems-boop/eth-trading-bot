@@ -223,40 +223,19 @@ class TestAllocator:
         assert size <= 10000, f"Position exceeded 10% cap: {size}"
 
 
-class TestFundingArb:
-    """Test Funding Arb strategy logic."""
+class TestMarginExecutor:
+    """Test Margin client safety limits."""
 
-    def test_entry_requires_positive_net_edge(self):
-        from bot.strategies.funding_arb import FundingArbStrategy, FundingOpp
-        arb = FundingArbStrategy()
+    def test_max_position_limit(self):
+        """Max position should be capped."""
+        from bot.margin_executor import MarginClient
+        assert MarginClient.MAX_POSITION_USD == 50_000
 
-        # Negative net edge should not enter
-        opp = FundingOpp(
-            symbol="ETHUSDT", funding_rate=0.0001,
-            annualized=0.109, predicted_rate=0.0001,
-            oi_usd=50_000_000, entry_cost_pct=0.0012,
-            net_edge_per_8h=-0.001,
-        )
-        assert not arb.should_enter(opp)
-
-    def test_max_positions_respected(self):
-        from bot.strategies.funding_arb import FundingArbStrategy, FundingOpp, FundingPosition
-        import time as t
-        arb = FundingArbStrategy()
-
-        # Fill up positions
-        for i in range(arb.MAX_POSITIONS):
-            arb.positions[f"PAIR{i}USDT"] = FundingPosition(
-                symbol=f"PAIR{i}USDT", spot_qty=1, perp_qty=1,
-                entry_funding_rate=0.001, entry_time=t.time(),
-            )
-
-        opp = FundingOpp(
-            symbol="NEWUSDT", funding_rate=0.01,
-            annualized=10.95, predicted_rate=0.01,
-            oi_usd=100_000_000, entry_cost_pct=0.001, net_edge_per_8h=0.009,
-        )
-        assert not arb.should_enter(opp), "Should not exceed max positions"
+    def test_client_initialization(self):
+        """Client should initialize without error."""
+        from bot.margin_executor import MarginClient
+        client = MarginClient.__new__(MarginClient)
+        assert hasattr(client, 'MAX_POSITION_USD')
 
 
 class TestMomentum:
@@ -351,23 +330,21 @@ class TestBacktester:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 5. FUTURES EXECUTOR TESTS
+# 5. MARGIN EXECUTOR TESTS
 # ═══════════════════════════════════════════════════════════════════
 
-class TestFuturesExecutor:
-    """Test Futures client safety limits."""
+class TestMarginExecutorSafety:
+    """Test Margin client safety limits."""
 
-    def test_max_leverage_cap(self):
-        """Leverage should never exceed MAX_LEVERAGE."""
-        from bot.futures_executor import FuturesClient
-        client = FuturesClient.__new__(FuturesClient)
-        # Direct check of constant
-        assert client.MAX_LEVERAGE == 3, f"Max leverage should be 3, got {client.MAX_LEVERAGE}"
+    def test_slippage_allowance(self):
+        """Slippage should be reasonable."""
+        from bot.margin_executor import MarginClient
+        assert MarginClient.SLIPPAGE_ALLOWANCE == 0.001, "Slippage should be 0.1%"
 
-    def test_max_position_limit(self):
-        """Max position should be capped."""
-        from bot.futures_executor import FuturesClient
-        assert FuturesClient.MAX_POSITION_USD == 50_000
+    def test_max_position_safety(self):
+        """Max position should be capped at $50k."""
+        from bot.margin_executor import MarginClient
+        assert MarginClient.MAX_POSITION_USD == 50_000
 
 
 if __name__ == "__main__":

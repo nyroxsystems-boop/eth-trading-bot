@@ -494,33 +494,7 @@ def _run_strategy_cycle(config: TradingConfig, loop_count: int):
     except Exception as e:
         logger.debug(f"S5 check: {e}")
 
-    # ── S1: Funding Rate Arb — Scan every 30 loops (~1 hour) ──
-    if loop_count % 30 == 5:  # Offset from pair refresh at %30==1
-        try:
-            from bot.strategies.funding_arb import get_funding_arb
-            arb = get_funding_arb()
-            opps = arb.scan_opportunities()
-
-            for opp in opps:
-                if arb.should_enter(opp):
-                    capital = allocator.get_allocation("S1_FundingArb") if allocator else 0
-                    if capital and capital > 0:
-                        logger.info(
-                            f"💰 S1 Opportunity: {opp.symbol} | "
-                            f"Funding: {opp.funding_rate:.4%}/8h ({opp.annualized:.1%} p.a.) | "
-                            f"Net edge: {opp.net_edge_per_8h:.4%} | OI: ${opp.oi_usd/1e6:.0f}M | "
-                            f"Capital: ${capital:,.0f}"
-                        )
-                        # TODO: Execute Long Spot + Short Perp when Futures API integrated
-
-            # Check exits
-            for sym in list(arb.positions.keys()):
-                if arb.should_exit(sym):
-                    logger.info(f"💰 S1 EXIT: {sym} — funding rate dropped")
-                    # TODO: Execute unwind
-
-        except Exception as e:
-            logger.debug(f"S1 scan: {e}")
+    # S1 FundingArb removed — requires perpetual futures (not available in DE)
 
     # ── S2: Stat Arb — Rescan pairs daily, check signals every 10 loops ──
     if loop_count % 10 == 3:  # Offset from ML backfill at %10==0
@@ -640,12 +614,8 @@ def run(config: TradingConfig | None = None):
     except Exception as e:
         logger.warning(f"Allocator init: {e}")
 
-    try:
-        from bot.strategies.funding_arb import get_funding_arb
-        fa = get_funding_arb()
-        logger.info(f"💰 S1 Funding Arb: {len(fa.UNIVERSE)} pairs monitored")
-    except Exception as e:
-        logger.warning(f"S1 init: {e}")
+    # S1 FundingArb removed — requires perpetual futures (not available in DE)
+    logger.info("💰 S1 Funding Arb: DISABLED (Futures not available in DE, using Margin)")
 
     try:
         from bot.strategies.stat_arb import get_stat_arb
@@ -702,12 +672,12 @@ def run(config: TradingConfig | None = None):
     total_balance = sum(s.paper_balance for s in states.values())
     logger.info(f"═══ Ethbot v3 Multi-Strategy Starting ═══")
     logger.info(f"Mode: {mode} | Crypto: {crypto_count} | Stocks: {stock_count} | Total: {len(pairs)}")
-    logger.info(f"Strategies: S1(FundingArb) + S2(StatArb) + S4(Momentum) + S5(LiqHunter)")
+    logger.info(f"Strategies: S2(StatArb) + S4(Momentum) + S5(LiqHunter) | Mode: Margin Trading")
     logger.info(f"Interval: {config.interval} | Total Balance: ${total_balance:,.2f}")
     logger.info(f"Per-Pair Balance: ${config.paper_balance / max(len(pairs), 1):,.2f}")
     logger.info(f"Max trades/day: {config.max_trades_per_day} | Entry min: {config.entry_score_min}")
 
-    _notify(config, f"🤖 Ethbot v3 [{mode}] | {crypto_count} crypto + {stock_count} stocks | S1+S2+S4+S5 | ${total_balance:,.0f}")
+    _notify(config, f"🤖 Ethbot v3 [{mode}] | {crypto_count} crypto + {stock_count} stocks | S2+S4+S5 (Margin) | ${total_balance:,.0f}")
 
     loop_count = 0
 
