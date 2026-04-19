@@ -92,8 +92,8 @@ def _notify(config: TradingConfig, msg: str):
             json={"chat_id": config.telegram_chat_id, "text": msg},
             timeout=5,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Non-critical: {e}")
 
 
 def _log_trade(action: str, pair: str, qty: float, price: float, pnl: float = 0.0):
@@ -126,8 +126,8 @@ def _trade_pair(
             from bot.stocks import is_market_open
             if not is_market_open():
                 return  # Skip stocks outside trading hours
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Non-critical: {e}")
 
     # ── Step 0: Circuit Breaker check ──
     try:
@@ -135,8 +135,8 @@ def _trade_pair(
         cb = get_circuit_breaker()
         if not cb.is_trading_allowed():
             return  # ALL trading halted
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Non-critical: {e}")
 
     # ── Step 1: Pre-trade guards ──
     if not state.is_in_position:
@@ -216,23 +216,23 @@ def _trade_pair(
                 sig_combo = "+".join(sorted(getattr(pos, 'entry_signals', [])))
                 if sig_combo:
                     brain.record_strategy_result(sig_combo, pnl_pct, getattr(pos, 'entry_regime', 'unknown'))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Non-critical: {e}")
 
             # ── Experience Memory: record outcome ──
             try:
                 from bot.experience import get_memory
                 get_memory().record_outcome(pair, pnl_pct)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Non-critical: {e}")
 
             # ── Shield: Circuit Breaker + Portfolio Guard ──
             try:
                 from bot.shield import get_circuit_breaker, get_portfolio_guard
                 get_circuit_breaker().record_trade(pnl, state.paper_balance)
                 get_portfolio_guard().close_position(pair)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Non-critical: {e}")
 
             if state.loss_streak >= config.loss_streak_cooldown:
                 state.trigger_cooldown(config.cooldown_minutes)
@@ -260,8 +260,8 @@ def _trade_pair(
             if abs(intel_boost) > 0.01:
                 signal.score += intel_boost
                 signal.signals.append(f"INTEL({intel_boost:+.3f})")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Non-critical: {e}")
 
         # ── Enrichment: Multi-Timeframe Alignment ──
         try:
@@ -270,8 +270,8 @@ def _trade_pair(
             if abs(mtf_boost) > 0.01:
                 signal.score += mtf_boost
                 signal.signals.append(f"MTF({mtf_boost:+.3f})")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Non-critical: {e}")
 
         # ── Brain: Record evaluation + get intelligence ──
         brain_confidence = 1.0
@@ -291,8 +291,8 @@ def _trade_pair(
             # Brain blocks underperforming pairs
             if not brain.should_trade_pair(pair):
                 signal.should_buy = False
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Non-critical: {e}")
 
         # ── Experience Memory: "Have I seen this before?" ──
         try:
@@ -324,8 +324,8 @@ def _trade_pair(
                     signal.should_buy = False
                 elif wisdom["recommendation"] == "BUY" and wisdom["confidence"] > 0.5:
                     signal.signals.append(f"MEMORY(BUY:{wisdom['historical_winrate']:.0%})")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Non-critical: {e}")
 
         # Recheck buy after all enrichments
         # Brain is advisory, not a hard gate — let the Swarm decide
@@ -341,8 +341,8 @@ def _trade_pair(
             intel_data = None
             try:
                 intel_data = mi.get_market_intelligence() if mi else None
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Non-critical: {e}")
             record_evaluation(
                 pair=pair,
                 df=df,
@@ -351,8 +351,8 @@ def _trade_pair(
                 mtf_boost=mtf_boost if 'mtf_boost' in dir() else 0.0,
                 action="BUY" if signal.should_buy else "SKIP",
             )
-        except Exception:
-            pass  # ML collection is optional
+        except Exception as e:
+            logger.debug(f"Non-critical: {e}")  # ML collection is optional
 
         # ── SWARM CONSENSUS: All agents vote ──
         swarm_approved = False
@@ -373,8 +373,8 @@ def _trade_pair(
                     funding_rate = idata.get("funding_rate", {}).get("rate", 0)
                     oi_signal = idata.get("open_interest", {}).get("signal", 0)
                     intel_composite = mi.get_composite_score()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Non-critical: {e}")
 
             swarm_data = {
                 "pair": pair, "rsi": signal.rsi, "adx": signal.adx,
@@ -405,8 +405,9 @@ def _trade_pair(
                 f"{'✅ APPROVED' if decision.approved else '· SKIP'} | "
                 f"{decision.reasoning}"
             )
-        except Exception:
+        except Exception as e:
             # Fallback to old score-based decision
+            logger.debug(f"Swarm fallback: {e}")
             swarm_approved = signal.should_buy
 
         if swarm_approved:
@@ -425,8 +426,8 @@ def _trade_pair(
                 if not allowed:
                     logger.info(f"[{pair}] 🛡️ Portfolio Guard: {reason}")
                     can_trade = False
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Non-critical: {e}")
 
             if can_trade and execute_buy(px, qty, config, state):
                 state.open_position(px, qty, atr)
@@ -435,8 +436,8 @@ def _trade_pair(
                 # Register position with portfolio guard
                 try:
                     get_portfolio_guard().register_position(pair, qty * px)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Non-critical: {e}")
 
                 msg = (
                     f"[{pair}] ▶️ LONG {base} (SWARM {decision.buy_votes}/{decision.total_agents}) "
@@ -565,8 +566,8 @@ def run(config: TradingConfig | None = None):
                                 states[pk] = st
                         pairs = new_pairs
                         logger.info(f"Pairs refreshed: {[p['pair'] for p in pairs]}")
-                except Exception:
-                    pass  # Keep using current pairs
+                except Exception as e:
+                    logger.debug(f"Non-critical: {e}")  # Keep using current pairs
 
             for pair_info in pairs:
                 if _shutdown.is_set():
@@ -598,8 +599,8 @@ def run(config: TradingConfig | None = None):
                             f"{stats['total_buys']} buys | "
                             f"Ready: {stats['ready_for_training']}"
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Non-critical: {e}")
 
             # ── Brain: Periodic evolution tasks ──
             if loop_count % 20 == 0:
@@ -620,8 +621,8 @@ def run(config: TradingConfig | None = None):
                         f"${bs['lifetime_pnl']:+,.2f} | "
                         f"{bs['pairs_known']} pairs known"
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Non-critical: {e}")
 
             # ── Sleep between full rotations ──
             _shutdown.wait(config.loop_sleep_seconds)
@@ -641,8 +642,8 @@ def run(config: TradingConfig | None = None):
         get_brain().save_memory()
         get_brain().save_strategies()
         logger.info("🧠 Brain memory saved")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Non-critical: {e}")
     _notify(config, "🛑 Ethbot gestoppt")
 
 

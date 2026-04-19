@@ -308,3 +308,65 @@ def _read_trades() -> List[Dict]:
     except Exception as e:
         logger.warning(f"Failed to read trades CSV: {e}")
     return trades
+
+
+# ── Emergency Controls ─────────────────────────────────────────
+
+@router.post("/emergency-stop")
+async def emergency_stop():
+    """
+    🚨 KILL SWITCH — Close all positions and cancel all orders.
+    Use this in case of emergency (flash crash, bot malfunction, etc.)
+    """
+    import threading
+    try:
+        from bot.config import TradingConfig
+        from bot.state import BotState
+        from bot.executor import emergency_close_all
+
+        config = TradingConfig.from_env()
+        state = BotState.load()
+
+        result = emergency_close_all(config, state)
+
+        # Signal the engine to stop
+        try:
+            from bot.engine import _shutdown
+            _shutdown.set()
+            result["engine_stopped"] = True
+        except Exception:
+            result["engine_stopped"] = False
+
+        # Save cleared state
+        state.save()
+
+        logger.warning(f"🚨 EMERGENCY STOP executed: {result}")
+        return {"status": "emergency_stop_executed", **result}
+
+    except Exception as e:
+        logger.error(f"Emergency stop FAILED: {e}")
+        return {"status": "error", "error": str(e)}
+
+
+@router.get("/reconcile")
+async def reconcile():
+    """Check bot state vs actual exchange positions."""
+    try:
+        from bot.config import TradingConfig
+        from bot.state import BotState
+        from bot.executor import reconcile_positions
+
+        config = TradingConfig.from_env()
+        state = BotState.load()
+
+        result = reconcile_positions(config, state)
+
+        # Save if state was fixed
+        if result.get("ghost_positions", 0) > 0:
+            state.save()
+
+        return result
+
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+

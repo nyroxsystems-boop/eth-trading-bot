@@ -186,11 +186,25 @@ class BotState:
         return state
 
     def save(self, path: str = "logs/bot_state.json"):
-        """Save state to JSON file."""
+        """Save state to JSON file (atomic write)."""
         import os
+        import tempfile
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w") as f:
-            json.dump(self.to_dict(), f, indent=2)
+        # Write to temp file first, then atomic replace
+        dir_name = os.path.dirname(path) or "."
+        try:
+            fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+            with os.fdopen(fd, "w") as f:
+                json.dump(self.to_dict(), f, indent=2)
+            os.replace(tmp_path, path)  # Atomic on all OS
+        except Exception:
+            # Fallback: direct write if temp fails
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+            with open(path, "w") as f:
+                json.dump(self.to_dict(), f, indent=2)
 
     @classmethod
     def load(cls, path: str = "logs/bot_state.json") -> "BotState":
