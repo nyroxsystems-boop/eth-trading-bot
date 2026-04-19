@@ -75,22 +75,47 @@ class SwarmAgent:
         self.total_votes = 0
         self.correct_votes = 0
         self.accuracy = 0.5
+        # Rolling window for weight updates (prevents survivorship bias)
+        self._recent_results: list[bool] = []
+        self._rolling_window = 50  # Only last 50 trades count
 
     def analyze(self, data: dict) -> AgentVote:
         """Override this: analyze market data and return a vote."""
         raise NotImplementedError
 
-    def update_accuracy(self, was_correct: bool):
-        """Update this agent's track record after a trade closes."""
+    def update_accuracy(self, was_correct: bool, agent_voted_buy: bool = True):
+        """
+        Update this agent's track record after a trade closes.
+
+        CRITICAL FIX: Only count trades where this specific agent voted BUY.
+        Previously all agents shared the same outcome regardless of their vote.
+        Now: individual attribution — agent only gets credit/blame for trades
+        where it personally voted BUY.
+        """
+        # Only attribute results to agents that voted for the trade
+        if not agent_voted_buy:
+            return
+
         self.total_votes += 1
         if was_correct:
             self.correct_votes += 1
+
+        # Rolling window accuracy (prevents stale weights from old regimes)
+        self._recent_results.append(was_correct)
+        self._recent_results = self._recent_results[-self._rolling_window:]
+
         if self.total_votes > 0:
             self.accuracy = self.correct_votes / self.total_votes
-        # Self-learning weight: better accuracy → more influence
-        # Weight range: 0.3 (bad) to 2.0 (excellent)
-        if self.total_votes >= 10:
-            self.weight = max(0.3, min(2.0, 0.5 + self.accuracy * 1.5))
+
+        # Weight update: require minimum sample size for statistical significance
+        # Don't adjust weights until we have ≥30 individual votes
+        if len(self._recent_results) >= 30:
+            rolling_accuracy = sum(self._recent_results) / len(self._recent_results)
+            # Weight range: 0.3 (bad) to 2.0 (excellent)
+            self.weight = max(0.3, min(2.0, 0.5 + rolling_accuracy * 1.5))
+        elif self.total_votes >= 10:
+            # Early stage: conservative weight adjustment
+            self.weight = max(0.5, min(1.5, 0.5 + self.accuracy * 1.0))
 
     def to_dict(self) -> dict:
         return {

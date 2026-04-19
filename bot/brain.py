@@ -530,8 +530,15 @@ class TradingBrain:
 
     def maybe_train_model(self):
         """
-        Check if enough labeled data exists and train XGBoost predictor.
+        Check if enough labeled data exists and train ML predictor.
         Called periodically from the engine loop.
+
+        CRITICAL FIXES APPLIED:
+          1. Removed circular features (score, signal_count) — they ARE the signal
+          2. Removed fake features (news_sentiment=0, oi_signal=0)
+          3. TimeSeriesSplit instead of random CV (no future leakage)
+          4. Rolling z-score normalization
+          5. Permutation importance (not default GBM importance)
         """
         try:
             from bot.ml_collector import get_training_data, get_stats
@@ -554,11 +561,14 @@ class TradingBrain:
 
             logger.info(f"🧠 Brain: Training ML model with {len(data)} samples...")
 
-            # Extract features and labels
+            # ── Feature Selection (NO circular, NO fake) ──
+            # REMOVED: "score" (circular — IS the signal itself)
+            # REMOVED: "signal_count" (circular — counts signals)
+            # REMOVED: "news_sentiment" (hardcoded 0 everywhere)
+            # REMOVED: "oi_signal" (placeholder, always 0)
             feature_cols = [
                 "rsi14", "adx14", "atr_pct", "macd", "volume_ratio",
-                "vwap_dev", "fg_value", "news_sentiment", "funding_rate",
-                "oi_signal", "mtf_boost", "score", "signal_count",
+                "vwap_dev", "fg_value", "funding_rate", "mtf_boost",
             ]
 
             X = []
@@ -575,28 +585,72 @@ class TradingBrain:
             if len(X) < 100:
                 return None
 
-            # Train XGBoost
+            # Train with proper validation
             from sklearn.ensemble import GradientBoostingClassifier
-            from sklearn.model_selection import cross_val_score
+            from sklearn.model_selection import TimeSeriesSplit
+            from sklearn.metrics import accuracy_score
             import numpy as np
 
             X = np.array(X)
             y = np.array(y)
+
+            # ── Rolling Z-Score Normalization ──
+            # Normalize each feature using rolling window statistics
+            # This prevents future information leakage through global normalization
+            X_norm = np.copy(X)
+            rolling_window = min(100, len(X) // 3)
+            for col in range(X.shape[1]):
+                for i in range(rolling_window, len(X)):
+                    window = X[max(0, i - rolling_window):i, col]
+                    mean = np.mean(window)
+                    std = np.std(window) or 1e-8
+                    X_norm[i, col] = (X[i, col] - mean) / std
+                # First rows: use expanding window
+                for i in range(rolling_window):
+                    if i > 1:
+                        window = X[:i, col]
+                        mean = np.mean(window)
+                        std = np.std(window) or 1e-8
+                        X_norm[i, col] = (X[i, col] - mean) / std
+
+            X = X_norm
 
             model = GradientBoostingClassifier(
                 n_estimators=100, max_depth=4, learning_rate=0.1,
                 min_samples_leaf=10, random_state=42,
             )
 
-            # Cross-validate
-            scores = cross_val_score(model, X, y, cv=5, scoring="accuracy")
-            accuracy = scores.mean()
+            # ── TimeSeriesSplit CV (NOT random!) ──
+            # This ensures we never train on future data
+            tscv = TimeSeriesSplit(n_splits=5)
+            cv_scores = []
+            for train_idx, test_idx in tscv.split(X):
+                X_train, X_test = X[train_idx], X[test_idx]
+                y_train, y_test = y[train_idx], y[test_idx]
+                model.fit(X_train, y_train)
+                pred = model.predict(X_test)
+                cv_scores.append(accuracy_score(y_test, pred))
 
-            # Train final model
+            accuracy = np.mean(cv_scores)
+            accuracy_std = np.std(cv_scores)
+
+            # Train final model on all data
             model.fit(X, y)
 
-            # Save feature importance to memory
-            importance = dict(zip(feature_cols, model.feature_importances_.tolist()))
+            # ── Permutation Importance (not biased GBM default) ──
+            try:
+                from sklearn.inspection import permutation_importance
+                # Use last 20% as validation for importance
+                split = int(len(X) * 0.8)
+                perm_result = permutation_importance(
+                    model, X[split:], y[split:],
+                    n_repeats=10, random_state=42, n_jobs=-1
+                )
+                importance = dict(zip(feature_cols, perm_result.importances_mean.tolist()))
+            except Exception:
+                # Fallback to GBM importance if permutation fails
+                importance = dict(zip(feature_cols, model.feature_importances_.tolist()))
+
             self.memory["feature_importance"] = {
                 k: round(v, 4) for k, v in
                 sorted(importance.items(), key=lambda x: x[1], reverse=True)
@@ -610,14 +664,23 @@ class TradingBrain:
 
             self.memory["last_ml_train_at"] = labeled
             self.memory["ml_accuracy"] = round(accuracy, 4)
+            self.memory["ml_accuracy_std"] = round(accuracy_std, 4)
             self.memory["ml_train_count"] = self.memory.get("ml_train_count", 0) + 1
+            self.memory["ml_cv_type"] = "TimeSeriesSplit_5fold"
+            self.memory["ml_features_used"] = feature_cols
+            self.memory["ml_features_removed"] = [
+                "score (circular)", "signal_count (circular)",
+                "news_sentiment (fake=0)", "oi_signal (fake=0)",
+            ]
             self.save_memory()
 
             logger.info(
-                f"🧠 Brain: ML Model trained! Accuracy: {accuracy:.1%} | "
-                f"Samples: {len(X)} | Train #{self.memory['ml_train_count']}"
+                f"🧠 Brain: ML Model trained! Accuracy: {accuracy:.1%} ±{accuracy_std:.1%} | "
+                f"Samples: {len(X)} | CV: TimeSeriesSplit | "
+                f"Features: {len(feature_cols)} (removed 4 circular/fake) | "
+                f"Train #{self.memory['ml_train_count']}"
             )
-            logger.info(f"🧠 Top features: {list(self.memory['feature_importance'].items())[:5]}")
+            logger.info(f"🧠 Top features (permutation): {list(self.memory['feature_importance'].items())[:5]}")
 
             return model
 
@@ -631,6 +694,7 @@ class TradingBrain:
         """
         Get ML prediction confidence for a potential trade.
         Returns 0.0-1.0 (probability of profitable trade).
+        Uses same cleaned feature set as training (no circular/fake features).
         """
         try:
             import pickle
@@ -643,10 +707,10 @@ class TradingBrain:
             with open(model_path, "rb") as f:
                 model = pickle.load(f)
 
+            # Must match training features EXACTLY
             feature_cols = [
                 "rsi14", "adx14", "atr_pct", "macd", "volume_ratio",
-                "vwap_dev", "fg_value", "news_sentiment", "funding_rate",
-                "oi_signal", "mtf_boost", "score", "signal_count",
+                "vwap_dev", "fg_value", "funding_rate", "mtf_boost",
             ]
 
             X = np.array([[float(features.get(c, 0) or 0) for c in feature_cols]])

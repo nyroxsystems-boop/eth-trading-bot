@@ -150,8 +150,16 @@ def record_evaluation(
 
 def backfill_outcomes(pair: str):
     """
-    Fill in outcome columns for old evaluations using current price data.
-    Called periodically to label past entries with what actually happened.
+    Fill in outcome columns using Triple-Barrier Method (López de Prado).
+
+    CRITICAL FIX: Previous implementation had look-ahead bias.
+    Now uses Triple-Barrier:
+      Label = +1 if TP (1.0%) hit first
+      Label = -1 if SL (0.7%) hit first
+      Label =  0 if timeout (30 candles) without either
+
+    The key: we walk forward from the evaluation candle and check
+    which barrier is touched FIRST, simulating real-time execution.
     """
     try:
         from bot.executor import fetch_klines
@@ -175,7 +183,8 @@ def backfill_outcomes(pair: str):
             return
 
         prices = df["close"].values.tolist()
-        times = df.index.tolist() if hasattr(df.index, 'tolist') else list(range(len(df)))
+        highs = df["high"].values.tolist() if "high" in df.columns else prices
+        lows = df["low"].values.tolist() if "low" in df.columns else prices
 
         updated = 0
         for row in rows:
@@ -192,7 +201,6 @@ def backfill_outcomes(pair: str):
             if not ts:
                 continue
 
-            # Simple approach: check if enough time has passed (30 candles = 150 min)
             try:
                 eval_time = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
                 age_minutes = (datetime.now(timezone.utc) - eval_time).total_seconds() / 60
@@ -202,27 +210,62 @@ def backfill_outcomes(pair: str):
             if age_minutes < 150:  # Need at least 30 candles (150 min at 5m)
                 continue
 
-            # Use current price minus appropriate offset
             candles_ago = int(age_minutes / 5)
+            idx_now = len(prices) - 1
+            idx_entry = max(0, idx_now - candles_ago)
 
-            if candles_ago >= 30 and len(prices) > 30:
-                # Outcome at 5/15/30 candles after entry
-                idx_now = len(prices) - 1
-                idx_entry = max(0, idx_now - candles_ago)
+            if candles_ago < 30 or idx_entry + 30 > idx_now:
+                continue
 
-                # Price at entry + N candles
-                p5 = prices[min(idx_entry + 5, idx_now)] if idx_entry + 5 <= idx_now else prices[idx_now]
-                p15 = prices[min(idx_entry + 15, idx_now)] if idx_entry + 15 <= idx_now else prices[idx_now]
-                p30 = prices[min(idx_entry + 30, idx_now)] if idx_entry + 30 <= idx_now else prices[idx_now]
+            # ── TRIPLE BARRIER METHOD ──
+            # Walk forward from entry candle and check barriers
+            tp_pct = 1.0    # Take-profit: +1.0%
+            sl_pct = 0.7    # Stop-loss: -0.7%
+            max_bars = 30   # Timeout: 30 candles
 
-                row["outcome_5"] = f"{((p5 / entry_price) - 1) * 100:.4f}"
-                row["outcome_15"] = f"{((p15 / entry_price) - 1) * 100:.4f}"
-                row["outcome_30"] = f"{((p30 / entry_price) - 1) * 100:.4f}"
+            tp_price = entry_price * (1 + tp_pct / 100)
+            sl_price = entry_price * (1 - sl_pct / 100)
 
-                # Label: 1 if any of the outcomes were > 0.5% (profitable)
-                max_outcome = max(float(row["outcome_5"]), float(row["outcome_15"]), float(row["outcome_30"]))
-                row["outcome_label"] = "1" if max_outcome > 0.5 else "0"
-                updated += 1
+            barrier_hit = 0  # 0=timeout, 1=TP, -1=SL
+            exit_bar = max_bars
+            exit_price = prices[min(idx_entry + max_bars, idx_now)]
+
+            for bar in range(1, max_bars + 1):
+                idx = idx_entry + bar
+                if idx > idx_now:
+                    break
+
+                bar_high = highs[idx] if idx < len(highs) else prices[idx]
+                bar_low = lows[idx] if idx < len(lows) else prices[idx]
+
+                # Check SL first (conservative — if both hit same bar, SL wins)
+                if bar_low <= sl_price:
+                    barrier_hit = -1
+                    exit_bar = bar
+                    exit_price = sl_price
+                    break
+                elif bar_high >= tp_price:
+                    barrier_hit = 1
+                    exit_bar = bar
+                    exit_price = tp_price
+                    break
+
+            # Record outcomes
+            pnl_pct = ((exit_price / entry_price) - 1) * 100
+
+            # Also record raw price changes at fixed intervals
+            p5 = prices[min(idx_entry + 5, idx_now)]
+            p15 = prices[min(idx_entry + 15, idx_now)]
+            p30 = prices[min(idx_entry + 30, idx_now)]
+
+            row["outcome_5"] = f"{((p5 / entry_price) - 1) * 100:.4f}"
+            row["outcome_15"] = f"{((p15 / entry_price) - 1) * 100:.4f}"
+            row["outcome_30"] = f"{((p30 / entry_price) - 1) * 100:.4f}"
+
+            # Triple-Barrier Label:
+            # 1 = TP hit first (profitable), 0 = SL hit first or timeout
+            row["outcome_label"] = "1" if barrier_hit == 1 else "0"
+            updated += 1
 
         if updated > 0:
             # Write back
@@ -230,7 +273,7 @@ def backfill_outcomes(pair: str):
                 writer = csv.DictWriter(f, fieldnames=FEATURE_COLS)
                 writer.writeheader()
                 writer.writerows(rows)
-            logger.info(f"ML backfill [{pair}]: {updated} rows labeled")
+            logger.info(f"ML backfill [{pair}]: {updated} rows labeled (Triple-Barrier)")
 
     except Exception as e:
         logger.warning(f"ML backfill error ({pair}): {e}")

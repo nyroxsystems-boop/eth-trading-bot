@@ -45,12 +45,12 @@ class MarketSnapshot:
 
     def _to_vector(self, features: dict) -> list:
         """Convert features dict to a normalized numerical vector."""
-        # Standard feature order for consistent vectors
+        # Standard feature order — NO circular features (score removed)
+        # NO fake features (news_sentiment, oi_signal removed)
         keys = [
             "rsi14", "adx14", "atr_pct", "macd_norm", "volume_ratio",
             "bb_position", "vwap_dev", "trend_strength",
-            "fg_value", "news_sentiment", "funding_rate",
-            "oi_signal", "mtf_boost", "score",
+            "fg_value", "funding_rate", "mtf_boost",
         ]
         raw = []
         for k in keys:
@@ -74,11 +74,8 @@ class MarketSnapshot:
             (-5, 5),      # vwap_dev
             (-1, 1),      # trend_strength
             (0, 100),     # fg_value
-            (-1, 1),      # news_sentiment
             (-0.1, 0.1),  # funding_rate
-            (-1, 1),      # oi_signal
             (-0.3, 0.3),  # mtf_boost
-            (-0.5, 1.0),  # score
         ]
         result = []
         for i, val in enumerate(vector):
@@ -197,7 +194,7 @@ class ExperienceMemory:
                 break
 
     def find_similar(self, features: dict, pair: str = None,
-                     top_k: int = 10, min_similarity: float = 0.85) -> list:
+                     top_k: int = 10, min_similarity: float = 0.65) -> list:
         """
         Find the most similar past experiences to the current situation.
         
@@ -237,7 +234,7 @@ class ExperienceMemory:
         - recommendation: "BUY", "SKIP", or "NEUTRAL"
         - similar_count: How many similar experiences found
         """
-        similar = self.find_similar(features, pair, top_k=20, min_similarity=0.80)
+        similar = self.find_similar(features, pair, top_k=20, min_similarity=0.60)
 
         if not similar:
             return {
