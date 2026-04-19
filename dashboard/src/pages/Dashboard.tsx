@@ -4,6 +4,7 @@ import {
   ResponsiveContainer
 } from 'recharts'
 import type { BotStatus } from '../App'
+import StrategyPanel from '../components/StrategyPanel'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 
@@ -192,6 +193,9 @@ export default function Dashboard({ status }: DashboardProps) {
           <div className="sub">{shield?.circuit_breaker?.consecutive_losses || 0} consecutive losses</div>
         </div>
       </div>
+
+      {/* ═══ STRATEGY PORTFOLIO ═══ */}
+      <StrategyPanel />
 
       {/* ═══ SWARM AGENTS TABLE ═══ */}
       {swarm?.agents && swarm.agents.length > 0 && (

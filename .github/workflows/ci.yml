@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  lint-and-validate:
-    name: Lint & Validate
+  test:
+    name: Test Suite
     runs-on: ubuntu-latest
 
     steps:
@@ -24,15 +24,15 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pytest
 
-      - name: Validate all bot modules (syntax check)
+      - name: Validate all Python syntax
         run: |
           echo "🔍 Checking all Python files..."
           python -c "
           import ast, os, sys
           errors = 0
           for root, dirs, files in os.walk('.'):
-              # Skip virtual envs, node_modules, __pycache__
               dirs[:] = [d for d in dirs if d not in ('node_modules', '__pycache__', '.git', 'venv', 'env', 'dist')]
               for f in files:
                   if f.endswith('.py'):
@@ -50,7 +50,7 @@ jobs:
               print('✅ All Python files compile clean')
           "
 
-      - name: Validate bot core modules import
+      - name: Validate core module imports
         env:
           PAPER_MODE: "true"
         run: |
@@ -61,20 +61,35 @@ jobs:
               'bot.executor', 'bot.brain', 'bot.experience', 'bot.swarm',
               'bot.shield', 'bot.pair_scanner', 'bot.ml_collector',
               'bot.multi_tf', 'bot.market_intel', 'bot.stocks',
+              'bot.futures_executor', 'bot.backtester',
+              'bot.strategies.funding_arb', 'bot.strategies.stat_arb',
+              'bot.strategies.momentum_v2', 'bot.strategies.liquidation_hunter',
+              'bot.strategies.allocator',
           ]
+          failed = 0
           for mod in modules:
               try:
                   importlib.import_module(mod)
                   print(f'✅ {mod}')
               except Exception as e:
-                  print(f'⚠️ {mod}: {e}')
-          print('✅ Core module validation complete')
+                  print(f'❌ {mod}: {e}')
+                  failed += 1
+          if failed:
+              import sys
+              sys.exit(1)
+          print('✅ All modules import successfully')
           "
+
+      - name: Run test suite (26 tests)
+        env:
+          PAPER_MODE: "true"
+        run: |
+          python -m pytest tests/test_core.py -v --tb=short
 
   build-dashboard:
     name: Build Dashboard
     runs-on: ubuntu-latest
-    needs: lint-and-validate
+    needs: test
 
     steps:
       - uses: actions/checkout@v4
