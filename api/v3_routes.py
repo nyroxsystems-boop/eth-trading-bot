@@ -310,6 +310,99 @@ def _read_trades() -> List[Dict]:
     return trades
 
 
+# ── Strategy Status Endpoints ────────────────────────────────────
+
+@router.get("/strategies")
+async def get_all_strategies():
+    """Get status of all 5 trading strategies."""
+    statuses = {}
+    try:
+        from bot.strategies.funding_arb import get_funding_arb
+        statuses["S1_FundingArb"] = get_funding_arb().get_status()
+    except Exception as e:
+        statuses["S1_FundingArb"] = {"error": str(e)}
+
+    try:
+        from bot.strategies.stat_arb import get_stat_arb
+        statuses["S2_StatArb"] = get_stat_arb().get_status()
+    except Exception as e:
+        statuses["S2_StatArb"] = {"error": str(e)}
+
+    try:
+        statuses["S3_MarketMaking"] = {"status": "PLANNED", "phase": 4}
+    except Exception as e:
+        statuses["S3_MarketMaking"] = {"error": str(e)}
+
+    try:
+        from bot.strategies.momentum_v2 import get_momentum
+        statuses["S4_MomentumV2"] = get_momentum().get_status()
+    except Exception as e:
+        statuses["S4_MomentumV2"] = {"error": str(e)}
+
+    try:
+        from bot.strategies.liquidation_hunter import get_liq_hunter
+        statuses["S5_LiqHunter"] = get_liq_hunter().get_status()
+    except Exception as e:
+        statuses["S5_LiqHunter"] = {"error": str(e)}
+
+    return statuses
+
+
+@router.get("/allocator")
+async def get_allocator_status():
+    """Get master allocator portfolio status + risk limits."""
+    try:
+        from bot.strategies.allocator import get_allocator
+        return get_allocator().get_status()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.post("/strategies/scan-funding")
+async def scan_funding():
+    """Trigger a funding rate scan for S1 strategy."""
+    try:
+        from bot.strategies.funding_arb import get_funding_arb
+        opps = get_funding_arb().scan_opportunities()
+        return {
+            "opportunities": [
+                {
+                    "symbol": o.symbol,
+                    "funding_rate_8h": f"{o.funding_rate:.4%}",
+                    "annualized": f"{o.annualized:.1%}",
+                    "net_edge": f"{o.net_edge_per_8h:.4%}",
+                    "oi_usd": f"${o.oi_usd/1e6:.1f}M",
+                }
+                for o in opps
+            ]
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@router.post("/strategies/scan-cointegration")
+async def scan_cointegration():
+    """Trigger cointegration pair scan for S2 strategy."""
+    try:
+        from bot.strategies.stat_arb import get_stat_arb
+        pairs = get_stat_arb().find_cointegrated_pairs()
+        return {
+            "pairs_found": len(pairs),
+            "pairs": [
+                {
+                    "a": p.asset_a, "b": p.asset_b,
+                    "pvalue": round(p.pvalue, 4),
+                    "hedge_ratio": round(p.hedge_ratio, 4),
+                    "zscore": round(p.zscore, 2),
+                    "half_life": round(p.half_life, 1),
+                }
+                for p in pairs
+            ]
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # ── Emergency Controls ─────────────────────────────────────────
 
 @router.post("/emergency-stop")
