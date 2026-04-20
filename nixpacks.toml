@@ -5,4 +5,4 @@ nixPkgs = ["python311", "python311Packages.pip", "gcc", "pkg-config"]
 cmds = ["pip3 install --upgrade pip", "pip3 install -r requirements.txt", "python3 -m nltk.downloader vader_lexicon"]
 
 [start]
-cmd = "python3 eth_master_bot.py"
+cmd = "bash entrypoint.sh"
