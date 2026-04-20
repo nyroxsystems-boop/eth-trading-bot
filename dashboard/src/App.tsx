@@ -13,6 +13,7 @@ const API_URL = import.meta.env.VITE_API_URL || ''
 // Types
 export interface BotStatus {
   is_running: boolean
+  pair: string
   price: number
   today_trades: number
   regime: string

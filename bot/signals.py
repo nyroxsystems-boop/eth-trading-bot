@@ -184,12 +184,15 @@ def compute_signals(
         score += 0.10
         active_signals.append("BB_BOUNCE")
 
-    # 7. Volume confirmation
+    # 7. Volume confirmation (STRICT: require above-average volume)
     vol_ratio = float(row.get("volume_ratio", 1.0))
-    vol_ok = vol_ratio >= 1.0
+    vol_ok = vol_ratio >= 1.3
     if vol_ok:
-        score += 0.05
+        score += 0.08
         active_signals.append("VOLUME")
+    elif vol_ratio < 0.7:
+        score -= 0.05  # Penalty for low volume (weak move)
+        active_signals.append("LOW_VOL")
 
     # 8. ML confidence bonus/penalty
     if ml_confidence > ml_threshold:
@@ -211,8 +214,16 @@ def compute_signals(
         score += vwap_bonus
         active_signals.append(f"VWAP({vwap_dev*100:+.1f}%)")
 
+    # ===== ANTI-CHOP FILTER =====
+    # If market is choppy (low ADX + tight Bollinger Bands), penalize heavily
+    bb_hi = float(row["bb_hi"])
+    bb_width = (bb_hi - bb_lo) / max(px, 1)
+    if adx < 18 and bb_width < 0.02:
+        score -= 0.15
+        active_signals.append("CHOP_FILTER")
+
     # ===== FINAL DECISION =====
-    should_buy = score >= entry_score_min and len(active_signals) >= 2
+    should_buy = score >= entry_score_min and len(active_signals) >= 3
 
     return Signal(
         score=round(score, 4),

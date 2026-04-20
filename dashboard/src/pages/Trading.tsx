@@ -26,13 +26,28 @@ interface TradingProps {
   status: BotStatus | null
 }
 
+interface BotConfig {
+  pair: string
+  interval: string
+  paper_mode: boolean
+  risk_per_trade: number
+  tp_min: number
+  tp_max: number
+  stop_floor: number
+  max_trades_per_day: number
+  entry_score_min: number
+  loop_sleep_seconds: number
+}
+
 export default function Trading({ status }: TradingProps) {
   const [trades, setTrades] = useState<Trade[]>([])
   const [signal, setSignal] = useState<SignalInfo | null>(null)
+  const [config, setConfig] = useState<BotConfig | null>(null)
 
   useEffect(() => {
     fetchTrades()
     fetchSignal()
+    fetchConfig()
     const interval = setInterval(() => {
       fetchSignal()
     }, 30000)
@@ -50,6 +65,13 @@ export default function Trading({ status }: TradingProps) {
     try {
       const res = await fetch(`${API_URL}/api/v3/signal`)
       if (res.ok) setSignal(await res.json())
+    } catch {}
+  }
+
+  const fetchConfig = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/v3/config`)
+      if (res.ok) setConfig(await res.json())
     } catch {}
   }
 
@@ -208,22 +230,44 @@ export default function Trading({ status }: TradingProps) {
         {/* Quick Stats */}
         <div className="card">
           <div className="chart-title" style={{ marginBottom: '16px' }}>Bot Config</div>
-          <div className="setting-row">
-            <span className="setting-label">Mode</span>
-            <span className="badge badge-active">Paper</span>
-          </div>
-          <div className="setting-row">
-            <span className="setting-label">Risk/Trade</span>
-            <span className="setting-value">1.0%</span>
-          </div>
-          <div className="setting-row">
-            <span className="setting-label">Take Profit</span>
-            <span className="setting-value">1.5-2.5%</span>
-          </div>
-          <div className="setting-row">
-            <span className="setting-label">Stop Loss</span>
-            <span className="setting-value">1.2% floor</span>
-          </div>
+          {config ? (
+            <>
+              <div className="setting-row">
+                <span className="setting-label">Mode</span>
+                <span className={`badge ${config.paper_mode ? 'badge-active' : 'badge-pending'}`}>
+                  {config.paper_mode ? 'Paper' : 'Live'}
+                </span>
+              </div>
+              <div className="setting-row">
+                <span className="setting-label">Pair</span>
+                <span className="setting-value">{config.pair}</span>
+              </div>
+              <div className="setting-row">
+                <span className="setting-label">Interval</span>
+                <span className="setting-value">{config.interval}</span>
+              </div>
+              <div className="setting-row">
+                <span className="setting-label">Risk/Trade</span>
+                <span className="setting-value">{config.risk_per_trade}%</span>
+              </div>
+              <div className="setting-row">
+                <span className="setting-label">Take Profit</span>
+                <span className="setting-value">{config.tp_min}%-{config.tp_max}%</span>
+              </div>
+              <div className="setting-row">
+                <span className="setting-label">Stop Loss</span>
+                <span className="setting-value">{config.stop_floor}% floor</span>
+              </div>
+              <div className="setting-row">
+                <span className="setting-label">Entry Score</span>
+                <span className="setting-value">{config.entry_score_min}</span>
+              </div>
+            </>
+          ) : (
+            <div className="empty-state" style={{ padding: '20px' }}>
+              <div className="hint">Loading config...</div>
+            </div>
+          )}
         </div>
       </div>
 

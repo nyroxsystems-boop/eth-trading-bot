@@ -86,7 +86,7 @@ export default function Dashboard({ status }: DashboardProps) {
     <div>
       {/* Ticker Bar */}
       <div className="ticker-bar animate-in">
-        <span className="ticker-pair">ETH/USDT</span>
+        <span className="ticker-pair">{(status?.pair || 'ETHUSDT').replace('USDT', '/USDT')}</span>
         <span className={`ticker-price ${price > 0 ? 'positive' : ''}`}>
           ${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </span>

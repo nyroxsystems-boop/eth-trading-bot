@@ -41,6 +41,16 @@ async def get_status():
     """Get current bot status — reads from bot_state.json."""
     import requests
 
+    # Get configured pair
+    try:
+        from bot.config import TradingConfig
+        config = TradingConfig.from_env()
+        pair = config.pair
+        paper_mode = config.paper_mode
+    except Exception:
+        pair = "ETHUSDT"
+        paper_mode = True
+
     # Read bot state
     state = {}
     try:
@@ -50,12 +60,12 @@ async def get_status():
     except Exception:
         pass
 
-    # Get current price
+    # Get current price for the configured pair
     price = 0.0
     try:
         resp = requests.get(
             "https://api.binance.com/api/v3/ticker/price",
-            params={"symbol": "ETHUSDT"},
+            params={"symbol": pair},
             timeout=3,
         )
         if resp.status_code == 200:
@@ -85,9 +95,10 @@ async def get_status():
 
     return {
         "is_running": state.get("today_trades", 0) >= 0,  # Bot is running if state exists
+        "pair": pair,
         "price": price,
         "today_trades": state.get("today_trades", 0),
-        "regime": "paper",
+        "regime": "paper" if paper_mode else "live",
         "daily_pnl": state.get("daily_pnl", 0.0),
         "total_pnl": round(total_pnl, 2),
         "win_rate": round(win_rate, 1),
@@ -141,14 +152,17 @@ async def get_pnl_history(days: int = Query(7, ge=1, le=90)):
 async def get_current_signal():
     """Get current trading signal (live computation)."""
     try:
+        from bot.config import TradingConfig
         from bot.executor import fetch_klines
         from bot.signals import add_indicators, compute_signals
 
-        df = fetch_klines("ETHUSDT", "5m", lookback=100)
+        config = TradingConfig.from_env()
+        df = fetch_klines(config.pair, config.interval, lookback=100)
         df = add_indicators(df)
-        signal = compute_signals(df, entry_score_min=0.20)
+        signal = compute_signals(df, entry_score_min=config.entry_score_min)
 
         return {
+            "pair": config.pair,
             "score": signal.score,
             "should_buy": signal.should_buy,
             "signals": signal.signals,
@@ -160,6 +174,7 @@ async def get_current_signal():
     except Exception as e:
         logger.error(f"Signal computation failed: {e}")
         return {
+            "pair": "ETHUSDT",
             "score": 0.0, "should_buy": False, "signals": [],
             "rsi": 50.0, "adx": 20.0, "regime": "unknown", "price": 0.0,
         }
@@ -316,11 +331,8 @@ def _read_trades() -> List[Dict]:
 async def get_all_strategies():
     """Get status of all 5 trading strategies."""
     statuses = {}
-    try:
-        from bot.strategies.funding_arb import get_funding_arb
-        statuses["S1_FundingArb"] = get_funding_arb().get_status()
-    except Exception as e:
-        statuses["S1_FundingArb"] = {"error": str(e)}
+    # S1 FundingArb removed — requires perpetual futures (not available in DE)
+    statuses["S1_FundingArb"] = {"status": "DISABLED", "reason": "Futures not available in DE, using Margin"}
 
     try:
         from bot.strategies.stat_arb import get_stat_arb
@@ -358,26 +370,7 @@ async def get_allocator_status():
         return {"error": str(e)}
 
 
-@router.post("/strategies/scan-funding")
-async def scan_funding():
-    """Trigger a funding rate scan for S1 strategy."""
-    try:
-        from bot.strategies.funding_arb import get_funding_arb
-        opps = get_funding_arb().scan_opportunities()
-        return {
-            "opportunities": [
-                {
-                    "symbol": o.symbol,
-                    "funding_rate_8h": f"{o.funding_rate:.4%}",
-                    "annualized": f"{o.annualized:.1%}",
-                    "net_edge": f"{o.net_edge_per_8h:.4%}",
-                    "oi_usd": f"${o.oi_usd/1e6:.1f}M",
-                }
-                for o in opps
-            ]
-        }
-    except Exception as e:
-        return {"error": str(e)}
+# scan-funding removed — S1 FundingArb disabled (Futures not available in DE)
 
 
 @router.post("/strategies/scan-cointegration")

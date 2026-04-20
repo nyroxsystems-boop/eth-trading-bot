@@ -494,14 +494,14 @@ class TradingSwarm:
     """
 
     # Minimum weighted consensus to approve a trade (0-1)
-    CONSENSUS_THRESHOLD = 0.50
+    CONSENSUS_THRESHOLD = 0.55
 
     # Minimum number of BUY votes required
-    MIN_BUY_VOTES = 3
+    MIN_BUY_VOTES = 4
 
     # Cold-start: relaxed thresholds while agents have <N votes
     COLD_START_THRESHOLD = 10
-    COLD_START_CONSENSUS = 0.45
+    COLD_START_CONSENSUS = 0.50
     COLD_START_MIN_BUY = 3
 
     def __init__(self):

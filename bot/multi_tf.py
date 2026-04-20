@@ -71,6 +71,12 @@ def get_mtf_boost(pair: str = "ETHUSDT", timeframes: List[str] = None) -> float:
          0.0 = mixed signals
     """
     timeframes = timeframes or ["5m", "15m", "1h"]
+
+    # Skip MTF for stock symbols (not on Binance)
+    _STOCK_SYMBOLS = {"SPY", "QQQ", "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "META", "GOOG", "AMD"}
+    if pair in _STOCK_SYMBOLS:
+        return 0.0
+
     weights = {"5m": 0.40, "15m": 0.35, "1h": 0.25}
 
     signals: Dict[str, TimeframeSignal] = {}

@@ -180,14 +180,43 @@ def _trade_pair(
             pos.trailing_active = True
             logger.info(f"[{pair}] 📈 Trailing activated: +{upnl*100:.2f}%")
 
-        # Check exit conditions
+        # Detect MACD bearish crossover for momentum exit
+        macd_val = float(row.get("macd", 0))
+        macd_sig_val = float(row.get("macd_sig", 0))
+        prev_row = df.iloc[-2] if len(df) >= 2 else row
+        prev_macd = float(prev_row.get("macd", 0))
+        prev_macd_sig = float(prev_row.get("macd_sig", 0))
+        macd_bearish = (macd_val < macd_sig_val) and (prev_macd >= prev_macd_sig)
+
+        # Check exit conditions (with partial profit + momentum)
         decision = should_close_position(
             pos.entry_price, px, pos.atr_at_entry,
             pos.bars_held, pos.peak_pnl, pos.trailing_active,
             config,
+            partial_taken=pos.partial_taken,
+            macd_bearish=macd_bearish,
         )
 
-        if decision:
+        if decision == "PARTIAL":
+            # Close 50% of position, keep rest running
+            half_qty = pos.quantity * 0.5
+            partial_pnl = (px - pos.entry_price) * half_qty
+            execute_sell(px, half_qty, config, state)
+            _log_trade("PARTIAL_SELL", pair, half_qty, px, partial_pnl)
+            pos.quantity -= half_qty
+            pos.partial_taken = True
+            state.paper_balance += partial_pnl
+            state.daily_pnl += partial_pnl
+
+            logger.info(
+                f"[{pair}] 💰 PARTIAL +{upnl*100:.2f}% | "
+                f"Sold 50% ({half_qty:.4f}) for ${partial_pnl:+.2f} | "
+                f"Keeping {pos.quantity:.4f} with trailing"
+            )
+            pos.trailing_active = True  # Activate trailing on remainder
+            state.save(f"logs/state_{pair}.json")
+
+        elif decision:
             pnl = state.close_position(px)
             execute_sell(px, pos.quantity, config, state)
             _log_trade("SELL", pair, pos.quantity, px, pnl)
@@ -411,7 +440,11 @@ def _trade_pair(
             swarm_approved = signal.should_buy
 
         if swarm_approved:
-            qty = position_size(px, atr, config, state)
+            qty = position_size(
+                px, atr, config, state,
+                confidence=signal.score,
+                swarm_pct=decision.consensus_pct,
+            )
             cost = qty * px
 
             if cost < 10:
@@ -490,7 +523,20 @@ def _run_strategy_cycle(config: TradingConfig, loop_count: int):
                     f"TP: +{cascade.target_pct:.1%} | SL: -{cascade.stop_pct:.1%} | "
                     f"Capital: ${capital:,.0f}"
                 )
-                # TODO: Execute via executor when Futures API integrated
+                # Execute paper trade for S5
+                try:
+                    s5_state = BotState.load(f"logs/state_S5_{cascade.symbol}.json")
+                    s5_state.paper_balance = capital
+                    s5_state.check_new_day()
+                    if not s5_state.is_in_position:
+                        qty = capital * 0.5 / max(cascade.entry_price, 0.01)  # 50% of allocation
+                        if execute_buy(cascade.entry_price, qty, config, s5_state):
+                            s5_state.open_position(cascade.entry_price, qty, cascade.entry_price * 0.02)
+                            _log_trade("BUY", f"S5_{cascade.symbol}", qty, cascade.entry_price)
+                            logger.info(f"🎯 S5 EXECUTED: LONG {cascade.symbol} | {qty:.4f} @ ${cascade.entry_price:,.2f}")
+                            s5_state.save(f"logs/state_S5_{cascade.symbol}.json")
+                except Exception as e:
+                    logger.warning(f"S5 execution: {e}")
     except Exception as e:
         logger.debug(f"S5 check: {e}")
 
@@ -521,7 +567,28 @@ def _run_strategy_cycle(config: TradingConfig, loop_count: int):
                             f"Z-Score: {z:.2f} | Hedge: {pair.hedge_ratio:.4f} | "
                             f"p-value: {pair.pvalue:.4f} | Capital: ${capital:,.0f}"
                         )
-                        # TODO: Execute paired trade when margin available
+                        # Execute paper trade for S2 (long leg only in margin mode)
+                        try:
+                            import requests as req
+                            long_asset = pair.asset_a if action == "LONG_A_SHORT_B" else pair.asset_b
+                            long_symbol = f"{long_asset}USDT"
+                            # Fetch current price for the long asset
+                            long_price = float(req.get(
+                                "https://api.binance.com/api/v3/ticker/price",
+                                params={"symbol": long_symbol}, timeout=3
+                            ).json()["price"])
+                            s2_state = BotState.load(f"logs/state_S2_{long_symbol}.json")
+                            s2_state.paper_balance = capital
+                            s2_state.check_new_day()
+                            if not s2_state.is_in_position:
+                                qty = capital * 0.3 / max(long_price, 0.01)  # 30% of allocation
+                                if execute_buy(long_price, qty, config, s2_state):
+                                    s2_state.open_position(long_price, qty, long_price * 0.015)
+                                    _log_trade("BUY", f"S2_{long_symbol}", qty, long_price)
+                                    logger.info(f"📊 S2 EXECUTED: LONG {long_symbol} | {qty:.4f} @ ${long_price:,.2f}")
+                                    s2_state.save(f"logs/state_S2_{long_symbol}.json")
+                        except Exception as e:
+                            logger.warning(f"S2 execution: {e}")
 
                     elif action in ("EXIT", "STOP"):
                         logger.info(
@@ -641,12 +708,30 @@ def run(config: TradingConfig | None = None):
 
     # Get pairs and create per-pair states
     pairs = _get_pairs()
+    per_pair_balance = config.paper_balance / max(len(pairs), 1)
     states: dict[str, BotState] = {}
     for p in pairs:
         pair_key = p["pair"]
         state = BotState.load(f"logs/state_{pair_key}.json")
-        state.paper_balance = max(state.paper_balance, config.paper_balance / len(pairs))
+        # Fair allocation: each pair gets its share of the total balance
+        state.paper_balance = per_pair_balance
         state.check_new_day()
+        # Fix stale positions: recover bars_held from entry_time
+        if state.position and state.position.entry_time:
+            try:
+                from datetime import datetime, timezone
+                entry_dt = datetime.fromisoformat(state.position.entry_time)
+                elapsed_minutes = (datetime.now(timezone.utc) - entry_dt).total_seconds() / 60
+                # Convert to bars (5m interval)
+                interval_minutes = int(config.interval.replace('m', '').replace('h', '')) 
+                if 'h' in config.interval:
+                    interval_minutes *= 60
+                estimated_bars = int(elapsed_minutes / max(interval_minutes, 1))
+                if estimated_bars > state.position.bars_held:
+                    logger.info(f"[{pair_key}] 🔄 Recovered bars_held: {state.position.bars_held} → {estimated_bars} (stale position)")
+                    state.position.bars_held = estimated_bars
+            except Exception as e:
+                logger.debug(f"Bars recovery: {e}")
         states[pair_key] = state
 
     # ── Add stock pairs if enabled ──
@@ -658,9 +743,16 @@ def run(config: TradingConfig | None = None):
             for sp in stock_pairs:
                 if sp["pair"] not in states:
                     st = BotState.load(f"logs/state_{sp['pair']}.json")
+                    # Recalculate per-pair balance with stocks included
                     st.paper_balance = config.paper_balance / (len(pairs) + len(stock_pairs))
                     st.check_new_day()
                     states[sp["pair"]] = st
+            # Update per-pair balance for all pairs now that stocks are added
+            total_pairs = len(pairs) + len(stock_pairs)
+            new_per_pair = config.paper_balance / max(total_pairs, 1)
+            for key in states:
+                if not states[key].is_in_position:
+                    states[key].paper_balance = new_per_pair
             pairs = pairs + stock_pairs
             logger.info(f"📈 Stocks enabled: {[s['pair'] for s in stock_pairs]}")
         except Exception as e:
@@ -751,6 +843,21 @@ def run(config: TradingConfig | None = None):
                                         f"Vol-sized: {size:.4f} units | "
                                         f"{'✅ VOL' if signal.volume_confirmed else '⚠️ no vol'}"
                                     )
+                                    # Execute paper trade for S4 (only with volume confirmation)
+                                    if signal.volume_confirmed and signal.side == "LONG":
+                                        try:
+                                            s4_state = BotState.load(f"logs/state_S4_{pair_key}.json")
+                                            s4_state.paper_balance = capital
+                                            s4_state.check_new_day()
+                                            if not s4_state.is_in_position:
+                                                qty = min(size, capital * 0.4 / max(signal.entry, 0.01))
+                                                if execute_buy(signal.entry, qty, config, s4_state):
+                                                    s4_state.open_position(signal.entry, qty, signal.atr)
+                                                    _log_trade("BUY", f"S4_{pair_key}", qty, signal.entry)
+                                                    logger.info(f"📈 S4 EXECUTED: LONG {pair_key} | {qty:.4f} @ ${signal.entry:,.2f}")
+                                                    s4_state.save(f"logs/state_S4_{pair_key}.json")
+                                        except Exception as e:
+                                            logger.warning(f"S4 execution: {e}")
                     except Exception as e:
                         logger.debug(f"S4 {pair_key}: {e}")
 

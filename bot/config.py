@@ -30,7 +30,7 @@ class TradingConfig:
     max_drawdown_day: float = 0.05     # 5% daily max drawdown → stop
 
     # --- Entry ---
-    entry_score_min: float = 0.15      # Lower threshold for more entries
+    entry_score_min: float = 0.25      # Higher bar for better entries
     max_trades_per_day: int = 25       # Aggressive data collection
     rsi_min: float = 25.0
     rsi_max: float = 78.0

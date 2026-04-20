@@ -7,21 +7,51 @@ from bot.config import TradingConfig
 from bot.state import BotState
 
 
-def position_size(price: float, atr: float, config: TradingConfig, state: BotState) -> float:
+def position_size(
+    price: float,
+    atr: float,
+    config: TradingConfig,
+    state: BotState,
+    confidence: float = 0.5,
+    swarm_pct: float = 0.5,
+) -> float:
     """
-    Calculate position size based on risk-per-trade.
+    Dynamic position sizing based on trend confidence.
 
-    Logic:
-    - Risk USD = equity × risk_per_trade
-    - SL distance = max(stop_floor, ATR × stop_atr_mult / price)
-    - Quantity = Risk USD / (SL distance × price)
+    NOT every coin gets the same capital.
+    Strong trends → bigger bets. Weak signals → tiny positions.
 
-    Returns quantity in base asset (e.g. ETH).
+    Args:
+        confidence: Signal score / entry quality (0.0 to 1.0+)
+        swarm_pct: Swarm consensus percentage (0.0 to 1.0)
+
+    Sizing tiers:
+        ★★★★★ Elite (90%+ consensus, strong trend) → 50-60% of equity
+        ★★★★  Strong (75%+ consensus)              → 30-40% of equity
+        ★★★   Normal (60%+ consensus)               → 15-25% of equity
+        ★★    Weak   (50%+ consensus)                → 8-12% of equity
+        ★     Minimum (barely passes)                → 5% of equity
     """
     equity = state.available_balance
     sl_pct = stop_loss_pct(price, atr, config)
 
-    risk_usd = equity * config.risk_per_trade
+    # ── Base risk scaled by confidence ──
+    # Combine swarm consensus and signal score into a confidence multiplier
+    combined_confidence = (swarm_pct * 0.6) + (min(confidence, 1.0) * 0.4)
+
+    # Map confidence to equity allocation percentage
+    if combined_confidence >= 0.85:
+        alloc_pct = 0.55  # Elite: 55% of pair equity
+    elif combined_confidence >= 0.70:
+        alloc_pct = 0.35  # Strong: 35%
+    elif combined_confidence >= 0.55:
+        alloc_pct = 0.20  # Normal: 20%
+    elif combined_confidence >= 0.40:
+        alloc_pct = 0.10  # Weak: 10%
+    else:
+        alloc_pct = 0.05  # Minimum: 5%
+
+    risk_usd = equity * alloc_pct
 
     # Loss streak reduction: halve size after 2+ consecutive losses
     if state.loss_streak >= 3:
@@ -42,8 +72,8 @@ def position_size(price: float, atr: float, config: TradingConfig, state: BotSta
 
     qty = risk_usd / denom
 
-    # Cap position at 40% of equity (prevents oversized trades when SL is very tight)
-    max_qty = (equity * 0.40) / max(price, 1)
+    # Cap position at the allocation percentage of equity
+    max_qty = (equity * min(alloc_pct + 0.05, 0.60)) / max(price, 1)
     qty = min(qty, max_qty)
 
     return max(0.0001, qty)
@@ -83,6 +113,8 @@ def should_close_position(
     peak_pnl: float,
     trailing_active: bool,
     config: TradingConfig,
+    partial_taken: bool = False,
+    macd_bearish: bool = False,
 ) -> str | None:
     """
     Check if position should be closed.
@@ -91,6 +123,8 @@ def should_close_position(
         "TP" — take profit hit
         "SL" — stop loss hit
         "TIME" — max hold time exceeded
+        "PARTIAL" — take partial profit (50%)
+        "MOMENTUM" — momentum reversal exit
         None — hold
     """
     if entry_price <= 0:
@@ -103,7 +137,7 @@ def should_close_position(
     if upnl <= -sl:
         return "SL"
 
-    # --- Time Exit ---
+    # --- Time Exit (tighter: no free rides) ---
     if bars_held >= config.max_hold_bars:
         return "TIME"
 
@@ -112,12 +146,20 @@ def should_close_position(
         if upnl <= -0.001:  # Price dropped back below entry
             return "SL"
 
+    # --- PARTIAL PROFIT: Close 50% at +1.5% ---
+    if not partial_taken and upnl >= 0.015:
+        return "PARTIAL"
+
+    # --- MOMENTUM EXIT: MACD turned bearish while in profit ---
+    if macd_bearish and upnl > 0.005 and bars_held >= 5:
+        return "MOMENTUM"
+
     # --- Take Profit (with trailing) ---
     tp = config.tp_max  # Use the wider TP
 
     if trailing_active:
-        # Lock in 60% of peak gains
-        trail_floor = peak_pnl * 0.60
+        # Lock in 70% of peak gains (tighter than before)
+        trail_floor = peak_pnl * 0.70
         if upnl <= trail_floor and peak_pnl > tp * 0.8:
             return "TP"
         # Hard cap at 3x TP
