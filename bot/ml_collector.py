@@ -11,10 +11,8 @@ This builds the training dataset for the ML predictor.
 The outcome is filled in RETROACTIVELY once we know what happened.
 """
 import csv
-import json
 import os
 import logging
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 

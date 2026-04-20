@@ -23,7 +23,7 @@ Usage:
 import threading
 import time
 import logging
-from typing import List, Optional
+from typing import List
 
 logger = logging.getLogger("ethbot.state")
 

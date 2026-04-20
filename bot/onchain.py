@@ -20,7 +20,6 @@ import logging
 import requests
 from dataclasses import dataclass
 from typing import Optional
-from datetime import datetime, timezone
 
 logger = logging.getLogger("ethbot.onchain")
 
@@ -99,7 +98,7 @@ class OnChainIntelligence:
         try:
             symbol = pair.replace("USDT", "").replace("BUSD", "") + "USDT"
             resp = self._session.get(
-                f"https://api.binance.com/api/v3/depth",
+                "https://api.binance.com/api/v3/depth",
                 params={"symbol": symbol, "limit": 20},
                 timeout=5,
             )
@@ -148,7 +147,7 @@ class OnChainIntelligence:
         try:
             symbol = pair.replace("USDT", "").replace("BUSD", "") + "USDT"
             resp = self._session.get(
-                f"https://api.binance.com/api/v3/trades",
+                "https://api.binance.com/api/v3/trades",
                 params={"symbol": symbol, "limit": 100},
                 timeout=5,
             )

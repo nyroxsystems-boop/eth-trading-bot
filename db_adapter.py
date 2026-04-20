@@ -6,13 +6,12 @@ Provides unified interface for database operations
 import os
 import sqlite3
 from pathlib import Path
-from typing import Optional, Any, List, Tuple
+from typing import Optional, Any, Tuple
 from contextlib import contextmanager
 
 # Check if PostgreSQL is available
 try:
     import psycopg2
-    from psycopg2 import pool
     POSTGRES_AVAILABLE = True
 except ImportError:
     POSTGRES_AVAILABLE = False

@@ -14,7 +14,6 @@ Expected: 0.3-0.8%/day (but only 5-10 events/month)
 """
 import logging
 import time
-import json
 import threading
 import requests
 from collections import deque

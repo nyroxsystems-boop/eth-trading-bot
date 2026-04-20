@@ -13,7 +13,7 @@ import threading
 import requests
 from pathlib import Path
 from datetime import datetime
-from multiprocessing import Process, Event
+from multiprocessing import Event
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -117,7 +117,7 @@ def run_training(episodes: int = 500):
         # Train
         results = agent.train(prices, episodes=episodes)
         
-        print(f"\n✅ Training cycle complete!")
+        print("\n✅ Training cycle complete!")
         print(f"   Best Reward: {results['best_reward']:.2f}")
         print(f"   Avg Reward (last 20): {results['avg_reward_last_20']:.2f}")
         
@@ -162,7 +162,7 @@ def continuous_training_loop(episodes_per_cycle: int = 500, pause_between_cycles
                 time.sleep(1)
         else:
             # Error occurred, wait longer
-            print(f"\n⏸️  Error occurred, waiting 120s before retry...")
+            print("\n⏸️  Error occurred, waiting 120s before retry...")
             for _ in range(120):
                 if stop_event.is_set():
                     break
@@ -195,7 +195,7 @@ def main():
     print(f"   Episodes/cycle: {args.episodes}")
     print(f"   Pause between cycles: {args.pause}s")
     print(f"   Mode: {'Single' if args.single else 'Continuous'}")
-    print(f"   Press Ctrl+C to stop")
+    print("   Press Ctrl+C to stop")
     print("="*60)
     
     # Start sync worker in background thread

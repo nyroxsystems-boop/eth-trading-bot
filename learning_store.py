@@ -7,14 +7,13 @@ Falls back to local JSON files if DATABASE_URL is not set (local dev).
 
 import os
 import json
-import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
 # Check if PostgreSQL is available via db_adapter
 try:
-    from db_adapter import get_db_connection, USE_POSTGRES, convert_placeholders
+    from db_adapter import get_db_connection, USE_POSTGRES
     HAS_DB_ADAPTER = True
 except ImportError:
     HAS_DB_ADAPTER = False

@@ -5,7 +5,6 @@ Tests complete trading workflow from data fetching to order execution
 import pytest
 import pandas as pd
 import numpy as np
-from unittest.mock import Mock, patch, MagicMock
 
 
 class TestCompleteWorkflow:
@@ -62,7 +61,7 @@ class TestCompleteWorkflow:
     
     def test_risk_management_integration(self):
         """Test risk management integrates correctly"""
-        from src.core.risk_manager import RiskManager, Position
+        from src.core.risk_manager import RiskManager
         
         risk_manager = RiskManager()
         

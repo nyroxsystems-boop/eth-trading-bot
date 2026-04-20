@@ -4,7 +4,6 @@ Test Trade Data Injector
 Generates realistic simulated trade data for testing dashboard and learning systems.
 """
 
-import os
 import csv
 import random
 from datetime import datetime, timedelta
@@ -110,7 +109,7 @@ def generate_test_trades(
             "mode": mode
         })
     
-    print(f"\n📊 Generated Trade Summary:")
+    print("\n📊 Generated Trade Summary:")
     print(f"   Total Trades: {len(trades)}")
     print(f"   Wins: {wins} | Losses: {losses}")
     print(f"   Win Rate: {(wins/(wins+losses)*100):.1f}%" if (wins+losses) > 0 else "   Win Rate: N/A")

@@ -22,9 +22,8 @@ Usage:
 
 import logging
 import time
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, asdict
+from typing import Dict, List, Optional
+from dataclasses import dataclass
 
 logger = logging.getLogger("ethbot.edge")
 

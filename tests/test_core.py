@@ -9,8 +9,6 @@ Tests cover:
 """
 import os
 import sys
-import json
-import tempfile
 import numpy as np
 import pytest
 

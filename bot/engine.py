@@ -25,7 +25,7 @@ from bot.config import TradingConfig
 from bot.state import BotState
 from bot.signals import add_indicators, compute_signals
 from bot.risk import position_size, check_guards, should_close_position
-from bot.executor import execute_buy, execute_sell, fetch_klines, get_current_price
+from bot.executor import execute_buy, execute_sell, fetch_klines
 
 logger = logging.getLogger("ethbot.engine")
 
@@ -806,7 +806,7 @@ def run(config: TradingConfig | None = None):
     try:
         from bot.strategies.momentum_v2 import get_momentum
         mom = get_momentum()
-        logger.info(f"📈 S4 Momentum V2: Hurst regime filter active")
+        logger.info("📈 S4 Momentum V2: Hurst regime filter active")
     except Exception as e:
         logger.warning(f"S4 init: {e}")
 
@@ -874,9 +874,9 @@ def run(config: TradingConfig | None = None):
     crypto_count = sum(1 for p in pairs if p.get("market", "crypto") == "crypto")
     stock_count = sum(1 for p in pairs if p.get("market") == "stock")
     total_balance = sum(s.paper_balance for s in states.values())
-    logger.info(f"═══ Ethbot v3 Multi-Strategy Starting ═══")
+    logger.info("═══ Ethbot v3 Multi-Strategy Starting ═══")
     logger.info(f"Mode: {mode} | Crypto: {crypto_count} | Stocks: {stock_count} | Total: {len(pairs)}")
-    logger.info(f"Strategies: S2(StatArb) + S4(Momentum) + S5(LiqHunter) | Mode: Margin Trading")
+    logger.info("Strategies: S2(StatArb) + S4(Momentum) + S5(LiqHunter) | Mode: Margin Trading")
     logger.info(f"Interval: {config.interval} | Total Balance: ${total_balance:,.2f}")
     logger.info(f"Per-Pair Balance: ${config.paper_balance / max(len(pairs), 1):,.2f}")
     logger.info(f"Max trades/day: {config.max_trades_per_day} | Entry min: {config.entry_score_min}")

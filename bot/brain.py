@@ -18,12 +18,9 @@ After 1000s of trades, it should be exceptionally good.
 import json
 import csv
 import os
-import time
 import logging
-import hashlib
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
-from collections import defaultdict
 
 logger = logging.getLogger("ethbot.brain")
 

@@ -20,7 +20,6 @@ This is what Renaissance Technologies does at scale.
 """
 import json
 import logging
-import math
 import random
 from pathlib import Path
 from dataclasses import dataclass, field

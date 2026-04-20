@@ -9,7 +9,6 @@ Usage:
 """
 import argparse
 import os
-import sys
 
 # Load .env file if present
 def load_dotenv():

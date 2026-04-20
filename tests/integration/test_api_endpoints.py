@@ -48,7 +48,6 @@ def test_env(tmp_path_factory):
     os.environ['CORS_ORIGINS'] = '*'
 
     # Force reimport of modules that read env at import time
-    import importlib
     for mod_name in list(sys.modules.keys()):
         if mod_name in ('db_adapter', 'learning_store', 'user_manager', 'auth_deps',
                         'dashboard_api', 'routes.admin', 'routes.copy_trading'):

@@ -18,10 +18,8 @@ The ones with the best track record have the loudest voice.
 This is how Renaissance Technologies and Citadel actually work.
 """
 import logging
-import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 logger = logging.getLogger("ethbot.swarm")
 
@@ -261,7 +259,7 @@ class RegimeAgent(SwarmAgent):
         rsi = data.get("rsi", 50)
 
         if regime == "trending" and adx > 25:
-            return AgentVote(self.name, Vote.BUY, 0.70, f"Trending market, follow momentum")
+            return AgentVote(self.name, Vote.BUY, 0.70, "Trending market, follow momentum")
         elif regime == "volatile":
             if rsi < 35:
                 return AgentVote(self.name, Vote.BUY, 0.55, "Volatile oversold — risky bounce")
@@ -270,7 +268,7 @@ class RegimeAgent(SwarmAgent):
             if rsi < 35:
                 return AgentVote(self.name, Vote.BUY, 0.60, "Ranging oversold — mean reversion")
             return AgentVote(self.name, Vote.NEUTRAL, 0.35, "Ranging — wait for extremes")
-        return AgentVote(self.name, Vote.NEUTRAL, 0.30, f"Unknown regime")
+        return AgentVote(self.name, Vote.NEUTRAL, 0.30, "Unknown regime")
 
 
 class MTFAgent(SwarmAgent):
@@ -305,7 +303,7 @@ class IntelAgent(SwarmAgent):
         intel_composite = data.get("intel_composite", 0)
 
         if fg < 25 and intel_composite > 0:
-            return AgentVote(self.name, Vote.BUY, 0.75, f"Extreme Fear + positive intel → contrarian buy")
+            return AgentVote(self.name, Vote.BUY, 0.75, "Extreme Fear + positive intel → contrarian buy")
         elif fg < 35:
             return AgentVote(self.name, Vote.BUY, 0.55, f"Fear zone (FG={fg:.0f})")
         elif fg > 75:

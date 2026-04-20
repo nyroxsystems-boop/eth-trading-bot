@@ -11,13 +11,10 @@ Components:
 This module turns the bot from "smart" to "institutional".
 """
 import logging
-import math
 import os
 import json
-import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
-from collections import defaultdict
 
 logger = logging.getLogger("ethbot.shield")
 

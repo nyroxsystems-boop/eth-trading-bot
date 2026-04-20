@@ -7,7 +7,7 @@ Returns a score boost/penalty (-0.2 to +0.2) for the main signal.
 import logging
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import pandas as pd
 

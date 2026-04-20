@@ -10,11 +10,10 @@ Usage:
     python telegram_scheduler.py --daemon  # Run as daemon (waits until 18:00)
 """
 
-import os
 import sys
 import time
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 # Add project root to path
@@ -102,12 +101,12 @@ def create_launchd_plist():
     plist_path.write_text(plist_content)
     
     print(f"✅ LaunchAgent created: {plist_path}")
-    print(f"\n📌 To activate:")
+    print("\n📌 To activate:")
     print(f"   launchctl load {plist_path}")
-    print(f"\n📌 To deactivate:")
+    print("\n📌 To deactivate:")
     print(f"   launchctl unload {plist_path}")
-    print(f"\n📌 To test now:")
-    print(f"   launchctl start com.ethbot.telegram-report")
+    print("\n📌 To test now:")
+    print("   launchctl start com.ethbot.telegram-report")
     
     return plist_path
 

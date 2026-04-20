@@ -8,9 +8,8 @@ import json
 import os
 import csv
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import List, Dict
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
@@ -404,7 +403,6 @@ async def emergency_stop():
     🚨 KILL SWITCH — Close all positions and cancel all orders.
     Use this in case of emergency (flash crash, bot malfunction, etc.)
     """
-    import threading
     try:
         from bot.config import TradingConfig
         from bot.state import BotState

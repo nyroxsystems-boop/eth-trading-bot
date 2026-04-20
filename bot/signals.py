@@ -3,7 +3,6 @@ Signal Engine — Clean signal calculation.
 Takes OHLCV data, computes indicators, returns a clear BUY/HOLD decision.
 No globals, no side effects, pure functions.
 """
-import numpy as np
 import pandas as pd
 from dataclasses import dataclass
 from typing import List

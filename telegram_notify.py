@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import os, json, urllib.request, urllib.parse, time, pathlib
+import os
+import urllib.request
+import urllib.parse
+import pathlib
 
 ENV = pathlib.Path(os.getenv("ETHBOT_ROOT", str(pathlib.Path(__file__).resolve().parent))) / ".env.bot"
 def load_env():

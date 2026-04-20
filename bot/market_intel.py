@@ -16,7 +16,6 @@ import os
 import json
 import time
 import re
-import math
 import logging
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -626,24 +625,24 @@ if __name__ == "__main__":
 
     data = mi.get_market_intelligence()
 
-    print(f"\n📊 Fear & Greed Index:")
+    print("\n📊 Fear & Greed Index:")
     fg = data["fear_greed"]
     print(f"   Value: {fg.get('value', '?')} ({fg.get('label', '?')})")
     print(f"   Signal: {fg.get('signal', 0):.3f}")
 
-    print(f"\n📰 News Sentiment:")
+    print("\n📰 News Sentiment:")
     ns = data["news_sentiment"]
     print(f"   Headlines: {ns.get('headlines_count', 0)}")
     print(f"   Sentiment: {ns.get('sentiment', 0):.3f}")
     print(f"   Signal: {ns.get('signal', 0):.3f}")
 
-    print(f"\n🐳 Whale Activity:")
+    print("\n🐳 Whale Activity:")
     wa = data["whale_activity"]
     print(f"   Large Txns: {wa.get('large_txns', 0)}")
     print(f"   ETH-Related: {wa.get('eth_related', 0)}")
     print(f"   Signal: {wa.get('signal', 0):.3f}")
 
-    print(f"\n💰 Funding Rate:")
+    print("\n💰 Funding Rate:")
     fr = data["funding_rate"]
     print(f"   Rate: {fr.get('rate_pct', 0):.4f}%")
     print(f"   Signal: {fr.get('signal', 0):.3f}")
@@ -657,6 +656,6 @@ if __name__ == "__main__":
     if blocked:
         print(f"\n🛑 BLOCK: {reason}")
     else:
-        print(f"\n✅ No extreme conditions — trading allowed")
+        print("\n✅ No extreme conditions — trading allowed")
 
     print("\n" + "=" * 60)

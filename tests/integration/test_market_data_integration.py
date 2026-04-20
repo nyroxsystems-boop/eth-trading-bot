@@ -2,7 +2,6 @@
 Integration tests for market data provider
 """
 import pytest
-import pandas as pd
 
 
 @pytest.mark.integration

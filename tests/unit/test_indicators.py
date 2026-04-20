@@ -1,7 +1,6 @@
 """
 Unit tests for indicator calculations and technical analysis
 """
-import pytest
 import pandas as pd
 import numpy as np
 

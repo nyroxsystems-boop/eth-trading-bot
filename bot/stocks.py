@@ -113,7 +113,6 @@ def fetch_stock_klines(symbol: str, interval: str = "5m", lookback: int = 200):
     Fetch historical OHLCV bars for a stock from Alpaca.
     Returns pandas DataFrame matching Binance klines format.
     """
-    import pandas as pd
 
     # If Alpaca not configured, use Yahoo Finance
     if not is_alpaca_configured():

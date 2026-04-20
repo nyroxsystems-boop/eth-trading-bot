@@ -23,7 +23,6 @@ import os
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from collections import defaultdict
 
 logger = logging.getLogger("ethbot.experience")
 

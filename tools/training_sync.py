@@ -5,12 +5,10 @@ Syncs local DQN training progress to Railway dashboard in real-time.
 """
 
 import os
-import sys
 import json
 import time
 import requests
 from pathlib import Path
-from datetime import datetime
 
 # Configuration
 RAILWAY_URL = os.getenv("RAILWAY_DASHBOARD_URL", "https://eth-trading-bot-production.up.railway.app")
@@ -144,7 +142,7 @@ def main():
                     
                     last_episode = current_episode
             else:
-                print(f"\r⏳ Waiting for training to start...", end="", flush=True)
+                print("\r⏳ Waiting for training to start...", end="", flush=True)
             
             time.sleep(SYNC_INTERVAL)
             

@@ -7,7 +7,6 @@ Learns temporal patterns in strategy performance for smarter predictions
 import os
 import sqlite3
 import numpy as np
-import pickle
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
@@ -17,7 +16,6 @@ try:
     import torch
     import torch.nn as nn
     import torch.optim as optim
-    from torch.utils.data import DataLoader, TensorDataset
     PYTORCH_AVAILABLE = True
 except ImportError:
     PYTORCH_AVAILABLE = False
@@ -472,7 +470,7 @@ if __name__ == "__main__":
             'max_trades_per_day': 15
         }
         predictions = ensemble.predict_score(test_strategy)
-        print(f"\n🎯 Test Predictions:")
+        print("\n🎯 Test Predictions:")
         for model, score in predictions.items():
             print(f"   {model}: {score:.2f}")
     
@@ -483,6 +481,6 @@ if __name__ == "__main__":
     elif args.info:
         predictor = NeuralStrategyPredictor()
         info = predictor.get_model_info()
-        print(f"\n📊 Model Info:")
+        print("\n📊 Model Info:")
         for k, v in info.items():
             print(f"   {k}: {v}")

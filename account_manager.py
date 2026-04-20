@@ -134,7 +134,7 @@ def init_database():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_trades_account_id ON account_trades(account_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_account_trades_timestamp ON account_trades(timestamp)")
         
-        print(f"✅ Accounts database initialized")
+        print("✅ Accounts database initialized")
 
 
 def encrypt_secret(secret: str) -> str:
@@ -148,7 +148,7 @@ def decrypt_secret(encrypted: str) -> str:
         return cipher.decrypt(encrypted.encode()).decode()
     except Exception:
         # Key mismatch - return masked value instead of crashing
-        print(f"⚠️ Could not decrypt secret (key mismatch). Returning placeholder.")
+        print("⚠️ Could not decrypt secret (key mismatch). Returning placeholder.")
         return "ENCRYPTED_KEY_MISMATCH"
 
 

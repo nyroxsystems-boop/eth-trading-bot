@@ -12,7 +12,6 @@ Upgrades over current signals.py:
 Expected Performance: 0.15-0.4%/day in trending, -0.1%/day in range
 """
 import logging
-import time
 import numpy as np
 from dataclasses import dataclass
 from typing import Optional

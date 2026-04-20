@@ -8,10 +8,9 @@ import json
 import asyncio
 import requests
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 
 # Try to import database adapter
 try:
@@ -392,9 +391,7 @@ async def run_monitoring_loop():
 if __name__ == "__main__":
     # Test Jarvis
     jarvis = get_jarvis()
-    
-    import asyncio
-    
+
     async def test():
         status = await jarvis.check_all_services()
         print("\n📊 Service Status:")

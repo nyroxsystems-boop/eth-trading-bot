@@ -8,7 +8,7 @@ import os
 import sys
 import asyncio
 import signal
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -171,7 +171,7 @@ async def main():
     
     # Print final stats
     stats = watchdog.get_stats()
-    print(f"\n📊 Final Statistics:")
+    print("\n📊 Final Statistics:")
     print(f"   Uptime: {stats['uptime_human']}")
     print(f"   Checks: {stats['total_checks']} (Success: {stats['success_rate']:.1f}%)")
 

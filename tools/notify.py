@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-import os, sys, json, urllib.request, urllib.parse
+import os
+import sys
+import urllib.request
+import urllib.parse
 BOT=os.getenv("TELEGRAM_BOT_TOKEN","").strip()
 CHAT=os.getenv("TELEGRAM_CHAT_ID","").strip()
 def send(msg: str):

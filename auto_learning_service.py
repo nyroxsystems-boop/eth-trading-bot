@@ -7,7 +7,6 @@ Coordinates continuous backtesting and auto-apply
 import asyncio
 import os
 from datetime import datetime
-from pathlib import Path
 
 from continuous_backtester import ContinuousBacktester
 from auto_apply import AutoApply
@@ -55,7 +54,7 @@ class AutoLearningService:
     
     async def run_continuous(self):
         """Main loop: backtest every hour, auto-apply after each cycle"""
-        print(f"\n🚀 Starting Auto-Learning Service...")
+        print("\n🚀 Starting Auto-Learning Service...")
         print(f"⏰ {datetime.now()}\n")
         
         while True:
@@ -76,7 +75,7 @@ class AutoLearningService:
                     self.run_auto_apply()
                 
                 # Wait 1 hour
-                print(f"\n⏸️  Waiting 1 hour until next cycle...")
+                print("\n⏸️  Waiting 1 hour until next cycle...")
                 print(f"   Next cycle: {datetime.now().replace(hour=(datetime.now().hour + 1) % 24, minute=0, second=0)}\n")
                 
                 await asyncio.sleep(3600)

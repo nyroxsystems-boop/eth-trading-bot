@@ -14,9 +14,6 @@ These tests use the local SQLite/JSON fallback (no PostgreSQL needed).
 import pytest
 import sys
 import os
-import json
-import shutil
-import tempfile
 
 # Ensure project root is on path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))

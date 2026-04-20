@@ -3,7 +3,7 @@ Bot Configuration — Single Source of Truth.
 All settings live here. No scattered globals, no ENV surprises.
 """
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass

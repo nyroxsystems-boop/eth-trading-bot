@@ -7,7 +7,6 @@ Extracted from dashboard_api.py — handles:
 
 from fastapi import APIRouter, Depends
 from typing import Dict, Optional
-from pathlib import Path
 
 from auth_deps import get_current_user, get_current_user_optional
 

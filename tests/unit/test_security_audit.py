@@ -13,7 +13,6 @@ import sys
 import os
 import re
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -56,7 +55,7 @@ class TestNoHardcodedCredentials:
         """CRITICAL: No hardcoded passwords should exist in any source file"""
         hits = self._scan_files()
         assert hits == [], (
-            f"Found hardcoded passwords in: "
+            "Found hardcoded passwords in: "
             + ", ".join(f"{path} ('{pwd}')" for path, pwd in hits)
         )
     

@@ -3,9 +3,8 @@ Jarvis Anomaly Detection Module
 Detects unusual patterns and behaviors in the trading system
 """
 
-import os
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 

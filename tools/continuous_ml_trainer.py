@@ -10,12 +10,11 @@ import sys
 import json
 import time
 import signal
-import threading
 import requests
 import numpy as np
 from pathlib import Path
 from datetime import datetime, timedelta
-from multiprocessing import Process, Event
+from multiprocessing import Event
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -382,8 +381,8 @@ class TrainingOrchestrator:
         logger.info("🚀 Continuous ML Training Orchestrator Started")
         logger.info("=" * 60)
         logger.info(f"   Dashboard: {RAILWAY_URL}")
-        logger.info(f"   Models: DQN, Strategy Optimizer, Gradient Boosting, LSTM")
-        logger.info(f"   Press Ctrl+C to stop")
+        logger.info("   Models: DQN, Strategy Optimizer, Gradient Boosting, LSTM")
+        logger.info("   Press Ctrl+C to stop")
         logger.info("=" * 60)
         
         # Initial data fetch

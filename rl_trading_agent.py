@@ -8,7 +8,7 @@ import os
 import random
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, Tuple
 from collections import deque
 from datetime import datetime
 import json
@@ -503,7 +503,7 @@ if __name__ == "__main__":
         agent = DQNAgent(state_size=env.state_size)
         results = agent.train(prices, episodes=args.episodes)
         
-        print(f"\n✅ Training Complete!")
+        print("\n✅ Training Complete!")
         print(f"   Episodes: {results['episodes_trained']}")
         print(f"   Best Reward: {results['best_reward']:.2f}")
         print(f"   Final ε: {results['final_epsilon']:.3f}")
@@ -520,9 +520,9 @@ if __name__ == "__main__":
             test_state = np.random.randn(24).astype(np.float32)
             decision = agent.get_trading_decision(test_state)
             
-            print(f"\n📊 Trading Decision:")
+            print("\n📊 Trading Decision:")
             print(f"   Action: {decision['action']}")
             print(f"   Confidence: {decision['confidence']:.2%}")
-            print(f"\n   Q-Values:")
+            print("\n   Q-Values:")
             for action, value in decision['q_values'].items():
                 print(f"      {action}: {value:.4f}")

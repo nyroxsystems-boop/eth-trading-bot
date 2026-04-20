@@ -8,7 +8,6 @@ Tests:
 - DataCollector: derived indicator calculations
 """
 
-import pytest
 import time
 import sys
 import os

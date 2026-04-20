@@ -7,7 +7,6 @@ Usage:
 """
 
 import os
-import sys
 import random
 import sqlite3
 import argparse
@@ -174,7 +173,7 @@ def main():
     
     # Summary
     best = strategies[0]
-    print(f"\n📊 Generated Strategy Summary:")
+    print("\n📊 Generated Strategy Summary:")
     print(f"   Total Strategies: {len(strategies)}")
     print(f"   Best Score: {best['score']}")
     print(f"   Best Win Rate: {best['win_rate']}%")
@@ -185,11 +184,11 @@ def main():
     today = sum(1 for s in strategies if "today" in s["timestamp"] or datetime.utcnow().strftime("%Y-%m-%d") in s["timestamp"])
     this_hour = sum(1 for s in strategies if datetime.utcnow().strftime("%Y-%m-%d %H") in s["timestamp"])
     print(f"\n   Today: ~{len(strategies) // 7} strategies")
-    print(f"   Applied: 1 strategy")
+    print("   Applied: 1 strategy")
     
     conn.close()
     print(f"\n✅ Done! Strategies saved to {LEARNING_DB}")
-    print(f"\n🔗 Test with: curl -s 'http://localhost:8000/api/learning/stats' | jq .")
+    print("\n🔗 Test with: curl -s 'http://localhost:8000/api/learning/stats' | jq .")
 
 
 if __name__ == "__main__":

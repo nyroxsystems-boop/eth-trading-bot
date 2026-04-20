@@ -1,8 +1,6 @@
 """
 Unit tests for configuration management
 """
-import pytest
-import os
 
 
 class TestBotConfig:
