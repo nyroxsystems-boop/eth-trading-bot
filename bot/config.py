@@ -22,12 +22,16 @@ class TradingConfig:
 
     # --- Risk Management ---
     risk_per_trade: float = 0.02        # 2% of equity per trade
-    max_risk_per_trade: float = 0.04    # Hard cap 4%
-    stop_atr_mult: float = 1.8         # SL = 1.8x ATR
-    stop_floor: float = 0.010          # Minimum SL: 1.0%
-    tp_min: float = 0.012              # TP: 1.2%
-    tp_max: float = 0.030              # TP: 3.0%
+    max_risk_per_trade: float = 0.06    # Hard cap 6% (with leverage)
+    stop_atr_mult: float = 1.5         # SL = 1.5x ATR (tighter)
+    stop_floor: float = 0.008          # Minimum SL: 0.8%
+    tp_min: float = 0.010              # TP: 1.0% (faster take)
+    tp_max: float = 0.020              # TP: 2.0% (was 3.0%)
     max_drawdown_day: float = 0.05     # 5% daily max drawdown → stop
+
+    # --- Leverage ---
+    leverage: float = 3.0              # 3x margin leverage
+    max_leverage: float = 3.0          # Safety cap
 
     # --- Entry ---
     entry_score_min: float = 0.25      # Higher bar for better entries
@@ -36,9 +40,9 @@ class TradingConfig:
     rsi_max: float = 78.0
 
     # --- Position Management ---
-    break_even_trigger: float = 0.012  # Move SL to BE after +1.2%
-    trail_pct: float = 0.008           # Trailing: 0.8%
-    max_hold_bars: int = 60            # ~5h at 5m interval
+    break_even_trigger: float = 0.010  # Move SL to BE after +1.0%
+    trail_pct: float = 0.006           # Trailing: 0.6% (tighter)
+    max_hold_bars: int = 36            # ~3h at 5m (faster turnover)
 
     # --- ML ---
     use_ml: bool = True

@@ -29,13 +29,16 @@ from bot.executor import execute_buy, execute_sell, fetch_klines, get_current_pr
 
 logger = logging.getLogger("ethbot.engine")
 
-# Fallback pairs if Binance API is down
+# Focused pair universe — top 8 by volatility + liquidity for maximum ROI
 FALLBACK_PAIRS = [
     {"pair": "BTCUSDT", "base": "BTC"},
     {"pair": "ETHUSDT", "base": "ETH"},
     {"pair": "SOLUSDT", "base": "SOL"},
     {"pair": "BNBUSDT", "base": "BNB"},
-    {"pair": "XRPUSDT", "base": "XRP"},
+    {"pair": "DOGEUSDT", "base": "DOGE"},
+    {"pair": "AVAXUSDT", "base": "AVAX"},
+    {"pair": "LINKUSDT", "base": "LINK"},
+    {"pair": "SUIUSDT", "base": "SUI"},
 ]
 
 
@@ -445,6 +448,8 @@ def _trade_pair(
                 confidence=signal.score,
                 swarm_pct=decision.consensus_pct,
             )
+            # Apply leverage (3x default)
+            qty *= min(config.leverage, config.max_leverage)
             cost = qty * px
 
             if cost < 10:
@@ -464,6 +469,7 @@ def _trade_pair(
 
             if can_trade and execute_buy(px, qty, config, state):
                 state.open_position(px, qty, atr)
+                state.position.direction = "LONG"
                 _log_trade("BUY", pair, qty, px)
 
                 # Register position with portfolio guard
@@ -480,6 +486,52 @@ def _trade_pair(
                 )
                 logger.info(msg)
                 _notify(config, msg)
+                state.save(f"logs/state_{pair}.json")
+
+        # ── SHORT SELLING: Strong bearish consensus → short the pair ──
+        elif (not swarm_approved and not state.is_in_position
+              and decision.weighted_score < -0.3
+              and decision.skip_votes >= 4
+              and signal.adx > 25
+              and signal.rsi > 60):
+
+            qty = position_size(
+                px, atr, config, state,
+                confidence=abs(decision.weighted_score),
+                swarm_pct=1.0 - decision.consensus_pct,
+            )
+            # Apply leverage
+            qty *= min(config.leverage, config.max_leverage)
+            cost = qty * px
+
+            if cost >= 10:
+                # Paper mode: simulate short
+                if config.paper_mode:
+                    state.open_position(px, qty, atr)
+                    state.position.direction = "SHORT"
+                    _log_trade("SHORT", pair, qty, px)
+
+                    msg = (
+                        f"[{pair}] 🔻 SHORT {base} (SWARM {decision.skip_votes}/{decision.total_agents} SKIP) "
+                        f"@ ${px:,.2f} | Size: ${cost:,.2f} | "
+                        f"Score: {decision.weighted_score:+.3f} | RSI: {signal.rsi:.0f}"
+                    )
+                    logger.info(msg)
+                    _notify(config, msg)
+                else:
+                    # Live mode: use margin executor
+                    try:
+                        from bot.margin_executor import get_margin_client
+                        mc = get_margin_client()
+                        result = mc.open_short(pair, qty)
+                        if result:
+                            state.open_position(px, qty, atr)
+                            state.position.direction = "SHORT"
+                            _log_trade("SHORT", pair, qty, px)
+                            logger.info(f"[{pair}] 🔻 MARGIN SHORT {base} @ ${px:,.2f} | Qty: {qty:.5f}")
+                    except Exception as e:
+                        logger.warning(f"[{pair}] Margin short failed: {e}")
+
                 state.save(f"logs/state_{pair}.json")
 
 
@@ -734,8 +786,8 @@ def run(config: TradingConfig | None = None):
                 logger.debug(f"Bars recovery: {e}")
         states[pair_key] = state
 
-    # ── Add stock pairs if enabled ──
-    enable_stocks = os.getenv("ENABLE_STOCKS", "true").lower() in ("true", "1", "yes")
+    # ── Stocks DISABLED — focused on 24/7 crypto for max throughput ──
+    enable_stocks = False  # os.getenv("ENABLE_STOCKS", "false").lower() in ("true", "1", "yes")
     if enable_stocks:
         try:
             from bot.stocks import DEFAULT_STOCK_PAIRS
@@ -910,6 +962,22 @@ def run(config: TradingConfig | None = None):
                     get_allocator().rebalance()
                 except Exception as e:
                     logger.debug(f"Rebalance: {e}")
+
+            # ── AUTO-COMPOUNDING: Reinvest profits for exponential growth ──
+            if loop_count % 5 == 0:  # Check every 5 loops
+                total_daily_pnl = sum(s.daily_pnl for s in states.values())
+                if total_daily_pnl > 0:
+                    old_balance = config.paper_balance
+                    config.paper_balance += total_daily_pnl
+                    new_per_pair = config.paper_balance / max(len(pairs), 1)
+                    for key in states:
+                        if not states[key].is_in_position:
+                            states[key].paper_balance = new_per_pair
+                    if loop_count % 20 == 0:
+                        logger.info(
+                            f"💰 COMPOUND: ${old_balance:,.0f} → ${config.paper_balance:,.0f} "
+                            f"(+${total_daily_pnl:,.2f} today)"
+                        )
 
             # ── Sleep between full rotations ──
             _shutdown.wait(config.loop_sleep_seconds)

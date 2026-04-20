@@ -20,15 +20,22 @@ class Position:
     trailing_active: bool = False
     partial_taken: bool = False
     bars_held: int = 0
+    direction: str = "LONG"  # "LONG" or "SHORT"
 
     @property
     def entry_value(self) -> float:
         return self.entry_price * self.quantity
 
     def unrealized_pnl(self, current_price: float) -> float:
-        return (current_price / self.entry_price - 1.0) if self.entry_price > 0 else 0.0
+        if self.entry_price <= 0:
+            return 0.0
+        if self.direction == "SHORT":
+            return (self.entry_price / current_price - 1.0)  # Inverted for shorts
+        return (current_price / self.entry_price - 1.0)
 
     def unrealized_pnl_usd(self, current_price: float) -> float:
+        if self.direction == "SHORT":
+            return (self.entry_price - current_price) * self.quantity
         return (current_price - self.entry_price) * self.quantity
 
 
