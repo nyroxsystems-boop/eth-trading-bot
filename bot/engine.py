@@ -266,6 +266,29 @@ def _trade_pair(
             except Exception as e:
                 logger.debug(f"Non-critical: {e}")
 
+            # ── Correlation Guard: remove closed position ──
+            try:
+                from bot.correlation import get_correlation_guard
+                get_correlation_guard().close_position(pair)
+            except Exception as e:
+                logger.debug(f"Non-critical: {e}")
+
+            # ── RL Optimizer: learn from trade outcome ──
+            try:
+                from bot.rl_optimizer import get_rl_optimizer
+                rl = get_rl_optimizer()
+                # Get the swarm votes that led to this trade
+                from bot.swarm import get_swarm
+                swarm = get_swarm()
+                trade_regime = getattr(pos, 'entry_regime', signal.regime if 'signal' in dir() else 'unknown')
+                rl.learn_from_trade(
+                    votes=decision.votes if 'decision' in dir() else [],
+                    regime=trade_regime,
+                    was_profitable=pnl > 0,
+                )
+            except Exception as e:
+                logger.debug(f"Non-critical: {e}")
+
             if state.loss_streak >= config.loss_streak_cooldown:
                 state.trigger_cooldown(config.cooldown_minutes)
                 logger.info(f"[{pair}] ⏸️ Cooldown: {config.cooldown_minutes}min")
@@ -408,6 +431,25 @@ def _trade_pair(
             except Exception as e:
                 logger.debug(f"Non-critical: {e}")
 
+            # ── On-Chain Intelligence: Whale + Exchange Flow ──
+            onchain_signal = 0.0
+            try:
+                from bot.onchain import get_onchain
+                oc = get_onchain()
+                oc_data = oc.get_signal(pair)
+                onchain_signal = oc_data.signal
+                if abs(onchain_signal) > 0.3:
+                    logger.info(f"[{pair}] 🔗 On-Chain: {onchain_signal:+.2f} | {oc_data.details}")
+            except Exception as e:
+                logger.debug(f"Non-critical: {e}")
+
+            # ── Correlation Guard: Update price data ──
+            try:
+                from bot.correlation import get_correlation_guard
+                get_correlation_guard().update_price(pair, px)
+            except Exception as e:
+                logger.debug(f"Non-critical: {e}")
+
             swarm_data = {
                 "pair": pair, "rsi": signal.rsi, "adx": signal.adx,
                 "macd": float(row.get("macd", 0)),
@@ -424,6 +466,7 @@ def _trade_pair(
                 "funding_rate": funding_rate,
                 "oi_signal": oi_signal,
                 "intel_composite": intel_composite,
+                "onchain_signal": onchain_signal,
                 "signal_count": len(signal.signals),
             }
             decision = swarm.decide(swarm_data)
@@ -455,8 +498,20 @@ def _trade_pair(
             if cost < 10:
                 qty = max(qty, 50.0 / max(px, 1))
 
-            # ── Portfolio Guard: check exposure ──
+            # ── Portfolio Guard + Correlation Guard ──
             can_trade = True
+
+            # Check correlation with existing positions
+            try:
+                from bot.correlation import get_correlation_guard
+                cg = get_correlation_guard()
+                corr_ok, corr_reason = cg.can_open_position(pair, "LONG")
+                if not corr_ok:
+                    logger.info(f"[{pair}] 🔗 Correlation Guard: {corr_reason}")
+                    can_trade = False
+            except Exception as e:
+                logger.debug(f"Non-critical: {e}")
+
             try:
                 from bot.shield import get_portfolio_guard
                 pg = get_portfolio_guard()
@@ -472,9 +527,14 @@ def _trade_pair(
                 state.position.direction = "LONG"
                 _log_trade("BUY", pair, qty, px)
 
-                # Register position with portfolio guard
+                # Register position with portfolio guard + correlation guard
                 try:
                     get_portfolio_guard().register_position(pair, qty * px)
+                except Exception as e:
+                    logger.debug(f"Non-critical: {e}")
+                try:
+                    from bot.correlation import get_correlation_guard
+                    get_correlation_guard().register_position(pair, "LONG")
                 except Exception as e:
                     logger.debug(f"Non-critical: {e}")
 
