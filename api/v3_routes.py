@@ -87,21 +87,27 @@ async def get_status():
 
     # Read trades for stats
     trades = _read_trades()
-    sell_trades = [t for t in trades if t["action"] == "SELL" and t["pnl"] != 0]
+    # Count all sell-like actions (SELL, PARTIAL_SELL, etc.)
+    sell_trades = [t for t in trades if "SELL" in t.get("action", "").upper() and t.get("pnl", 0) != 0]
     wins = [t for t in sell_trades if t["pnl"] > 0]
     total_pnl = sum(t["pnl"] for t in sell_trades)
     win_rate = (len(wins) / len(sell_trades) * 100) if sell_trades else 0
 
+    # Count today's trades (all types)
+    from datetime import date
+    today_str = date.today().isoformat()
+    today_trades = len([t for t in trades if t.get("timestamp", "").startswith(today_str)])
+
     return {
-        "is_running": state.get("today_trades", 0) >= 0,  # Bot is running if state exists
+        "is_running": len(trades) > 0 or state.get("today_trades", 0) >= 0,
         "pair": pair,
         "price": price,
-        "today_trades": state.get("today_trades", 0),
+        "today_trades": max(today_trades, state.get("today_trades", 0)),
         "regime": "paper" if paper_mode else "live",
         "daily_pnl": state.get("daily_pnl", 0.0),
         "total_pnl": round(total_pnl, 2),
         "win_rate": round(win_rate, 1),
-        "total_trades": len(sell_trades),
+        "total_trades": len(trades),
         "paper_balance": state.get("paper_balance", 100_000),
         "position": position,
     }
@@ -122,7 +128,7 @@ async def get_trades(limit: int = Query(50, ge=1, le=500)):
 async def get_pnl_history(days: int = Query(7, ge=1, le=90)):
     """Get daily P&L history for charting."""
     trades = _read_trades()
-    sell_trades = [t for t in trades if t["action"] == "SELL" and t["pnl"] != 0]
+    sell_trades = [t for t in trades if "SELL" in t.get("action", "").upper() and t.get("pnl", 0) != 0]
 
     # Group by date
     daily: Dict[str, float] = {}
