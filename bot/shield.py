@@ -37,6 +37,9 @@ class CircuitBreaker:
         self.max_drawdown_pct = float(os.getenv("MAX_DRAWDOWN_PCT", "15.0"))
         self.cooldown_hours = float(os.getenv("CIRCUIT_COOLDOWN_HOURS", "1.0"))
 
+        # Paper mode: record stats but NEVER trip (maximize data collection)
+        self.paper_mode = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
+
         self.daily_pnl = 0.0
         self.daily_trades = 0
         self.consecutive_losses = 0
@@ -126,6 +129,10 @@ class CircuitBreaker:
 
     def _trip(self, reason: str):
         """Trip the circuit breaker — ALL trading stops."""
+        if self.paper_mode:
+            # Paper mode: log but DON'T stop — every trade = learning data
+            logger.info(f"🔌 CB would trip ({reason}) — IGNORED in paper mode (data collection)")
+            return
         if not self.tripped:
             self.tripped = True
             self.trip_time = datetime.now(timezone.utc).isoformat()

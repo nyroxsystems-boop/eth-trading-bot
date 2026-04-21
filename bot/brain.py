@@ -543,17 +543,17 @@ class TradingBrain:
             stats = get_stats()
             labeled = stats.get("total_labeled", 0)
 
-            # Need at least 200 labeled rows to train
-            if labeled < 200:
+            # Need at least 100 labeled rows to train (was 200)
+            if labeled < 100:
                 return None
 
-            # Only retrain every 500 new labels
+            # Retrain every 200 new labels (was 500)
             last_trained = self.memory.get("last_ml_train_at", 0)
-            if labeled - last_trained < 500 and last_trained > 0:
+            if labeled - last_trained < 200 and last_trained > 0:
                 return None
 
             data = get_training_data()
-            if len(data) < 200:
+            if len(data) < 100:
                 return None
 
             logger.info(f"🧠 Brain: Training ML model with {len(data)} samples...")
