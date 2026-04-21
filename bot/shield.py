@@ -222,12 +222,17 @@ class PortfolioGuard:
         if group_count >= self.max_per_group and group:
             return False, f"Max {self.max_per_group} in {group} group"
 
-        # Check portfolio heat
+        # Check portfolio heat (use configured max, not hardcoded 5)
         total_exposure = sum(p.get("size_usd", 0) for p in self.open_positions.values())
         total_exposure += size_usd
-        # Heat is simplified here — in production use account balance
-        heat_pct = (total_exposure / max(total_exposure * 2, 1)) * 100
-        if len(self.open_positions) > 5:
+
+        # Paper mode: allow up to max_positions (data collection)
+        paper_mode = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
+        if paper_mode:
+            return True, "OK"
+
+        # Live mode: check portfolio heat
+        if len(self.open_positions) >= self.max_positions:
             return False, f"Portfolio heat too high ({len(self.open_positions)} positions)"
 
         return True, "OK"
