@@ -32,10 +32,10 @@ class CircuitBreaker:
     """
 
     def __init__(self):
-        self.max_daily_loss_pct = float(os.getenv("MAX_DAILY_LOSS_PCT", "5.0"))
-        self.max_consecutive_losses = int(os.getenv("MAX_CONSECUTIVE_LOSSES", "5"))
-        self.max_drawdown_pct = float(os.getenv("MAX_DRAWDOWN_PCT", "10.0"))
-        self.cooldown_hours = float(os.getenv("CIRCUIT_COOLDOWN_HOURS", "4.0"))
+        self.max_daily_loss_pct = float(os.getenv("MAX_DAILY_LOSS_PCT", "8.0"))
+        self.max_consecutive_losses = int(os.getenv("MAX_CONSECUTIVE_LOSSES", "8"))
+        self.max_drawdown_pct = float(os.getenv("MAX_DRAWDOWN_PCT", "15.0"))
+        self.cooldown_hours = float(os.getenv("CIRCUIT_COOLDOWN_HOURS", "1.0"))
 
         self.daily_pnl = 0.0
         self.daily_trades = 0

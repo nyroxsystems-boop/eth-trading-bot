@@ -266,6 +266,23 @@ async def get_shield_status():
         return {"error": str(e)}
 
 
+@router.post("/shield/reset")
+async def reset_circuit_breaker():
+    """Reset circuit breaker to allow trading to resume."""
+    try:
+        from bot.shield import get_circuit_breaker
+        cb = get_circuit_breaker()
+        was_tripped = cb.tripped
+        cb.tripped = False
+        cb.trip_reason = ""
+        cb.consecutive_losses = 0
+        cb.save()
+        logger.info(f"🔌 Circuit breaker manually reset (was tripped: {was_tripped})")
+        return {"status": "ok", "was_tripped": was_tripped, "message": "Circuit breaker reset — trading resumed"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.get("/ml")
 async def get_ml_status():
     """Get ML training data status."""

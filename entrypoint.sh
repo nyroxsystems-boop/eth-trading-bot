@@ -10,8 +10,12 @@ echo "PORT: ${PORT:-not set}"
 
 case "${RAILWAY_SERVICE_NAME}" in
   "worker")
-    echo "Starting Ethbot v3 Trading Engine..."
-    exec python3 main_v3.py
+    echo "Starting Ethbot v3 Trading Engine + API (unified)..."
+    # Start bot in background
+    python3 main_v3.py &
+    BOT_PID=$!
+    # Start API in foreground (enables dashboard data access)
+    exec python3 api_v3.py --port "${PORT:-8000}"
     ;;
   "web")
     echo "Starting Ethbot v3 API + Dashboard on port ${PORT}..."
