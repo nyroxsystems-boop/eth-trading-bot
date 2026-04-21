@@ -284,10 +284,10 @@ class MTFAgent(SwarmAgent):
             return AgentVote(self.name, Vote.BUY, 0.85, f"All timeframes aligned ↑ ({mtf_boost:+.3f})")
         elif mtf_boost > 0:
             return AgentVote(self.name, Vote.BUY, 0.55, f"Partial alignment ↑ ({mtf_boost:+.3f})")
-        elif mtf_boost < -0.15:
-            return AgentVote(self.name, Vote.SKIP, 0.80, f"All timeframes against ↓ ({mtf_boost:+.3f})")
-        elif mtf_boost < 0:
-            return AgentVote(self.name, Vote.SKIP, 0.55, f"Partial divergence ↓ ({mtf_boost:+.3f})")
+        elif mtf_boost < -0.25:
+            return AgentVote(self.name, Vote.SKIP, 0.70, f"All timeframes against ↓ ({mtf_boost:+.3f})")
+        elif mtf_boost < -0.10:
+            return AgentVote(self.name, Vote.NEUTRAL, 0.40, f"Partial divergence ↓ ({mtf_boost:+.3f})")
         return AgentVote(self.name, Vote.NEUTRAL, 0.30, "MTF neutral")
 
 
@@ -316,7 +316,7 @@ class BrainAgent(SwarmAgent):
     """Brain Intelligence Agent — uses accumulated trading knowledge."""
 
     def __init__(self):
-        super().__init__("Brain", weight=1.5)  # High weight — earned through experience
+        super().__init__("Brain", weight=1.2)  # Moderate weight — earns more through experience
 
     def analyze(self, data: dict) -> AgentVote:
         try:
@@ -409,7 +409,7 @@ class MLAgent(SwarmAgent):
     """Machine Learning Agent — uses trained XGBoost model."""
 
     def __init__(self):
-        super().__init__("ML", weight=1.6)  # Highest initial weight
+        super().__init__("ML", weight=0.5)  # Low weight until trained (was 1.6)
 
     def analyze(self, data: dict) -> AgentVote:
         try:
@@ -441,11 +441,11 @@ class MLAgent(SwarmAgent):
                 return AgentVote(self.name, Vote.SKIP, 1.0 - prediction,
                                  f"ML predicts LOSS ({prediction:.0%})")
             else:
-                return AgentVote(self.name, Vote.NEUTRAL, 0.40,
+                return AgentVote(self.name, Vote.NEUTRAL, 0.30,
                                  f"ML uncertain ({prediction:.0%})")
 
         except Exception:
-            return AgentVote(self.name, Vote.NEUTRAL, 0.20, "ML model not trained yet")
+            return AgentVote(self.name, Vote.NEUTRAL, 0.10, "ML model not trained yet")
 
 
 class OrderFlowAgent(SwarmAgent):
@@ -492,15 +492,16 @@ class TradingSwarm:
     """
 
     # Minimum weighted consensus to approve a trade (0-1)
-    CONSENSUS_THRESHOLD = 0.55
+    # Loosened for data collection phase — tighten after 500+ trades
+    CONSENSUS_THRESHOLD = 0.40
 
     # Minimum number of BUY votes required
-    MIN_BUY_VOTES = 4
+    MIN_BUY_VOTES = 3
 
     # Cold-start: relaxed thresholds while agents have <N votes
     COLD_START_THRESHOLD = 10
-    COLD_START_CONSENSUS = 0.50
-    COLD_START_MIN_BUY = 3
+    COLD_START_CONSENSUS = 0.35
+    COLD_START_MIN_BUY = 2
 
     def __init__(self):
         self.agents: list[SwarmAgent] = [
