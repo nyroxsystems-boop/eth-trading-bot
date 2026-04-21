@@ -51,6 +51,18 @@ async def serve_root():
 if DASHBOARD_DIST.exists() and (DASHBOARD_DIST / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(DASHBOARD_DIST / "assets")), name="assets")
 
+# SPA catch-all: any non-API route serves index.html for React Router
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    """Catch-all for React Router — serves index.html for all non-API routes."""
+    # Don't catch API routes
+    if full_path.startswith("api/") or full_path.startswith("health"):
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    index = DASHBOARD_DIST / "index.html"
+    if index.exists():
+        return FileResponse(str(index))
+    return JSONResponse({"status": "ok", "note": "Dashboard not built. Run: cd dashboard && npx vite build"})
+
 
 def main():
     parser = argparse.ArgumentParser(description="Ethbot v3 API Server")
