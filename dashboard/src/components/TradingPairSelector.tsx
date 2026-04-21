@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Search, ChevronDown, Star, TrendingUp } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_API_URL || ''
 
 interface TradingPair {
     symbol: string
