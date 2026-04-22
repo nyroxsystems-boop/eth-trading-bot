@@ -43,10 +43,13 @@ BLACKLIST = {
 STABLECOIN_PATTERNS = {"USD", "EUR", "GBP", "JPY", "BUSD", "TUSD", "DAI"}
 
 # Minimum 24h volume in USDT to be eligible
-MIN_VOLUME_USDT = 10_000_000  # $10M minimum daily volume
+MIN_VOLUME_USDT = 50_000_000  # $50M minimum daily volume (was $10M — filters microcaps like CHIP)
 
 # Maximum price change filter — skip coins moving <0.1% (likely pegged)
 MIN_PRICE_CHANGE_PCT = 0.1
+
+# Minimum price filter — skip ultra-penny tokens (high slippage risk)
+MIN_PRICE_USDT = 0.001
 
 
 def fetch_all_binance_pairs() -> List[Dict]:
@@ -92,6 +95,11 @@ def fetch_all_binance_pairs() -> List[Dict]:
 
             volume_usdt = float(t.get("quoteVolume", 0))
             if volume_usdt < MIN_VOLUME_USDT:
+                continue
+
+            # Skip ultra-penny tokens (high slippage)
+            last_price = float(t.get("lastPrice", 0))
+            if last_price < MIN_PRICE_USDT:
                 continue
 
             # Skip pegged tokens (price change < 0.1% = stablecoin)

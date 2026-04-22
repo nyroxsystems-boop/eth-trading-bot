@@ -58,7 +58,18 @@ class TradingBrain:
     # ═══════════════════════════════════════════════════════════════════════
 
     def _load_memory(self) -> dict:
-        """Load or initialize the brain's memory."""
+        """Load or initialize the brain's memory. Postgres first, then JSON fallback."""
+        # Try Postgres first (survives deploys)
+        try:
+            from bot.brain_store import load_brain_memory
+            pg_mem = load_brain_memory()
+            if pg_mem and pg_mem.get("stats", {}).get("total_trades", 0) > 0:
+                logger.info("🧠 Brain memory loaded from Postgres")
+                return pg_mem
+        except Exception as e:
+            logger.debug(f"Postgres brain load: {e}")
+
+        # Fallback to JSON
         if MEMORY_FILE.exists():
             try:
                 return json.loads(MEMORY_FILE.read_text())
@@ -99,7 +110,7 @@ class TradingBrain:
         }
 
     def save_memory(self):
-        """Persist the brain's memory to disk."""
+        """Persist the brain's memory to disk AND Postgres."""
         self.memory["last_updated"] = datetime.now(timezone.utc).isoformat()
 
         # Calculate age
@@ -110,10 +121,18 @@ class TradingBrain:
         except Exception:
             pass
 
+        # Save to JSON (local)
         try:
             MEMORY_FILE.write_text(json.dumps(self.memory, ensure_ascii=False, indent=2))
         except Exception as e:
-            logger.warning(f"Brain save failed: {e}")
+            logger.warning(f"Brain JSON save failed: {e}")
+
+        # Save to Postgres (persistent across deploys)
+        try:
+            from bot.brain_store import save_brain_memory
+            save_brain_memory(self.memory)
+        except Exception as e:
+            logger.debug(f"Brain Postgres save: {e}")
 
     # ═══════════════════════════════════════════════════════════════════════
     # 2. LEARNING — Record everything, learn from everything
@@ -366,7 +385,16 @@ class TradingBrain:
     # ═══════════════════════════════════════════════════════════════════════
 
     def _load_strategies(self) -> dict:
-        """Load strategy performance data."""
+        """Load strategy performance data. Postgres first, then JSON."""
+        try:
+            from bot.brain_store import load_brain_strategies
+            pg_strats = load_brain_strategies()
+            if pg_strats:
+                logger.info(f"🧠 Brain strategies loaded from Postgres ({len(pg_strats)} strategies)")
+                return pg_strats
+        except Exception as e:
+            logger.debug(f"Postgres strategies load: {e}")
+
         if STRATEGY_FILE.exists():
             try:
                 return json.loads(STRATEGY_FILE.read_text())
@@ -375,11 +403,16 @@ class TradingBrain:
         return {}
 
     def save_strategies(self):
-        """Persist strategy data."""
+        """Persist strategy data to JSON + Postgres."""
         try:
             STRATEGY_FILE.write_text(json.dumps(self.strategies, indent=2))
         except Exception:
             pass
+        try:
+            from bot.brain_store import save_brain_strategies
+            save_brain_strategies(self.strategies)
+        except Exception as e:
+            logger.debug(f"Postgres strategies save: {e}")
 
     def record_strategy_result(self, strategy_name: str, pnl_pct: float, regime: str):
         """Track how each strategy combo performs."""
@@ -438,7 +471,16 @@ class TradingBrain:
     # ═══════════════════════════════════════════════════════════════════════
 
     def _load_patterns(self) -> dict:
-        """Load discovered patterns."""
+        """Load discovered patterns. Postgres first, then JSON."""
+        try:
+            from bot.brain_store import load_brain_patterns
+            pg_pat = load_brain_patterns()
+            if pg_pat and pg_pat.get("discovered"):
+                logger.info(f"🧠 Brain patterns loaded from Postgres ({len(pg_pat['discovered'])} patterns)")
+                return pg_pat
+        except Exception as e:
+            logger.debug(f"Postgres patterns load: {e}")
+
         if PATTERNS_FILE.exists():
             try:
                 return json.loads(PATTERNS_FILE.read_text())
@@ -517,6 +559,11 @@ class TradingBrain:
             PATTERNS_FILE.write_text(json.dumps(self.patterns, indent=2))
         except Exception:
             pass
+        try:
+            from bot.brain_store import save_brain_patterns
+            save_brain_patterns(self.patterns)
+        except Exception as e:
+            logger.debug(f"Postgres patterns save: {e}")
 
         if patterns:
             logger.info(f"🧠 Brain discovered {len(patterns)} patterns!")
@@ -653,11 +700,19 @@ class TradingBrain:
                 sorted(importance.items(), key=lambda x: x[1], reverse=True)
             }
 
-            # Save model
+            # Save model to local file
             import pickle
             model_path = BRAIN_DIR / "ml_model.pkl"
             with open(model_path, "wb") as f:
                 pickle.dump(model, f)
+
+            # Save model to Postgres (survives deploys)
+            try:
+                from bot.brain_store import save_ml_model
+                train_count = self.memory.get("ml_train_count", 0) + 1
+                save_ml_model(model, feature_cols, accuracy, train_count)
+            except Exception as e:
+                logger.debug(f"ML model Postgres save: {e}")
 
             self.memory["last_ml_train_at"] = labeled
             self.memory["ml_accuracy"] = round(accuracy, 4)
@@ -697,18 +752,29 @@ class TradingBrain:
             import pickle
             import numpy as np
 
-            model_path = BRAIN_DIR / "ml_model.pkl"
-            if not model_path.exists():
-                return 0.5  # No model yet
-
-            with open(model_path, "rb") as f:
-                model = pickle.load(f)
-
-            # Must match training features EXACTLY
+            model = None
             feature_cols = [
                 "rsi14", "adx14", "atr_pct", "macd", "volume_ratio",
                 "vwap_dev", "fg_value", "funding_rate", "mtf_boost",
             ]
+
+            # Try local file first (faster)
+            model_path = BRAIN_DIR / "ml_model.pkl"
+            if model_path.exists():
+                with open(model_path, "rb") as f:
+                    model = pickle.load(f)
+            else:
+                # Try Postgres (survives deploys)
+                try:
+                    from bot.brain_store import load_ml_model
+                    model, pg_cols, _ = load_ml_model()
+                    if pg_cols:
+                        feature_cols = pg_cols
+                except Exception:
+                    pass
+
+            if model is None:
+                return 0.5  # No model yet
 
             X = np.array([[float(features.get(c, 0) or 0) for c in feature_cols]])
             proba = model.predict_proba(X)[0]

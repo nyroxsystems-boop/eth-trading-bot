@@ -330,9 +330,39 @@ def _trade_pair(
 
     # ── Step 4: Look for new entry ──
     elif not state.is_in_position:
+        # ── Brain Intelligence: Pre-filters ──
+        brain_pair_confidence = 1.0
+        adaptive_entry_score = config.entry_score_min
+
+        try:
+            from bot.brain import get_brain
+            brain = get_brain()
+
+            # M2: HOURLY FILTER — Skip hours with historically bad performance
+            from datetime import datetime, timezone as tz
+            current_hour = str(datetime.now(tz.utc).hour)
+            hourly_data = brain.memory.get("hourly_performance", {}).get(current_hour, {})
+            h_trades = hourly_data.get("trades", 0)
+            h_wins = hourly_data.get("wins", 0)
+            if h_trades >= 10:
+                h_winrate = h_wins / h_trades
+                if h_winrate < 0.30:
+                    logger.info(f"[{pair}] 🕐 Brain: Hour {current_hour} UTC has {h_winrate:.0%} WR ({h_trades} trades) — skipping")
+                    return
+
+            # M3: ADAPTIVE ENTRY SCORE — Use brain's learned optimal threshold
+            optimal = brain.get_optimal_threshold(pair)
+            if optimal and optimal > 0:
+                adaptive_entry_score = max(config.entry_score_min, optimal)
+
+            # M1: PAIR CONFIDENCE — Scale conviction by historical performance
+            brain_pair_confidence = brain.get_pair_confidence(pair)
+        except Exception as e:
+            logger.debug(f"Non-critical brain pre-filter: {e}")
+
         signal = compute_signals(
             df,
-            entry_score_min=config.entry_score_min,
+            entry_score_min=adaptive_entry_score,
             rsi_min=config.rsi_min,
             rsi_max=config.rsi_max,
             ml_confidence=0.5,
@@ -523,9 +553,11 @@ def _trade_pair(
             if pool_equity < config.paper_balance * 0.05:
                 logger.info(f"[{pair}] 🛡️ Pool exhausted: ${pool_equity:,.0f} remaining — skipping")
             else:
+              # M1: Scale confidence by brain's pair-specific knowledge
+              adjusted_confidence = signal.score * brain_pair_confidence if 'brain_pair_confidence' in dir() else signal.score
               qty = position_size(
                 px, atr, config, state,
-                confidence=signal.score,
+                confidence=adjusted_confidence,
                 swarm_pct=decision.consensus_pct,
                 total_pool_equity=pool_equity,
               )
@@ -593,52 +625,112 @@ def _trade_pair(
                   _notify(config, msg)
                   state.save(f"logs/state_{pair}.json")
 
-        # ── SHORT SELLING: Strong bearish consensus → short the pair ──
+        # ── SHORT SELLING: Dedicated bearish signals + swarm confirmation ──
         elif (not swarm_approved and not state.is_in_position
               and decision.weighted_score < -0.3
-              and decision.skip_votes >= 4
-              and signal.adx > 25
-              and signal.rsi > 60):
+              and decision.skip_votes >= 4):
 
-            qty = position_size(
-                px, atr, config, state,
-                confidence=abs(decision.weighted_score),
-                swarm_pct=1.0 - decision.consensus_pct,
-                total_pool_equity=pool_equity,
-            )
-            # Apply leverage
-            qty *= min(config.leverage, config.max_leverage)
-            cost = qty * px
+            # M4: DEDICATED SHORT SIGNALS (not just inverted longs)
+            short_signals = []
+            short_score = 0.0
 
-            if cost >= 10:
-                # Paper mode: simulate short
-                if config.paper_mode:
-                    state.open_position(px, qty, atr)
-                    state.position.direction = "SHORT"
-                    _log_trade("SHORT", pair, qty, px)
+            # S1: MACD bearish crossover
+            macd_val = float(row.get("macd", 0))
+            macd_sig = float(row.get("macd_sig", 0))
+            prev_row = df.iloc[-2] if len(df) >= 2 else row
+            if macd_val < macd_sig and float(prev_row.get("macd", 0)) >= float(prev_row.get("macd_sig", 0)):
+                short_signals.append("MACD_BEAR_CROSS")
+                short_score += 0.20
 
-                    msg = (
-                        f"[{pair}] 🔻 SHORT {base} (SWARM {decision.skip_votes}/{decision.total_agents} SKIP) "
-                        f"@ ${px:,.2f} | Size: ${cost:,.2f} | "
-                        f"Score: {decision.weighted_score:+.3f} | RSI: {signal.rsi:.0f}"
-                    )
-                    logger.info(msg)
-                    _notify(config, msg)
-                else:
-                    # Live mode: use margin executor
-                    try:
-                        from bot.margin_executor import get_margin_client
-                        mc = get_margin_client()
-                        result = mc.open_short(pair, qty)
-                        if result:
-                            state.open_position(px, qty, atr)
-                            state.position.direction = "SHORT"
-                            _log_trade("SHORT", pair, qty, px)
-                            logger.info(f"[{pair}] 🔻 MARGIN SHORT {base} @ ${px:,.2f} | Qty: {qty:.5f}")
-                    except Exception as e:
-                        logger.warning(f"[{pair}] Margin short failed: {e}")
+            # S2: Price below EMAs (downtrend)
+            ema20 = float(row.get("ema20", px))
+            ema50 = float(row.get("ema50", px))
+            if px < ema20 < ema50:
+                short_signals.append("DOWNTREND")
+                short_score += 0.15
 
-                state.save(f"logs/state_{pair}.json")
+            # S3: RSI overbought and turning down
+            rsi = signal.rsi
+            if rsi > 65:
+                short_signals.append("RSI_HIGH")
+                short_score += 0.10
+            if rsi > 75:
+                short_score += 0.10  # Extra for very overbought
+
+            # S4: Bearish engulfing (big red candle after green)
+            if len(df) >= 2:
+                curr_open = float(row.get("open", px))
+                curr_close = float(row.get("close", px))
+                prev_open = float(prev_row.get("open", px))
+                prev_close = float(prev_row.get("close", px))
+                if (prev_close > prev_open and  # Previous was green
+                    curr_close < curr_open and   # Current is red
+                    curr_close < prev_open and   # Engulfs previous
+                    curr_open > prev_close):
+                    short_signals.append("BEARISH_ENGULF")
+                    short_score += 0.15
+
+            # S5: Breakdown below 20-period low
+            ll20 = float(row.get("ll20", px))
+            if px < ll20:
+                short_signals.append("BREAKDOWN")
+                short_score += 0.20
+
+            # S6: High ADX confirms strong trend (direction already bearish)
+            if signal.adx > 25:
+                short_signals.append("ADX_STRONG")
+                short_score += 0.05
+
+            # S7: Volume confirmation
+            vol_ratio = float(row.get("volume_ratio", 1.0))
+            if vol_ratio >= 1.3:
+                short_signals.append("VOL_CONFIRM")
+                short_score += 0.08
+
+            # Require at least 3 bearish signals AND minimum score
+            short_approved = len(short_signals) >= 3 and short_score >= 0.30
+
+            if short_approved and signal.adx > 25 and signal.rsi > 55:
+
+                qty = position_size(
+                    px, atr, config, state,
+                    confidence=abs(decision.weighted_score),
+                    swarm_pct=1.0 - decision.consensus_pct,
+                    total_pool_equity=pool_equity,
+                )
+                # Apply leverage
+                qty *= min(config.leverage, config.max_leverage)
+                cost = qty * px
+
+                if cost >= 10:
+                    # Paper mode: simulate short
+                    if config.paper_mode:
+                        state.open_position(px, qty, atr)
+                        state.position.direction = "SHORT"
+                        _log_trade("SHORT", pair, qty, px)
+
+                        msg = (
+                            f"[{pair}] 🔻 SHORT {base} (SWARM {decision.skip_votes}/{decision.total_agents} SKIP) "
+                            f"@ ${px:,.2f} | Size: ${cost:,.2f} | "
+                            f"Bearish: {', '.join(short_signals)} | RSI: {signal.rsi:.0f}"
+                        )
+                        logger.info(msg)
+                        _notify(config, msg)
+                    else:
+                        # Live mode: use margin executor
+                        try:
+                            from bot.margin_executor import get_margin_client
+                            mc = get_margin_client()
+                            result = mc.open_short(pair, qty)
+                            if result:
+                                state.open_position(px, qty, atr)
+                                state.position.direction = "SHORT"
+                                _log_trade("SHORT", pair, qty, px)
+                                logger.info(f"[{pair}] 🔻 MARGIN SHORT {base} @ ${px:,.2f} | Qty: {qty:.5f}")
+                        except Exception as e:
+                            logger.warning(f"[{pair}] Margin short failed: {e}")
+
+                    state.save(f"logs/state_{pair}.json")
 
 
 def _run_strategy_cycle(config: TradingConfig, loop_count: int):

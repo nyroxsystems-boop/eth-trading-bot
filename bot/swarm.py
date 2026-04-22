@@ -660,7 +660,7 @@ class TradingSwarm:
         return 1.0
 
     def _save_weights(self):
-        """Persist agent weights to brain."""
+        """Persist agent weights to JSON + Postgres."""
         import json
         from pathlib import Path
         weights_path = Path("./logs/brain/swarm_weights.json")
@@ -671,24 +671,52 @@ class TradingSwarm:
         except Exception:
             pass
 
-    def _load_weights(self):
-        """Load agent weights from brain."""
-        import json
-        from pathlib import Path
-        weights_path = Path("./logs/brain/swarm_weights.json")
-        if not weights_path.exists():
-            return
+        # Persist to Postgres (survives deploys)
         try:
-            data = json.loads(weights_path.read_text())
-            for agent in self.agents:
-                if agent.name in data:
-                    saved = data[agent.name]
-                    agent.weight = saved.get("weight", agent.weight)
-                    agent.total_votes = saved.get("total_votes", 0)
-                    agent.correct_votes = saved.get("correct_votes", 0)
-                    agent.accuracy = saved.get("accuracy", 0.5)
+            from bot.brain_store import save_all_swarm_agents
+            save_all_swarm_agents(self.agents)
         except Exception:
             pass
+
+    def _load_weights(self):
+        """Load agent weights from Postgres first, then JSON fallback."""
+        loaded = False
+
+        # Try Postgres first (persistent across deploys)
+        try:
+            from bot.brain_store import load_swarm_agents
+            pg_data = load_swarm_agents()
+            if pg_data:
+                for agent in self.agents:
+                    if agent.name in pg_data:
+                        saved = pg_data[agent.name]
+                        agent.weight = saved.get("weight", agent.weight)
+                        agent.total_votes = saved.get("total_votes", 0)
+                        agent.correct_votes = saved.get("correct_votes", 0)
+                        agent.accuracy = saved.get("accuracy", 0.5)
+                        agent._recent_results = saved.get("recent_results", [])
+                loaded = True
+        except Exception:
+            pass
+
+        # Fallback to JSON
+        if not loaded:
+            import json
+            from pathlib import Path
+            weights_path = Path("./logs/brain/swarm_weights.json")
+            if not weights_path.exists():
+                return
+            try:
+                data = json.loads(weights_path.read_text())
+                for agent in self.agents:
+                    if agent.name in data:
+                        saved = data[agent.name]
+                        agent.weight = saved.get("weight", agent.weight)
+                        agent.total_votes = saved.get("total_votes", 0)
+                        agent.correct_votes = saved.get("correct_votes", 0)
+                        agent.accuracy = saved.get("accuracy", 0.5)
+            except Exception:
+                pass
 
     def get_status(self) -> dict:
         """Get swarm status."""
