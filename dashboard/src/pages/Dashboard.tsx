@@ -195,31 +195,35 @@ export default function Dashboard(_props: DashboardProps) {
           <div className="chart-title" style={{ marginBottom: '16px' }}>
             📈 Open Positions ({openPositions.length})
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
-            {openPositions.map((pos, i) => (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '12px' }}>
+            {openPositions.map((pos: any, i: number) => {
+              const upnl = pos.unrealized_pnl ?? pos.daily_pnl ?? 0
+              return (
               <div key={i} style={{
                 padding: '14px 16px',
                 borderRadius: '10px',
-                background: pos.daily_pnl >= 0
+                background: upnl >= 0
                   ? 'linear-gradient(135deg, rgba(16,185,129,0.08) 0%, rgba(16,185,129,0.02) 100%)'
                   : 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.02) 100%)',
-                border: `1px solid ${pos.daily_pnl >= 0 ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
+                border: `1px solid ${upnl >= 0 ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                   <span style={{ fontWeight: 700, fontSize: '14px' }}>{pos.pair}</span>
-                  <span className={pos.daily_pnl >= 0 ? 'positive' : 'negative'} style={{ fontWeight: 600, fontSize: '13px' }}>
-                    {pos.daily_pnl >= 0 ? '+' : ''}${pos.daily_pnl.toFixed(2)}
+                  <span className={upnl >= 0 ? 'positive' : 'negative'} style={{ fontWeight: 600, fontSize: '13px' }}>
+                    {upnl >= 0 ? '+' : ''}${upnl.toFixed(2)}
                   </span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
-                  <span>Bal: ${pos.balance.toFixed(0)}</span>
-                  <span>
-                    {pos.win_streak > 0 ? `🔥${pos.win_streak}W` : ''}
-                    {pos.loss_streak > 0 ? `❄️${pos.loss_streak}L` : ''}
-                  </span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px' }}>
+                  <span>{pos.direction || 'LONG'} @ ${Number(pos.entry_price || 0).toFixed(pos.entry_price < 1 ? 6 : 2)}</span>
+                  <span>Qty: {Number(pos.quantity || 0).toFixed(pos.quantity > 100 ? 0 : 4)}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)' }}>
+                  <span>Locked: ${Number(pos.locked || 0).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+                  <span>{pos.bars_held || 0} bars</span>
                 </div>
               </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       ) : (

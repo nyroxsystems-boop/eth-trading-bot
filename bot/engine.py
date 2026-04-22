@@ -519,68 +519,79 @@ def _trade_pair(
             swarm_approved = signal.should_buy
 
         if swarm_approved:
-            qty = position_size(
+            # EXPOSURE CHECK: Don't open if pool is nearly exhausted
+            if pool_equity < config.paper_balance * 0.05:
+                logger.info(f"[{pair}] 🛡️ Pool exhausted: ${pool_equity:,.0f} remaining — skipping")
+            else:
+              qty = position_size(
                 px, atr, config, state,
                 confidence=signal.score,
                 swarm_pct=decision.consensus_pct,
                 total_pool_equity=pool_equity,
-            )
-            # Apply leverage (3x default)
-            qty *= min(config.leverage, config.max_leverage)
-            cost = qty * px
+              )
+              # Apply leverage (3x default)
+              qty *= min(config.leverage, config.max_leverage)
+              cost = qty * px
 
-            if cost < 10:
+              # Cap position at remaining pool equity (prevent over-allocation)
+              max_cost = pool_equity * 0.60  # Never more than 60% of REMAINING pool
+              if cost > max_cost and max_cost > 0:
+                  qty = max_cost / max(px, 1)
+                  cost = qty * px
+                  logger.info(f"[{pair}] 🛡️ Position capped to ${cost:,.0f} (60% of remaining ${pool_equity:,.0f})")
+
+              if cost < 10:
                 qty = max(qty, 50.0 / max(px, 1))
 
-            # ── Portfolio Guard + Correlation Guard ──
-            can_trade = True
+              # ── Portfolio Guard + Correlation Guard ──
+              can_trade = True
 
-            # Check correlation with existing positions
-            try:
-                from bot.correlation import get_correlation_guard
-                cg = get_correlation_guard()
-                corr_ok, corr_reason = cg.can_open_position(pair, "LONG")
-                if not corr_ok:
-                    logger.info(f"[{pair}] 🔗 Correlation Guard: {corr_reason}")
-                    can_trade = False
-            except Exception as e:
-                logger.debug(f"Non-critical: {e}")
+              # Check correlation with existing positions
+              try:
+                  from bot.correlation import get_correlation_guard
+                  cg = get_correlation_guard()
+                  corr_ok, corr_reason = cg.can_open_position(pair, "LONG")
+                  if not corr_ok:
+                      logger.info(f"[{pair}] 🔗 Correlation Guard: {corr_reason}")
+                      can_trade = False
+              except Exception as e:
+                  logger.debug(f"Non-critical: {e}")
 
-            try:
-                from bot.shield import get_portfolio_guard
-                pg = get_portfolio_guard()
-                allowed, reason = pg.can_open_position(pair, qty * px)
-                if not allowed:
-                    logger.info(f"[{pair}] 🛡️ Portfolio Guard: {reason}")
-                    can_trade = False
-            except Exception as e:
-                logger.debug(f"Non-critical: {e}")
+              try:
+                  from bot.shield import get_portfolio_guard
+                  pg = get_portfolio_guard()
+                  allowed, reason = pg.can_open_position(pair, qty * px)
+                  if not allowed:
+                      logger.info(f"[{pair}] 🛡️ Portfolio Guard: {reason}")
+                      can_trade = False
+              except Exception as e:
+                  logger.debug(f"Non-critical: {e}")
 
-            if can_trade and execute_buy(px, qty, config, state):
-                state.open_position(px, qty, atr)
-                state.position.direction = "LONG"
-                _log_trade("BUY", pair, qty, px)
+              if can_trade and execute_buy(px, qty, config, state):
+                  state.open_position(px, qty, atr)
+                  state.position.direction = "LONG"
+                  _log_trade("BUY", pair, qty, px)
 
-                # Register position with portfolio guard + correlation guard
-                try:
-                    get_portfolio_guard().register_position(pair, qty * px)
-                except Exception as e:
-                    logger.debug(f"Non-critical: {e}")
-                try:
-                    from bot.correlation import get_correlation_guard
-                    get_correlation_guard().register_position(pair, "LONG")
-                except Exception as e:
-                    logger.debug(f"Non-critical: {e}")
+                  # Register position with portfolio guard + correlation guard
+                  try:
+                      get_portfolio_guard().register_position(pair, qty * px)
+                  except Exception as e:
+                      logger.debug(f"Non-critical: {e}")
+                  try:
+                      from bot.correlation import get_correlation_guard
+                      get_correlation_guard().register_position(pair, "LONG")
+                  except Exception as e:
+                      logger.debug(f"Non-critical: {e}")
 
-                msg = (
-                    f"[{pair}] ▶️ LONG {base} (SWARM {decision.buy_votes}/{decision.total_agents}) "
-                    f"@ ${px:,.2f} | Size: ${qty*px:,.2f} | "
-                    f"Consensus: {decision.consensus_pct:.0%} | "
-                    f"Signals: {', '.join(signal.signals)}"
-                )
-                logger.info(msg)
-                _notify(config, msg)
-                state.save(f"logs/state_{pair}.json")
+                  msg = (
+                      f"[{pair}] ▶️ LONG {base} (SWARM {decision.buy_votes}/{decision.total_agents}) "
+                      f"@ ${px:,.2f} | Size: ${qty*px:,.2f} | "
+                      f"Consensus: {decision.consensus_pct:.0%} | "
+                      f"Signals: {', '.join(signal.signals)}"
+                  )
+                  logger.info(msg)
+                  _notify(config, msg)
+                  state.save(f"logs/state_{pair}.json")
 
         # ── SHORT SELLING: Strong bearish consensus → short the pair ──
         elif (not swarm_approved and not state.is_in_position
@@ -975,6 +986,18 @@ def run(config: TradingConfig | None = None):
                 # Calculate available pool equity = total capital - locked in all open positions
                 total_locked = sum(s.paper_locked for s in states.values())
                 pool_equity = max(0, config.paper_balance - total_locked)
+
+                # EXPOSURE LIMIT: Skip if >80% of pool is already locked in positions
+                max_exposure = config.paper_balance * 0.80
+                if total_locked >= max_exposure and not state.is_in_position:
+                    logger.debug(f"[{pair_key}] Pool exposure limit: ${total_locked:,.0f} / ${config.paper_balance:,.0f} ({total_locked/config.paper_balance:.0%}) — skipping new entries")
+                    # Still manage existing positions (exits)
+                    if state.is_in_position:
+                        try:
+                            _trade_pair(pair_info, config, state, pool_equity=pool_equity)
+                        except Exception as e:
+                            logger.error(f"[{pair_key}] Error: {e}", exc_info=True)
+                    continue
 
                 try:
                     _trade_pair(pair_info, config, state, pool_equity=pool_equity)

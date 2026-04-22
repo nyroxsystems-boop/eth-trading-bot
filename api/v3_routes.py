@@ -115,17 +115,41 @@ async def get_status():
     current_equity = starting_balance + total_pnl
     daily_pnl_total = sum(p.get("daily_pnl", 0) for p in real_pairs) if real_pairs else state.get("daily_pnl", 0.0)
     
-    # Active positions
-    open_positions = [
-        {
-            "pair": p["pair"].replace("USDT", "/USDT"),
-            "daily_pnl": round(p.get("daily_pnl", 0), 2),
-            "balance": round(p.get("paper_balance", 5000), 2),
-            "win_streak": p.get("win_streak", 0),
-            "loss_streak": p.get("loss_streak", 0),
-        }
-        for p in real_pairs if p.get("in_position", False)
-    ]
+    # Active positions with unrealized PnL
+    open_positions = []
+    total_unrealized = 0.0
+    for p in real_pairs:
+        if p.get("in_position", False):
+            entry_px = p.get("entry_price", 0)
+            qty = p.get("quantity", 0)
+            locked = p.get("paper_locked", 0)
+            
+            # Try to get current price for unrealized PnL
+            unrealized = 0.0
+            try:
+                import requests
+                pair_raw = p["pair"]
+                resp = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={pair_raw}", timeout=3)
+                if resp.ok:
+                    current_px = float(resp.json().get("price", entry_px))
+                    if p.get("direction", "LONG") == "SHORT":
+                        unrealized = (entry_px - current_px) * qty
+                    else:
+                        unrealized = (current_px - entry_px) * qty
+            except Exception:
+                pass
+            
+            total_unrealized += unrealized
+            open_positions.append({
+                "pair": p["pair"].replace("USDT", "/USDT"),
+                "daily_pnl": round(p.get("daily_pnl", 0), 2),
+                "unrealized_pnl": round(unrealized, 2),
+                "locked": round(locked, 2),
+                "entry_price": round(entry_px, 6),
+                "quantity": round(qty, 4),
+                "direction": p.get("direction", "LONG"),
+                "bars_held": p.get("bars_held", 0),
+            })
     
     active_pairs = len(real_pairs)
 
@@ -455,14 +479,22 @@ def _read_pair_states() -> List[Dict]:
             pair = f.stem.replace("state_", "")
             with open(f) as fh:
                 data = json.load(fh)
+            pos = data.get("position") or {}
+            entry_price = pos.get("entry_price", 0) or 0
+            quantity = pos.get("quantity", 0) or 0
             pairs.append({
                 "pair": pair,
-                "in_position": data.get("position", {}).get("entry_price") is not None and data.get("position", {}).get("entry_price", 0) > 0,
+                "in_position": entry_price > 0,
                 "daily_pnl": data.get("daily_pnl", 0),
                 "today_trades": data.get("today_trades", 0),
                 "paper_balance": data.get("paper_balance", 0),
+                "paper_locked": data.get("paper_locked", 0),
                 "win_streak": data.get("win_streak", 0),
                 "loss_streak": data.get("loss_streak", 0),
+                "entry_price": entry_price,
+                "quantity": quantity,
+                "direction": pos.get("direction", "LONG"),
+                "bars_held": pos.get("bars_held", 0),
             })
     except Exception as e:
         logger.warning(f"Failed to read pair states: {e}")

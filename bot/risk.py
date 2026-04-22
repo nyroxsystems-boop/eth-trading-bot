@@ -29,12 +29,12 @@ def position_size(
         total_pool_equity: Total available capital pool (total - locked)
                           If 0, falls back to state.available_balance
 
-    Sizing tiers:
-        ★★★★★ Elite (90%+ consensus, strong trend) → 50-60% of pool
-        ★★★★  Strong (75%+ consensus)              → 30-40% of pool
-        ★★★   Normal (60%+ consensus)               → 15-25% of pool
-        ★★    Weak   (50%+ consensus)                → 8-12% of pool
-        ★     Minimum (barely passes)                → 5% of pool
+    Sizing tiers (CONSERVATIVE for multi-pair):
+        ★★★★★ Elite (90%+ consensus, strong trend) → 25% of pool
+        ★★★★  Strong (75%+ consensus)              → 18% of pool
+        ★★★   Normal (60%+ consensus)               → 12% of pool
+        ★★    Weak   (50%+ consensus)                → 6% of pool
+        ★     Minimum (barely passes)                → 3% of pool
     """
     # Use total pool if provided, otherwise fall back to per-pair balance
     equity = total_pool_equity if total_pool_equity > 0 else state.available_balance
@@ -45,16 +45,18 @@ def position_size(
     combined_confidence = (swarm_pct * 0.6) + (min(confidence, 1.0) * 0.4)
 
     # Map confidence to equity allocation percentage
+    # CONSERVATIVE: With 7+ pairs, total exposure must stay under 80%
+    # So per-trade max = ~12% average (80% / 7 pairs ≈ 11.4%)
     if combined_confidence >= 0.85:
-        alloc_pct = 0.55  # Elite: 55% of pool
+        alloc_pct = 0.25  # Elite: 25% of pool (was 55%)
     elif combined_confidence >= 0.70:
-        alloc_pct = 0.35  # Strong: 35%
+        alloc_pct = 0.18  # Strong: 18% (was 35%)
     elif combined_confidence >= 0.55:
-        alloc_pct = 0.20  # Normal: 20%
+        alloc_pct = 0.12  # Normal: 12% (was 20%)
     elif combined_confidence >= 0.40:
-        alloc_pct = 0.10  # Weak: 10%
+        alloc_pct = 0.06  # Weak: 6% (was 10%)
     else:
-        alloc_pct = 0.05  # Minimum: 5%
+        alloc_pct = 0.03  # Minimum: 3% (was 5%)
 
     risk_usd = equity * alloc_pct
 
@@ -78,7 +80,7 @@ def position_size(
     qty = risk_usd / denom
 
     # Cap position at the allocation percentage of equity
-    max_qty = (equity * min(alloc_pct + 0.05, 0.60)) / max(price, 1)
+    max_qty = (equity * min(alloc_pct + 0.03, 0.30)) / max(price, 1)
     qty = min(qty, max_qty)
 
     return max(0.0001, qty)
