@@ -28,7 +28,7 @@ interface DashboardProps {
   status: BotStatus | null
 }
 
-export default function Dashboard({ status: propStatus }: DashboardProps) {
+export default function Dashboard(_props: DashboardProps) {
   const [trades, setTrades] = useState<Trade[]>([])
   const [chartDays, setChartDays] = useState(7)
   const [pnlHistory, setPnlHistory] = useState<any[]>([])

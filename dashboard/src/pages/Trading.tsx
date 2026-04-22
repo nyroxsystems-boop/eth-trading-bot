@@ -39,7 +39,7 @@ interface BotConfig {
   loop_sleep_seconds: number
 }
 
-export default function Trading({ status: propStatus }: TradingProps) {
+export default function Trading(_props: TradingProps) {
   const [trades, setTrades] = useState<Trade[]>([])
   const [signal, setSignal] = useState<SignalInfo | null>(null)
   const [config, setConfig] = useState<BotConfig | null>(null)
