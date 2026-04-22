@@ -124,8 +124,13 @@ def _trade_pair(
     pair_info: dict,
     config: TradingConfig,
     state: BotState,
+    pool_equity: float = 0.0,
 ) -> None:
-    """Execute one trading cycle for a single pair (crypto or stock)."""
+    """Execute one trading cycle for a single pair (crypto or stock).
+    
+    pool_equity: Total available capital pool (total - locked in other positions).
+                 Used for dynamic position sizing — strong signals get more capital.
+    """
     pair = pair_info["pair"]
     base = pair_info["base"]
     market = pair_info.get("market", "crypto")
@@ -518,6 +523,7 @@ def _trade_pair(
                 px, atr, config, state,
                 confidence=signal.score,
                 swarm_pct=decision.consensus_pct,
+                total_pool_equity=pool_equity,
             )
             # Apply leverage (3x default)
             qty *= min(config.leverage, config.max_leverage)
@@ -587,6 +593,7 @@ def _trade_pair(
                 px, atr, config, state,
                 confidence=abs(decision.weighted_score),
                 swarm_pct=1.0 - decision.consensus_pct,
+                total_pool_equity=pool_equity,
             )
             # Apply leverage
             qty *= min(config.leverage, config.max_leverage)
@@ -853,15 +860,18 @@ def run(config: TradingConfig | None = None):
     except Exception as e:
         logger.warning(f"S5 init: {e}")
 
-    # Get pairs and create per-pair states
+    # SHARED CAPITAL POOL — all pairs share the total balance
+    # The bot decides dynamically how much to allocate per trade based on confidence
+    # Strong signals → more capital, weak signals → less capital
     pairs = _get_pairs()
-    per_pair_balance = config.paper_balance / max(len(pairs), 1)
     states: dict[str, BotState] = {}
     for p in pairs:
         pair_key = p["pair"]
         state = BotState.load(f"logs/state_{pair_key}.json")
-        # Fair allocation: each pair gets its share of the total balance
-        state.paper_balance = per_pair_balance
+        # Each pair tracks its OWN P&L, but has access to the full pool
+        # Don't overwrite balance if state was loaded (preserves P&L tracking)
+        if state.paper_balance == 100_000.0:  # Fresh state, never traded
+            state.paper_balance = config.paper_balance
         state.check_new_day()
         # Fix stale positions: recover bars_held from entry_time
         if state.position and state.position.entry_time:
@@ -908,12 +918,13 @@ def run(config: TradingConfig | None = None):
     mode = "PAPER" if config.paper_mode else "LIVE"
     crypto_count = sum(1 for p in pairs if p.get("market", "crypto") == "crypto")
     stock_count = sum(1 for p in pairs if p.get("market") == "stock")
-    total_balance = sum(s.paper_balance for s in states.values())
+    total_balance = config.paper_balance
+    locked_in_positions = sum(s.paper_locked for s in states.values())
     logger.info("═══ Ethbot v3 Multi-Strategy Starting ═══")
     logger.info(f"Mode: {mode} | Crypto: {crypto_count} | Stocks: {stock_count} | Total: {len(pairs)}")
     logger.info("Strategies: S2(StatArb) + S4(Momentum) + S5(LiqHunter) | Mode: Margin Trading")
-    logger.info(f"Interval: {config.interval} | Total Balance: ${total_balance:,.2f}")
-    logger.info(f"Per-Pair Balance: ${config.paper_balance / max(len(pairs), 1):,.2f}")
+    logger.info(f"Interval: {config.interval} | Capital Pool: ${total_balance:,.2f} | Locked: ${locked_in_positions:,.2f}")
+    logger.info(f"Dynamic sizing: Confidence-based (5%-55% of available pool per trade)")
     logger.info(f"Max trades/day: {config.max_trades_per_day} | Entry min: {config.entry_score_min}")
 
     _notify(config, f"🤖 Ethbot v3 [{mode}] | {crypto_count} crypto + {stock_count} stocks | S2+S4+S5 (Margin) | ${total_balance:,.0f}")
@@ -960,8 +971,12 @@ def run(config: TradingConfig | None = None):
                 state = states[pair_key]
                 state.check_new_day()
 
+                # Calculate available pool equity = total capital - locked in all open positions
+                total_locked = sum(s.paper_locked for s in states.values())
+                pool_equity = max(0, config.paper_balance - total_locked)
+
                 try:
-                    _trade_pair(pair_info, config, state)
+                    _trade_pair(pair_info, config, state, pool_equity=pool_equity)
                 except Exception as e:
                     logger.error(f"[{pair_key}] Error: {e}", exc_info=True)
 

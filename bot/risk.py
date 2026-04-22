@@ -14,25 +14,30 @@ def position_size(
     state: BotState,
     confidence: float = 0.5,
     swarm_pct: float = 0.5,
+    total_pool_equity: float = 0.0,
 ) -> float:
     """
     Dynamic position sizing based on trend confidence.
 
-    NOT every coin gets the same capital.
-    Strong trends → bigger bets. Weak signals → tiny positions.
+    Uses the TOTAL CAPITAL POOL for sizing, not per-pair splits.
+    The bot decides how much of the full pool to allocate per trade
+    based on signal quality. Strong trends → bigger bets.
 
     Args:
         confidence: Signal score / entry quality (0.0 to 1.0+)
         swarm_pct: Swarm consensus percentage (0.0 to 1.0)
+        total_pool_equity: Total available capital pool (total - locked)
+                          If 0, falls back to state.available_balance
 
     Sizing tiers:
-        ★★★★★ Elite (90%+ consensus, strong trend) → 50-60% of equity
-        ★★★★  Strong (75%+ consensus)              → 30-40% of equity
-        ★★★   Normal (60%+ consensus)               → 15-25% of equity
-        ★★    Weak   (50%+ consensus)                → 8-12% of equity
-        ★     Minimum (barely passes)                → 5% of equity
+        ★★★★★ Elite (90%+ consensus, strong trend) → 50-60% of pool
+        ★★★★  Strong (75%+ consensus)              → 30-40% of pool
+        ★★★   Normal (60%+ consensus)               → 15-25% of pool
+        ★★    Weak   (50%+ consensus)                → 8-12% of pool
+        ★     Minimum (barely passes)                → 5% of pool
     """
-    equity = state.available_balance
+    # Use total pool if provided, otherwise fall back to per-pair balance
+    equity = total_pool_equity if total_pool_equity > 0 else state.available_balance
     sl_pct = stop_loss_pct(price, atr, config)
 
     # ── Base risk scaled by confidence ──
@@ -41,7 +46,7 @@ def position_size(
 
     # Map confidence to equity allocation percentage
     if combined_confidence >= 0.85:
-        alloc_pct = 0.55  # Elite: 55% of pair equity
+        alloc_pct = 0.55  # Elite: 55% of pool
     elif combined_confidence >= 0.70:
         alloc_pct = 0.35  # Strong: 35%
     elif combined_confidence >= 0.55:
