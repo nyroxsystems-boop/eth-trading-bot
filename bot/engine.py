@@ -312,8 +312,8 @@ def _trade_pair(
                 rl = get_rl_optimizer()
                 # Get the swarm votes that led to this trade
                 from bot.swarm import get_swarm
-                swarm = get_swarm()
-                trade_regime = getattr(pos, 'entry_regime', signal.regime if 'signal' in dir() else 'unknown')
+                get_swarm()  # Ensure singleton is initialized
+                trade_regime = getattr(pos, 'entry_regime', 'unknown')
                 rl.learn_from_trade(
                     votes=decision.votes if 'decision' in dir() else [],
                     regime=trade_regime,
@@ -917,7 +917,7 @@ def run(config: TradingConfig | None = None):
 
     try:
         from bot.swarm import get_swarm
-        swarm = get_swarm()
+        get_swarm()  # Initialize singleton
     except Exception as e:
         logger.warning(f"Swarm init: {e}")
 

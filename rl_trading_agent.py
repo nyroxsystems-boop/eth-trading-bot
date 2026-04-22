@@ -22,7 +22,13 @@ try:
     PYTORCH_AVAILABLE = True
 except ImportError:
     PYTORCH_AVAILABLE = False
+    nn = None  # type: ignore
+    torch = None  # type: ignore
+    optim = None  # type: ignore
+    F = None  # type: ignore
     print("⚠️ PyTorch not installed. Run: pip install torch")
+
+_BASE = nn.Module if PYTORCH_AVAILABLE else object
 
 
 class TradingEnvironment:
@@ -161,7 +167,7 @@ class TradingEnvironment:
         return self.balance + self.position * self.prices[min(self.current_step, len(self.prices) - 1)]
 
 
-class DQN(nn.Module):
+class DQN(_BASE):  # type: ignore[misc]
     """Deep Q-Network for trading decisions"""
     
     def __init__(self, state_size: int, action_size: int = 3, hidden_size: int = 128):

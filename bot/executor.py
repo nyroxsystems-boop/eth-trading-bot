@@ -146,7 +146,11 @@ def _live_sell(price: float, qty: float, config: TradingConfig, state: BotState)
         return False
 
     resp = client.order_market_sell(symbol=config.pair, quantity=round(qty, 5))
-    logger.info(f"[LIVE] SELL {qty:.5f} {config.base_asset} @ ~${price:.2f}")
+    status = resp.get("status") if isinstance(resp, dict) else None
+    if status not in ("FILLED", "PARTIALLY_FILLED", None):
+        logger.error(f"[LIVE] SELL unexpected status: {status} resp={resp}")
+        return False
+    logger.info(f"[LIVE] SELL {qty:.5f} {config.base_asset} @ ~${price:.2f} (status={status})")
     return True
 
 

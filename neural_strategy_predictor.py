@@ -19,10 +19,15 @@ try:
     PYTORCH_AVAILABLE = True
 except ImportError:
     PYTORCH_AVAILABLE = False
+    nn = None  # type: ignore
+    torch = None  # type: ignore
+    optim = None  # type: ignore
     print("⚠️ PyTorch not installed. Run: pip install torch")
 
+_BASE = nn.Module if PYTORCH_AVAILABLE else object
 
-class StrategyLSTM(nn.Module):
+
+class StrategyLSTM(_BASE):  # type: ignore[misc]
     """LSTM Neural Network for strategy score prediction"""
     
     def __init__(self, input_size: int = 8, hidden_size: int = 64, num_layers: int = 2, dropout: float = 0.2):
