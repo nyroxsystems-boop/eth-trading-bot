@@ -152,7 +152,13 @@ async def get_status():
                 "bars_held": p.get("bars_held", 0),
             })
     
-    active_pairs = len(real_pairs)
+    # Active pairs = total being monitored (not just those with state files)
+    try:
+        from bot.engine import _get_pairs
+        all_pairs = _get_pairs()
+        active_pairs = len(all_pairs)
+    except Exception:
+        active_pairs = max(len(real_pairs), 8)  # fallback
 
     return {
         "is_running": len(trades) > 0 or state.get("today_trades", 0) >= 0,
