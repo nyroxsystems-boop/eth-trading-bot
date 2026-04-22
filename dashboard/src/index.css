@@ -461,6 +461,14 @@ body::before {
   gap: 18px;
   align-items: stretch;
 }
+.grid-2col > .card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.grid-2col > .card > div:last-child {
+  flex: 1;
+}
 
 /* ── Settings ── */
 .settings-group {

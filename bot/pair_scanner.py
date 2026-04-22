@@ -43,7 +43,7 @@ BLACKLIST = {
 STABLECOIN_PATTERNS = {"USD", "EUR", "GBP", "JPY", "BUSD", "TUSD", "DAI"}
 
 # Minimum 24h volume in USDT to be eligible
-MIN_VOLUME_USDT = 50_000_000  # $50M minimum daily volume (was $10M — filters microcaps like CHIP)
+MIN_VOLUME_USDT = 20_000_000  # $20M minimum daily volume (filters microcaps, keeps mid-caps)
 
 # Maximum price change filter — skip coins moving <0.1% (likely pegged)
 MIN_PRICE_CHANGE_PCT = 0.1
