@@ -643,12 +643,13 @@ def _trade_pair(
                   _notify(config, msg)
                   state.save(f"logs/state_{pair}.json")
 
-        # ── SHORT SELLING: Dedicated bearish signals + swarm confirmation ──
+        # ── SHORT SELLING: Bearish signals + swarm confirmation ──
+        # LOOSENED CONDITIONS: Shorts should trigger in real bearish markets
         elif (not swarm_approved and not state.is_in_position
-              and decision.weighted_score < -0.3
-              and decision.skip_votes >= 4):
+              and decision.weighted_score < -0.1          # Was -0.3 (too strict)
+              and decision.skip_votes >= 2):              # Was 4 (too strict)
 
-            # M4: DEDICATED SHORT SIGNALS (not just inverted longs)
+            # M4: DEDICATED SHORT SIGNALS
             short_signals = []
             short_score = 0.0
 
@@ -659,6 +660,10 @@ def _trade_pair(
             if macd_val < macd_sig and float(prev_row.get("macd", 0)) >= float(prev_row.get("macd_sig", 0)):
                 short_signals.append("MACD_BEAR_CROSS")
                 short_score += 0.20
+            elif macd_val < macd_sig:
+                # Already bearish (no fresh cross needed)
+                short_signals.append("MACD_BEARISH")
+                short_score += 0.10
 
             # S2: Price below EMAs (downtrend)
             ema20 = float(row.get("ema20", px))
@@ -666,14 +671,17 @@ def _trade_pair(
             if px < ema20 < ema50:
                 short_signals.append("DOWNTREND")
                 short_score += 0.15
+            elif px < ema20:
+                short_signals.append("BELOW_EMA20")
+                short_score += 0.08
 
-            # S3: RSI overbought and turning down
+            # S3: RSI overbought / elevated
             rsi = signal.rsi
-            if rsi > 65:
-                short_signals.append("RSI_HIGH")
+            if rsi > 60:
+                short_signals.append("RSI_ELEVATED")
                 short_score += 0.10
-            if rsi > 75:
-                short_score += 0.10  # Extra for very overbought
+            if rsi > 70:
+                short_score += 0.10  # Extra for overbought
 
             # S4: Bearish engulfing (big red candle after green)
             if len(df) >= 2:
@@ -694,21 +702,34 @@ def _trade_pair(
                 short_signals.append("BREAKDOWN")
                 short_score += 0.20
 
-            # S6: High ADX confirms strong trend (direction already bearish)
-            if signal.adx > 25:
-                short_signals.append("ADX_STRONG")
-                short_score += 0.05
+            # S6: Strong trend confirmation (ADX)
+            if signal.adx > 20:
+                short_signals.append("ADX_TREND")
+                short_score += 0.08
 
             # S7: Volume confirmation
             vol_ratio = float(row.get("volume_ratio", 1.0))
-            if vol_ratio >= 1.3:
+            if vol_ratio >= 1.2:
                 short_signals.append("VOL_CONFIRM")
                 short_score += 0.08
 
-            # Require at least 3 bearish signals AND minimum score
-            short_approved = len(short_signals) >= 3 and short_score >= 0.30
+            # S8: Price below VWAP (institutional selling pressure)
+            vwap = float(row.get("vwap", px))
+            if px < vwap * 0.998:  # Below VWAP with small buffer
+                short_signals.append("BELOW_VWAP")
+                short_score += 0.10
 
-            if short_approved and signal.adx > 25 and signal.rsi > 55:
+            # S9: Upper Bollinger reject (touched top and reversed)
+            bb_upper = float(row.get("bb_upper", px * 1.1))
+            bb_pct = float(row.get("bb_pct", 0.5))
+            if bb_pct > 0.8 and curr_close < curr_open if len(df) >= 2 else False:
+                short_signals.append("BB_UPPER_REJECT")
+                short_score += 0.12
+
+            # Require at least 2 bearish signals AND minimum score
+            short_approved = len(short_signals) >= 2 and short_score >= 0.20
+
+            if short_approved and signal.adx > 18 and signal.rsi > 45:
 
                 qty = position_size(
                     px, atr, config, state,
@@ -716,8 +737,9 @@ def _trade_pair(
                     swarm_pct=1.0 - decision.consensus_pct,
                     total_pool_equity=pool_equity,
                 )
-                # Apply leverage
-                qty *= min(config.leverage, config.max_leverage)
+                # Apply leverage (conservative for shorts: cap at 2x)
+                short_leverage = min(config.leverage, config.max_leverage, 2.0)
+                qty *= short_leverage
                 cost = qty * px
 
                 if cost >= 10:
@@ -730,7 +752,7 @@ def _trade_pair(
                         msg = (
                             f"[{pair}] 🔻 SHORT {base} (SWARM {decision.skip_votes}/{decision.total_agents} SKIP) "
                             f"@ ${px:,.2f} | Size: ${cost:,.2f} | "
-                            f"Bearish: {', '.join(short_signals)} | RSI: {signal.rsi:.0f}"
+                            f"Bearish: {', '.join(short_signals)} | Score: {short_score:.2f} | RSI: {signal.rsi:.0f}"
                         )
                         logger.info(msg)
                         _notify(config, msg)
