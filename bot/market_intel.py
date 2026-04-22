@@ -331,22 +331,23 @@ def fetch_whale_activity() -> dict:
 
 
 # ─── 4. Funding Rate Signal ──────────────────────────────────────────────
-def fetch_funding_rate() -> dict:
+def fetch_funding_rate(pair: str = "BTCUSDT") -> dict:
     """
     Fetch current funding rate from Binance Futures API (free, 0 credits).
     Contrarian: high positive rate → market overleveraged long → bearish
                 high negative rate → market overleveraged short → bullish
     Returns: { "rate": float, "signal": -1.0 to +1.0 }
     """
-    cached = _read_cache("funding_rate", TTL_FUNDING)
+    cache_key = f"funding_rate_{pair}"
+    cached = _read_cache(cache_key, TTL_FUNDING)
     if cached:
         return cached
 
-    result = {"rate": 0.0, "signal": 0.0, "source": "funding"}
+    result = {"rate": 0.0, "signal": 0.0, "source": "funding", "pair": pair}
 
     try:
         import urllib.request
-        url = "https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=1"
+        url = f"https://fapi.binance.com/fapi/v1/fundingRate?symbol={pair}&limit=1"
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (compatible; EthBot/1.0)"
         })
@@ -378,14 +379,14 @@ def fetch_funding_rate() -> dict:
     except Exception as e:
         logger.warning(f"INTEL Funding rate fetch failed: {e}")
 
-    _write_cache("funding_rate", result)
+    _write_cache(cache_key, result)
     return result
 
 
 # ─── 5. Open Interest Divergence ─────────────────────────────────────────
 TTL_OI = 900  # 15 min
 
-def fetch_open_interest() -> dict:
+def fetch_open_interest(pair: str = "BTCUSDT") -> dict:
     """
     Fetch Open Interest from Binance Futures API (free, 0 credits).
     Detects OI divergence:
@@ -393,16 +394,17 @@ def fetch_open_interest() -> dict:
       - Falling OI + rising price = positions closing = weak trend (bearish)
     Returns: { "oi": float, "oi_change": float, "signal": -1.0 to +1.0 }
     """
-    cached = _read_cache("open_interest", TTL_OI)
+    cache_key = f"open_interest_{pair}"
+    cached = _read_cache(cache_key, TTL_OI)
     if cached:
         return cached
 
-    result = {"oi": 0.0, "oi_change_pct": 0.0, "signal": 0.0, "source": "open_interest"}
+    result = {"oi": 0.0, "oi_change_pct": 0.0, "signal": 0.0, "source": "open_interest", "pair": pair}
 
     try:
         import urllib.request
         # Get current OI
-        url = "https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT"
+        url = f"https://fapi.binance.com/fapi/v1/openInterest?symbol={pair}"
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (compatible; EthBot/1.0)"
         })
@@ -412,7 +414,7 @@ def fetch_open_interest() -> dict:
         current_oi = float(data.get("openInterest", 0))
 
         # Get recent klines to check price direction
-        url2 = "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1h&limit=4"
+        url2 = f"https://fapi.binance.com/fapi/v1/klines?symbol={pair}&interval=1h&limit=4"
         req2 = urllib.request.Request(url2, headers={
             "User-Agent": "Mozilla/5.0 (compatible; EthBot/1.0)"
         })
@@ -425,12 +427,12 @@ def fetch_open_interest() -> dict:
             price_change = (price_now / price_prev - 1.0) if price_prev > 0 else 0
 
             # Compare with cached OI
-            prev_oi_data = _read_cache("open_interest_prev", 7200)
+            prev_oi_data = _read_cache(f"open_interest_prev_{pair}", 7200)
             prev_oi = prev_oi_data.get("oi", current_oi) if prev_oi_data else current_oi
             oi_change = (current_oi / prev_oi - 1.0) if prev_oi > 0 else 0
 
             # Store current OI for next comparison
-            _write_cache("open_interest_prev", {"oi": current_oi})
+            _write_cache(f"open_interest_prev_{pair}", {"oi": current_oi})
 
             # Divergence logic
             signal = 0.0
@@ -463,7 +465,7 @@ def fetch_open_interest() -> dict:
     except Exception as e:
         logger.warning(f"INTEL OI fetch failed: {e}")
 
-    _write_cache("open_interest", result)
+    _write_cache(cache_key, result)
     return result
 
 
@@ -475,7 +477,7 @@ class MarketIntelligence:
         self.enabled = MARKET_INTEL_ENABLED
         self._last_log = 0
 
-    def get_market_intelligence(self) -> Dict[str, dict]:
+    def get_market_intelligence(self, pair: str = "BTCUSDT") -> Dict[str, dict]:
         """
         Fetch all 5 signals. Returns dict with keys:
         fear_greed, news_sentiment, whale_activity, funding_rate, open_interest
@@ -493,11 +495,11 @@ class MarketIntelligence:
             "fear_greed": fetch_fear_greed(),
             "news_sentiment": fetch_news_sentiment(),
             "whale_activity": fetch_whale_activity(),
-            "funding_rate": fetch_funding_rate(),
-            "open_interest": fetch_open_interest(),
+            "funding_rate": fetch_funding_rate(pair),
+            "open_interest": fetch_open_interest(pair),
         }
 
-    def get_composite_score(self) -> float:
+    def get_composite_score(self, pair: str = "BTCUSDT") -> float:
         """
         Weighted composite signal from all sources.
         Returns: float in range [-1.0, +1.0]
@@ -507,7 +509,7 @@ class MarketIntelligence:
         if not self.enabled:
             return 0.0
 
-        data = self.get_market_intelligence()
+        data = self.get_market_intelligence(pair)
 
         fg_sig = data["fear_greed"].get("signal", 0.0)
         ns_sig = data["news_sentiment"].get("signal", 0.0)
@@ -530,7 +532,7 @@ class MarketIntelligence:
         if now - self._last_log > 600:
             self._last_log = now
             logger.info(
-                f"MARKET_INTEL composite={composite:.3f} "
+                f"MARKET_INTEL [{pair}] composite={composite:.3f} "
                 f"[FG={fg_sig:.2f} News={ns_sig:.2f} Whale={wh_sig:.2f} Fund={fr_sig:.2f} OI={oi_sig:.2f}]"
             )
 

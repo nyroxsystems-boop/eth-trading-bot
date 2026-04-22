@@ -485,12 +485,12 @@ def _trade_pair(
             intel_composite = 0
             try:
                 if mi:
-                    idata = mi.get_market_intelligence()
+                    idata = mi.get_market_intelligence(pair)
                     fg_value = idata.get("fear_greed", {}).get("value", 0)
                     news_sentiment = idata.get("news_sentiment", {}).get("signal", 0)
                     funding_rate = idata.get("funding_rate", {}).get("rate", 0)
                     oi_signal = idata.get("open_interest", {}).get("signal", 0)
-                    intel_composite = mi.get_composite_score()
+                    intel_composite = mi.get_composite_score(pair)
             except Exception as e:
                 logger.debug(f"Non-critical: {e}")
 
