@@ -218,7 +218,7 @@ export default function Dashboard(_props: DashboardProps) {
                   <span>Qty: {Number(pos.quantity || 0).toFixed(pos.quantity > 100 ? 0 : 4)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: 'var(--text-muted)' }}>
-                  <span>Locked: ${Number(pos.locked || 0).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+                  <span>Locked: ${Number(pos.locked_capital || 0).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
                   <span>{pos.bars_held || 0} bars</span>
                 </div>
               </div>

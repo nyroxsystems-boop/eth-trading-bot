@@ -140,11 +140,12 @@ async def get_status():
                 pass
             
             total_unrealized += unrealized
+            locked_capital = locked if locked > 0 else round(entry_px * qty, 2)
             open_positions.append({
                 "pair": p["pair"].replace("USDT", "/USDT"),
                 "daily_pnl": round(p.get("daily_pnl", 0), 2),
                 "unrealized_pnl": round(unrealized, 2),
-                "locked": round(locked, 2),
+                "locked_capital": locked_capital,
                 "entry_price": round(entry_px, 6),
                 "quantity": round(qty, 4),
                 "direction": p.get("direction", "LONG"),
