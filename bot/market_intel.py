@@ -346,7 +346,7 @@ def fetch_funding_rate() -> dict:
 
     try:
         import urllib.request
-        url = "https://fapi.binance.com/fapi/v1/fundingRate?symbol=ETHUSDT&limit=1"
+        url = "https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=1"
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (compatible; EthBot/1.0)"
         })
@@ -402,7 +402,7 @@ def fetch_open_interest() -> dict:
     try:
         import urllib.request
         # Get current OI
-        url = "https://fapi.binance.com/fapi/v1/openInterest?symbol=ETHUSDT"
+        url = "https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT"
         req = urllib.request.Request(url, headers={
             "User-Agent": "Mozilla/5.0 (compatible; EthBot/1.0)"
         })
@@ -412,7 +412,7 @@ def fetch_open_interest() -> dict:
         current_oi = float(data.get("openInterest", 0))
 
         # Get recent klines to check price direction
-        url2 = "https://fapi.binance.com/fapi/v1/klines?symbol=ETHUSDT&interval=1h&limit=4"
+        url2 = "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1h&limit=4"
         req2 = urllib.request.Request(url2, headers={
             "User-Agent": "Mozilla/5.0 (compatible; EthBot/1.0)"
         })

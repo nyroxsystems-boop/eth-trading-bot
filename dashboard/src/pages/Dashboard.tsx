@@ -106,7 +106,7 @@ export default function Dashboard(_props: DashboardProps) {
   const regime = status?.regime || 'unknown'
   const activePairs = status?.active_pairs || 1
   const openPositions: OpenPosition[] = status?.open_positions || []
-  const pairLabel = status?.pair || 'ETHUSDT'
+  const pairLabel = activePairs > 1 ? `${activePairs} Pairs` : (status?.pair || 'Auto-Scan')
 
   // Build equity curve from sell trades
   const sellTrades = trades.filter(t => t.action?.includes('SELL') && t.pnl !== 0)

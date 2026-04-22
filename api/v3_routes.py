@@ -28,7 +28,7 @@ STATE_FILE = LOG_DIR / "bot_state.json"
 class TradeResponse(BaseModel):
     timestamp: str
     action: str
-    pair: str = "ETHUSDT"
+    pair: str = ""
     qty: float
     price: float
     pnl: float = 0.0
@@ -48,7 +48,7 @@ async def get_status():
         pair = config.pair
         paper_mode = config.paper_mode
     except Exception:
-        pair = "ETHUSDT"
+        pair = "AUTO"
         paper_mode = True
 
     # Read bot state
