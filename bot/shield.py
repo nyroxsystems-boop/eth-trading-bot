@@ -38,7 +38,7 @@ class CircuitBreaker:
         self.cooldown_hours = float(os.getenv("CIRCUIT_COOLDOWN_HOURS", "1.0"))
 
         # Paper mode: record stats but NEVER trip (maximize data collection)
-        self.paper_mode = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
+        self.paper_mode = os.getenv("PAPER_MODE", "true").lower() in ("true", "1", "yes")
 
         self.daily_pnl = 0.0
         self.daily_trades = 0
@@ -227,7 +227,7 @@ class PortfolioGuard:
         total_exposure += size_usd
 
         # Paper mode: allow up to max_positions (data collection)
-        paper_mode = os.getenv("DRY_RUN", "true").lower() in ("true", "1", "yes")
+        paper_mode = os.getenv("PAPER_MODE", "true").lower() in ("true", "1", "yes")
         if paper_mode:
             return True, "OK"
 
