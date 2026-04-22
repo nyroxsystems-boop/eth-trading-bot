@@ -227,8 +227,13 @@ async def get_config():
     try:
         from bot.config import TradingConfig
         config = TradingConfig.from_env()
+        # Get actual active pair count
+        pair_states = _read_pair_states()
+        real_pairs = [p for p in pair_states if not p["pair"].startswith("S")]
+        active_count = len(real_pairs) if real_pairs else 1
+        
         return {
-            "pair": config.pair,
+            "pair": f"{active_count} Pairs (Auto-Scan)" if active_count > 1 else config.pair,
             "interval": config.interval,
             "paper_mode": config.paper_mode,
             "risk_per_trade": config.risk_per_trade * 100,
@@ -242,6 +247,8 @@ async def get_config():
             "use_ml": config.use_ml,
             "ml_threshold": config.ml_threshold,
             "loop_sleep_seconds": config.loop_sleep_seconds,
+            "active_pairs": active_count,
+            "capital_pool": config.paper_balance,
         }
     except Exception:
         return {"error": "Config not available"}

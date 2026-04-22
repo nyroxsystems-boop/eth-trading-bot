@@ -5,7 +5,7 @@ const API_URL = import.meta.env.VITE_API_URL || ''
 
 export default function Settings() {
   const [config, setConfig] = useState({
-    pair: 'ETHUSDT',
+    pair: 'Dynamic',
     interval: '5m',
     paper_mode: true,
     risk_per_trade: 1.0,
@@ -48,10 +48,12 @@ export default function Settings() {
           </div>
           <div className="setting-row">
             <div>
-              <div className="setting-label">Trading Pair</div>
-              <div className="setting-desc">Asset to trade</div>
+              <div className="setting-label">Trading Pairs</div>
+              <div className="setting-desc">Dynamic top-volume selection</div>
             </div>
-            <div className="setting-value">{config.pair}</div>
+            <div className="setting-value" style={{ color: 'var(--accent)' }}>
+              {config.pair === 'Dynamic' || config.pair?.includes('Pairs') ? '🔄 Auto-Scan' : config.pair}
+            </div>
           </div>
           <div className="setting-row">
             <div>

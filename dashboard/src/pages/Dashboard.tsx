@@ -233,6 +233,32 @@ export default function Dashboard(_props: DashboardProps) {
         </div>
       )}
 
+      {/* ═══ STRATEGY PORTFOLIO (Collapsible) ═══ */}
+      <details style={{ marginBottom: '24px' }}>
+        <summary style={{
+          cursor: 'pointer',
+          padding: '14px 20px',
+          borderRadius: '12px',
+          background: 'rgba(139,92,246,0.05)',
+          border: '1px solid rgba(139,92,246,0.15)',
+          color: 'var(--text)',
+          fontSize: '14px',
+          fontWeight: 600,
+          listStyle: 'none',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          userSelect: 'none',
+        }}>
+          <span style={{ transition: 'transform 0.2s' }}>▶</span>
+          📊 Strategy Portfolio
+          <span style={{ marginLeft: 'auto', fontSize: '12px', color: 'var(--text-muted)' }}>Click to expand</span>
+        </summary>
+        <div style={{ marginTop: '12px' }}>
+          <StrategyPanel />
+        </div>
+      </details>
+
       {/* ═══ INTELLIGENCE PANEL ═══ */}
       <div className="stats-grid" style={{ marginBottom: '24px' }}>
         <div className="card stat-card animate-in">
@@ -260,9 +286,6 @@ export default function Dashboard(_props: DashboardProps) {
           <div className="sub">{shield?.circuit_breaker?.consecutive_losses || 0} consecutive losses</div>
         </div>
       </div>
-
-      {/* ═══ STRATEGY PORTFOLIO ═══ */}
-      <StrategyPanel />
 
       {/* ═══ SWARM AGENTS TABLE ═══ */}
       {swarm?.agents && swarm.agents.length > 0 && (
