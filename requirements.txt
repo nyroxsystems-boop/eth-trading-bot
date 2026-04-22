@@ -36,3 +36,4 @@ stripe>=7.0.0
 # Multi-Asset (Stocks)
 alpaca-py>=0.30.0
 pytz>=2024.1
+httpx>=0.25.0
