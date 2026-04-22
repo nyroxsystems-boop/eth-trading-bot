@@ -356,7 +356,17 @@ async def get_pairs_status():
 # ── Helpers ─────────────────────────────────────
 
 def _read_trades() -> List[Dict]:
-    """Read trades from CSV file."""
+    """Read trades — Postgres first (persistent), CSV fallback."""
+    # Try Postgres first (survives deploys)
+    try:
+        from trade_store import get_all_trades
+        pg_trades = get_all_trades()
+        if pg_trades:
+            return pg_trades
+    except Exception:
+        pass
+    
+    # Fallback to CSV
     trades = []
     try:
         if TRADES_CSV.exists():

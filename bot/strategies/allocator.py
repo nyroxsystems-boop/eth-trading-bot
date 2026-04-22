@@ -332,6 +332,7 @@ class MasterAllocator:
         # Read pair states for real equity
         pair_states_dir = Path("logs")
         real_equity = self.state.total_equity
+        num_real_pairs = 0
         try:
             balances = []
             for f in pair_states_dir.glob("state_*.json"):
@@ -340,10 +341,16 @@ class MasterAllocator:
                     with open(f) as fh:
                         data = json.load(fh)
                     balances.append(data.get("paper_balance", 5000))
+                    num_real_pairs += 1
             if balances:
                 real_equity = sum(balances)
         except Exception:
             pass
+        
+        # Real starting capital = number of pairs × $5,000 (not $100k default!)
+        real_starting_capital = num_real_pairs * 5000.0 if num_real_pairs > 0 else self.state.total_equity
+        # Peak equity should be based on real starting capital, not hardcoded $100k
+        real_peak = max(real_starting_capital, real_equity)
         
         # Distribute stats across active strategies proportionally
         strategies_out = {}
@@ -373,9 +380,9 @@ class MasterAllocator:
         
         return {
             "total_equity": round(real_equity, 2),
-            "peak_equity": round(max(self.state.peak_equity, real_equity), 2),
-            "drawdown_pct": round(max(0, (1 - real_equity / max(self.state.peak_equity, real_equity)) * 100), 2),
-            "daily_pnl_pct": round(self.state.daily_pnl * 100, 4),
+            "peak_equity": round(real_peak, 2),
+            "drawdown_pct": round(max(0, (1 - real_equity / max(real_peak, 1)) * 100), 2),
+            "daily_pnl_pct": round(total_pnl / max(real_starting_capital, 1) * 100, 4) if total_pnl != 0 else 0,
             "weekly_pnl_pct": round(self.state.weekly_pnl * 100, 4),
             "kill_switch": self.state.kill_switch_active,
             "global_risk_limits": GLOBAL_RISK,

@@ -100,17 +100,24 @@ def _notify(config: TradingConfig, msg: str):
 
 
 def _log_trade(action: str, pair: str, qty: float, price: float, pnl: float = 0.0):
-    """Log trade to CSV file."""
+    """Log trade to CSV file AND PostgreSQL (for deploy persistence)."""
     import csv
     import os
     os.makedirs("logs", exist_ok=True)
     path = "logs/trades.csv"
     header_needed = not os.path.exists(path) or os.path.getsize(path) == 0
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with open(path, "a", newline="") as f:
         if header_needed:
             f.write("timestamp,action,pair,qty,price,pnl\n")
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         csv.writer(f).writerow([ts, action, pair, f"{qty:.6f}", f"{price:.2f}", f"{pnl:.2f}"])
+    
+    # Persist to PostgreSQL (survives Railway deploys)
+    try:
+        from trade_store import save_trade
+        save_trade(ts, action, pair, qty, price, pnl)
+    except Exception:
+        pass  # CSV is the backup
 
 
 def _trade_pair(
@@ -790,6 +797,13 @@ def run(config: TradingConfig | None = None):
         logger.info(f"🧬 Genetic Evolver: Gen #{evolver.generation} | {len(evolver.population)} strategies")
     except Exception as e:
         logger.warning(f"Experience init: {e}")
+
+    # Migrate CSV trades to Postgres (one-time, persists across deploys)
+    try:
+        from trade_store import migrate_csv_to_postgres
+        migrate_csv_to_postgres()
+    except Exception as e:
+        logger.debug(f"Trade store init: {e}")
 
     try:
         from bot.swarm import get_swarm
