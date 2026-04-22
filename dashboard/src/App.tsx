@@ -37,11 +37,16 @@ function AppLayout() {
     const fetchStatus = async () => {
       try {
         const res = await fetch(`${API_URL}/api/v3/status`)
-        if (res.ok) setStatus(await res.json())
-      } catch { /* API may not be running yet */ }
+        if (res.ok) {
+          const data = await res.json()
+          setStatus(data)
+        }
+      } catch (err) {
+        // Status API not available
+      }
     }
     fetchStatus()
-    const interval = setInterval(fetchStatus, 15000) // 15s refresh
+    const interval = setInterval(fetchStatus, 10000) // 10s refresh
     return () => clearInterval(interval)
   }, [])
 
