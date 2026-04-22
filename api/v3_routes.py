@@ -28,6 +28,7 @@ STATE_FILE = LOG_DIR / "bot_state.json"
 class TradeResponse(BaseModel):
     timestamp: str
     action: str
+    pair: str = "ETHUSDT"
     qty: float
     price: float
     pnl: float = 0.0
@@ -98,18 +99,45 @@ async def get_status():
     today_str = date.today().isoformat()
     today_trades = len([t for t in trades if t.get("timestamp", "").startswith(today_str)])
 
+    # Multi-pair: aggregate balance & positions from pair states
+    pair_states = _read_pair_states()
+    # Filter out strategy-prefixed pairs (S4_, etc.)
+    real_pairs = [p for p in pair_states if not p["pair"].startswith("S")]
+    
+    # Calculate real equity: sum of all pair balances
+    starting_balance = 5000.0 * len(real_pairs) if real_pairs else 100_000
+    current_equity = sum(p.get("paper_balance", 5000) for p in real_pairs) if real_pairs else state.get("paper_balance", 100_000)
+    daily_pnl_total = sum(p.get("daily_pnl", 0) for p in real_pairs) if real_pairs else state.get("daily_pnl", 0.0)
+    
+    # Active positions
+    open_positions = [
+        {
+            "pair": p["pair"].replace("USDT", "/USDT"),
+            "daily_pnl": round(p.get("daily_pnl", 0), 2),
+            "balance": round(p.get("paper_balance", 5000), 2),
+            "win_streak": p.get("win_streak", 0),
+            "loss_streak": p.get("loss_streak", 0),
+        }
+        for p in real_pairs if p.get("in_position", False)
+    ]
+    
+    active_pairs = len(real_pairs)
+
     return {
         "is_running": len(trades) > 0 or state.get("today_trades", 0) >= 0,
-        "pair": pair,
+        "pair": f"{active_pairs} Pairs" if active_pairs > 1 else pair,
         "price": price,
         "today_trades": max(today_trades, state.get("today_trades", 0)),
         "regime": "paper" if paper_mode else "live",
-        "daily_pnl": state.get("daily_pnl", 0.0),
+        "daily_pnl": round(daily_pnl_total, 2),
         "total_pnl": round(total_pnl, 2),
         "win_rate": round(win_rate, 1),
         "total_trades": len(trades),
-        "paper_balance": state.get("paper_balance", 100_000),
+        "paper_balance": round(current_equity, 2),
+        "starting_balance": round(starting_balance, 2),
         "position": position,
+        "open_positions": open_positions,
+        "active_pairs": active_pairs,
     }
 
 
@@ -338,6 +366,7 @@ def _read_trades() -> List[Dict]:
                     trades.append({
                         "timestamp": row.get("timestamp", ""),
                         "action": row.get("action", ""),
+                        "pair": row.get("pair", "ETHUSDT"),
                         "qty": float(row.get("qty", 0)),
                         "price": float(row.get("price", 0)),
                         "pnl": float(row.get("pnl", 0)),
@@ -345,6 +374,29 @@ def _read_trades() -> List[Dict]:
     except Exception as e:
         logger.warning(f"Failed to read trades CSV: {e}")
     return trades
+
+
+def _read_pair_states() -> List[Dict]:
+    """Read all pair state files for multi-pair aggregation."""
+    pairs = []
+    try:
+        state_dir = LOG_DIR
+        for f in sorted(state_dir.glob("state_*.json")):
+            pair = f.stem.replace("state_", "")
+            with open(f) as fh:
+                data = json.load(fh)
+            pairs.append({
+                "pair": pair,
+                "in_position": data.get("position", {}).get("entry_price") is not None and data.get("position", {}).get("entry_price", 0) > 0,
+                "daily_pnl": data.get("daily_pnl", 0),
+                "today_trades": data.get("today_trades", 0),
+                "paper_balance": data.get("paper_balance", 0),
+                "win_streak": data.get("win_streak", 0),
+                "loss_streak": data.get("loss_streak", 0),
+            })
+    except Exception as e:
+        logger.warning(f"Failed to read pair states: {e}")
+    return pairs
 
 
 # ── Strategy Status Endpoints ────────────────────────────────────

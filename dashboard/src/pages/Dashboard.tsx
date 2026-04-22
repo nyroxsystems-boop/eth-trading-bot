@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer
+  ResponsiveContainer, BarChart, Bar
 } from 'recharts'
 import type { BotStatus } from '../App'
 import StrategyPanel from '../components/StrategyPanel'
@@ -11,6 +11,7 @@ const API_URL = import.meta.env.VITE_API_URL || ''
 interface Trade {
   timestamp: string
   action: string
+  pair?: string
   qty: number
   price: number
   pnl: number
@@ -22,6 +23,14 @@ interface SwarmAgent {
   accuracy: number
   total_votes: number
   correct_votes: number
+}
+
+interface OpenPosition {
+  pair: string
+  daily_pnl: number
+  balance: number
+  win_streak: number
+  loss_streak: number
 }
 
 interface DashboardProps {
@@ -37,7 +46,6 @@ export default function Dashboard(_props: DashboardProps) {
   const [shield, setShield] = useState<any>(null)
   const [localStatus, setLocalStatus] = useState<any>(null)
 
-  // Use local status — propStatus from App.tsx may be empty/broken
   const status = localStatus
 
   useEffect(() => {
@@ -48,6 +56,7 @@ export default function Dashboard(_props: DashboardProps) {
     const intv = setInterval(() => {
       fetchIntelligence()
       fetchStatus()
+      fetchTrades()
     }, 10000)
     return () => clearInterval(intv)
   }, [chartDays])
@@ -86,28 +95,47 @@ export default function Dashboard(_props: DashboardProps) {
     } catch { /* Intelligence not available */ }
   }
 
-  const price = status?.price || 0
   const dailyPnl = status?.daily_pnl || 0
   const totalPnl = status?.total_pnl || 0
   const winRate = status?.win_rate || 0
   const totalTrades = status?.total_trades || 0
   const todayTrades = status?.today_trades || 0
-  const balance = status?.paper_balance || 100000
+  const equity = status?.paper_balance || 100000
+  const startingBalance = status?.starting_balance || 100000
   const isRunning = status?.is_running ?? false
   const regime = status?.regime || 'unknown'
-  const position = status?.position || null
+  const activePairs = status?.active_pairs || 1
+  const openPositions: OpenPosition[] = status?.open_positions || []
+  const pairLabel = status?.pair || 'ETHUSDT'
+
+  // Build equity curve from sell trades
+  const sellTrades = trades.filter(t => t.action?.includes('SELL') && t.pnl !== 0)
+  const equityCurve = sellTrades.reduce((acc: { trade: number, equity: number }[], t, i) => {
+    const prev = acc.length > 0 ? acc[acc.length - 1].equity : startingBalance
+    acc.push({ trade: i + 1, equity: prev + t.pnl })
+    return acc
+  }, [])
 
   return (
     <div>
       {/* Ticker Bar */}
       <div className="ticker-bar animate-in">
-        <span className="ticker-pair">{(status?.pair || 'ETHUSDT').replace('USDT', '/USDT')}</span>
-        <span className={`ticker-price ${price > 0 ? 'positive' : ''}`}>
-          ${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        <span className="ticker-pair">
+          {activePairs > 1 ? `📊 ${activePairs} Pairs` : pairLabel.replace('USDT', '/USDT')}
+        </span>
+        <span className={`ticker-price ${dailyPnl >= 0 ? 'positive' : 'negative'}`}>
+          ${equity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </span>
         <span className="ticker-info">Regime: {regime}</span>
-        <span className="ticker-info">Balance: ${balance.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
-        <div style={{ marginLeft: 'auto' }}>
+        <span className="ticker-info" style={{ color: dailyPnl >= 0 ? 'var(--green)' : 'var(--red)' }}>
+          Daily: {dailyPnl >= 0 ? '+' : ''}${dailyPnl.toFixed(2)}
+        </span>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {openPositions.length > 0 && (
+            <span className="badge badge-pending" style={{ fontSize: '10px' }}>
+              {openPositions.length} Open
+            </span>
+          )}
           <span className={`badge ${isRunning ? 'badge-active' : 'badge-inactive'}`}>
             {isRunning && <span className="pulse-dot" />}
             {isRunning ? 'Running' : 'Stopped'}
@@ -123,7 +151,7 @@ export default function Dashboard(_props: DashboardProps) {
             {dailyPnl >= 0 ? '+' : ''}${Math.abs(dailyPnl).toFixed(2)}
           </div>
           <div className="sub">
-            {dailyPnl >= 0 ? '📈' : '📉'} {dailyPnl >= 0 ? '+' : ''}{(dailyPnl / Math.max(balance, 1) * 100).toFixed(2)}% today
+            {dailyPnl >= 0 ? '📈' : '📉'} {dailyPnl >= 0 ? '+' : ''}{(dailyPnl / Math.max(startingBalance, 1) * 100).toFixed(2)}% today
           </div>
         </div>
 
@@ -157,26 +185,50 @@ export default function Dashboard(_props: DashboardProps) {
           <div className={`value ${totalPnl >= 0 ? 'positive' : 'negative'}`}>
             {totalPnl >= 0 ? '+' : ''}${Math.abs(totalPnl).toFixed(2)}
           </div>
-          <div className="sub">ROI: {(totalPnl / Math.max(balance, 1) * 100).toFixed(2)}%</div>
+          <div className="sub">ROI: {(totalPnl / Math.max(startingBalance, 1) * 100).toFixed(2)}%</div>
         </div>
       </div>
 
-      {/* Open Position */}
-      {position && (
-        <div className={`card position-card ${position.unrealized_pnl >= 0 ? '' : 'loss'}`} style={{ marginBottom: '24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div className="label">Open Position</div>
-              <div className="value" style={{ fontSize: '20px' }}>
-                {position.quantity.toFixed(5)} ETH @ ${position.entry_price.toFixed(2)}
+      {/* Open Positions */}
+      {openPositions.length > 0 ? (
+        <div className="card" style={{ marginBottom: '24px' }}>
+          <div className="chart-title" style={{ marginBottom: '16px' }}>
+            📈 Open Positions ({openPositions.length})
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px' }}>
+            {openPositions.map((pos, i) => (
+              <div key={i} style={{
+                padding: '14px 16px',
+                borderRadius: '10px',
+                background: pos.daily_pnl >= 0
+                  ? 'linear-gradient(135deg, rgba(16,185,129,0.08) 0%, rgba(16,185,129,0.02) 100%)'
+                  : 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.02) 100%)',
+                border: `1px solid ${pos.daily_pnl >= 0 ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontWeight: 700, fontSize: '14px' }}>{pos.pair}</span>
+                  <span className={pos.daily_pnl >= 0 ? 'positive' : 'negative'} style={{ fontWeight: 600, fontSize: '13px' }}>
+                    {pos.daily_pnl >= 0 ? '+' : ''}${pos.daily_pnl.toFixed(2)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
+                  <span>Bal: ${pos.balance.toFixed(0)}</span>
+                  <span>
+                    {pos.win_streak > 0 ? `🔥${pos.win_streak}W` : ''}
+                    {pos.loss_streak > 0 ? `❄️${pos.loss_streak}L` : ''}
+                  </span>
+                </div>
               </div>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <div className="label">Unrealized P&L</div>
-              <div className={`value ${position.unrealized_pnl >= 0 ? 'positive' : 'negative'}`} style={{ fontSize: '20px' }}>
-                {position.unrealized_pnl >= 0 ? '+' : ''}{(position.unrealized_pnl * 100).toFixed(2)}%
-              </div>
-            </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="card" style={{ marginBottom: '24px' }}>
+          <div className="label" style={{ marginBottom: '12px' }}>Open Positions</div>
+          <div className="empty-state" style={{ padding: '20px' }}>
+            <div className="icon">💤</div>
+            <div className="message">No open positions</div>
+            <div className="hint">Bot is scanning for entry signals across {activePairs} pairs</div>
           </div>
         </div>
       )}
@@ -255,7 +307,7 @@ export default function Dashboard(_props: DashboardProps) {
         </div>
       )}
 
-      {/* Chart + Recent Trades */}
+      {/* Chart + Trade Stats + Recent Trades */}
       <div className="grid-2col">
         <div className="card chart-card">
           <div className="chart-header">
@@ -297,32 +349,86 @@ export default function Dashboard(_props: DashboardProps) {
           </div>
         </div>
 
+        {/* Trade Statistics + Equity Curve */}
         <div className="card">
-          <div className="chart-title" style={{ marginBottom: '16px' }}>Recent Trades</div>
-          {trades.length > 0 ? (
-            <table className="trade-table">
-              <thead><tr><th>Time</th><th>Side</th><th>Price</th><th>P&L</th></tr></thead>
-              <tbody>
-                {trades.slice(0, 10).map((t, i) => (
-                  <tr key={i}>
-                    <td>{new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                    <td><span className={`badge ${t.action === 'BUY' ? 'badge-active' : 'badge-pending'}`}>{t.action}</span></td>
-                    <td>${t.price.toFixed(2)}</td>
-                    <td className={t.pnl >= 0 ? 'positive' : 'negative'}>
-                      {t.action === 'SELL' ? `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}` : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <div className="empty-state" style={{ padding: '40px 20px' }}>
-              <div className="icon">📋</div>
-              <div className="message">No trades yet</div>
-              <div className="hint">Trades will appear here</div>
+          <div className="chart-title" style={{ marginBottom: '16px' }}>Trade Statistics</div>
+          {/* Stats Row */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '20px' }}>
+            <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(139,92,246,0.05)', border: '1px solid rgba(139,92,246,0.1)' }}>
+              <div className="label" style={{ fontSize: '11px', marginBottom: '4px' }}>Total Trades</div>
+              <div style={{ fontSize: '22px', fontWeight: 700 }}>{totalTrades}</div>
             </div>
-          )}
+            <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.1)' }}>
+              <div className="label" style={{ fontSize: '11px', marginBottom: '4px' }}>Win Rate</div>
+              <div className="positive" style={{ fontSize: '22px', fontWeight: 700 }}>{winRate.toFixed(1)}%</div>
+            </div>
+            <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.1)' }}>
+              <div className="label" style={{ fontSize: '11px', marginBottom: '4px' }}>Equity</div>
+              <div className={equity >= startingBalance ? 'positive' : 'negative'} style={{ fontSize: '22px', fontWeight: 700 }}>
+                ${equity.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </div>
+            </div>
+            <div style={{ padding: '12px', borderRadius: '8px', background: 'rgba(139,92,246,0.05)', border: '1px solid rgba(139,92,246,0.1)' }}>
+              <div className="label" style={{ fontSize: '11px', marginBottom: '4px' }}>Active Pairs</div>
+              <div style={{ fontSize: '22px', fontWeight: 700, color: '#8b5cf6' }}>{activePairs}</div>
+            </div>
+          </div>
+
+          {/* Mini Equity Curve */}
+          <div className="label" style={{ marginBottom: '8px', fontSize: '11px' }}>Equity Curve (Last Trades)</div>
+          <div style={{ height: '120px' }}>
+            {equityCurve.length > 1 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={equityCurve} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <Area type="monotone" dataKey="equity" stroke="#10b981" strokeWidth={2} fill="url(#eqGrad)" dot={false} />
+                  <Tooltip contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: '6px', fontSize: '11px', color: '#f1f5f9' }}
+                    formatter={(v: number) => [`$${v.toFixed(2)}`, 'Equity']}
+                    labelFormatter={(l) => `Trade #${l}`} />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+                Waiting for completed trades...
+              </div>
+            )}
+          </div>
         </div>
+      </div>
+
+      {/* Recent Trades */}
+      <div className="card" style={{ marginTop: '24px' }}>
+        <div className="chart-title" style={{ marginBottom: '16px' }}>Recent Trades</div>
+        {trades.length > 0 ? (
+          <table className="trade-table">
+            <thead><tr><th>Time</th><th>Pair</th><th>Side</th><th>Qty</th><th>Price</th><th>P&L</th></tr></thead>
+            <tbody>
+              {trades.slice(0, 15).map((t, i) => (
+                <tr key={i}>
+                  <td>{new Date(t.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                  <td style={{ fontWeight: 600, fontSize: '12px' }}>{(t.pair || 'ETH').replace('USDT', '')}</td>
+                  <td><span className={`badge ${t.action === 'BUY' ? 'badge-active' : 'badge-pending'}`}>{t.action}</span></td>
+                  <td style={{ fontSize: '12px' }}>{t.qty.toFixed(4)}</td>
+                  <td>${t.price.toFixed(2)}</td>
+                  <td className={t.pnl >= 0 ? 'positive' : 'negative'}>
+                    {t.action.includes('SELL') ? `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}` : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="empty-state" style={{ padding: '40px 20px' }}>
+            <div className="icon">📋</div>
+            <div className="message">No trades yet</div>
+            <div className="hint">Trades will appear here</div>
+          </div>
+        )}
       </div>
     </div>
   )

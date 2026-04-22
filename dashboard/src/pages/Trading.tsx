@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react'
 import { TrendingUp, Clock } from 'lucide-react'
+import {
+  BarChart, Bar, ResponsiveContainer, Tooltip, Cell
+} from 'recharts'
 import type { BotStatus } from '../App'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
@@ -7,6 +10,7 @@ const API_URL = import.meta.env.VITE_API_URL || ''
 interface Trade {
   timestamp: string
   action: string
+  pair?: string
   qty: number
   price: number
   pnl: number
@@ -39,6 +43,14 @@ interface BotConfig {
   loop_sleep_seconds: number
 }
 
+interface OpenPosition {
+  pair: string
+  daily_pnl: number
+  balance: number
+  win_streak: number
+  loss_streak: number
+}
+
 export default function Trading(_props: TradingProps) {
   const [trades, setTrades] = useState<Trade[]>([])
   const [signal, setSignal] = useState<SignalInfo | null>(null)
@@ -52,11 +64,12 @@ export default function Trading(_props: TradingProps) {
     fetchSignal()
     fetchConfig()
     fetchStatus()
-    const interval = setInterval(() => {
+    const intv = setInterval(() => {
+      fetchTrades()
       fetchSignal()
       fetchStatus()
     }, 10000)
-    return () => clearInterval(interval)
+    return () => clearInterval(intv)
   }, [])
 
   const fetchTrades = async () => {
@@ -87,23 +100,31 @@ export default function Trading(_props: TradingProps) {
     } catch {}
   }
 
-  const position = status?.position || null
+  const openPositions: OpenPosition[] = status?.open_positions || []
+  const activePairs = status?.active_pairs || 1
 
   // Calculate trade stats
-  const sellTrades = trades.filter(t => t.action === 'SELL' && t.pnl !== 0)
+  const sellTrades = trades.filter(t => t.action?.includes('SELL') && t.pnl !== 0)
   const wins = sellTrades.filter(t => t.pnl > 0)
   const losses = sellTrades.filter(t => t.pnl <= 0)
   const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + t.pnl, 0) / wins.length : 0
   const avgLoss = losses.length > 0 ? losses.reduce((s, t) => s + t.pnl, 0) / losses.length : 0
 
+  // PnL per trade for bar chart (last 20 sell trades)
+  const pnlBars = sellTrades.slice(-20).map((t, i) => ({
+    trade: i + 1,
+    pnl: t.pnl,
+    color: t.pnl >= 0 ? '#10b981' : '#ef4444',
+  }))
+
   return (
     <div>
       <div className="page-header">
         <div className="page-title">Trading</div>
-        <div className="page-subtitle">Live signal monitor & trade history</div>
+        <div className="page-subtitle">Live signal monitor & trade history — {activePairs} active pairs</div>
       </div>
 
-      {/* Live Signal + Position */}
+      {/* Live Signal + Open Positions */}
       <div className="stats-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
         {/* Current Signal */}
         <div className="card animate-in">
@@ -160,86 +181,103 @@ export default function Trading(_props: TradingProps) {
           )}
         </div>
 
-        {/* Open Position */}
-        <div className={`card animate-in ${position ? (position.unrealized_pnl >= 0 ? 'position-card' : 'position-card loss') : ''}`}>
-          <div className="label" style={{ marginBottom: '12px' }}>Open Position</div>
-          {position ? (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-                <div>
-                  <div style={{ fontSize: '24px', fontWeight: 700 }}>
-                    {position.quantity.toFixed(5)} ETH
+        {/* Open Positions */}
+        <div className="card animate-in">
+          <div className="label" style={{ marginBottom: '12px' }}>
+            Open Positions {openPositions.length > 0 && <span style={{ color: 'var(--green)' }}>({openPositions.length})</span>}
+          </div>
+          {openPositions.length > 0 ? (
+            <div style={{ display: 'grid', gap: '8px', maxHeight: '240px', overflowY: 'auto' }}>
+              {openPositions.map((pos, i) => (
+                <div key={i} style={{
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  background: pos.daily_pnl >= 0
+                    ? 'linear-gradient(135deg, rgba(16,185,129,0.06) 0%, rgba(16,185,129,0.02) 100%)'
+                    : 'linear-gradient(135deg, rgba(239,68,68,0.06) 0%, rgba(239,68,68,0.02) 100%)',
+                  border: `1px solid ${pos.daily_pnl >= 0 ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)'}`,
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                }}>
+                  <div>
+                    <span style={{ fontWeight: 700, fontSize: '13px' }}>{pos.pair}</span>
+                    <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                      {pos.win_streak > 0 ? `🔥${pos.win_streak}W` : ''}
+                      {pos.loss_streak > 0 ? `❄️${pos.loss_streak}L` : ''}
+                    </div>
                   </div>
-                  <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                    Entry: ${position.entry_price.toFixed(2)}
-                  </div>
+                  <span className={pos.daily_pnl >= 0 ? 'positive' : 'negative'} style={{ fontWeight: 600, fontSize: '13px' }}>
+                    {pos.daily_pnl >= 0 ? '+' : ''}${pos.daily_pnl.toFixed(2)}
+                  </span>
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div className={`value ${position.unrealized_pnl >= 0 ? 'positive' : 'negative'}`}
-                    style={{ fontSize: '24px', fontWeight: 700 }}>
-                    {position.unrealized_pnl >= 0 ? '+' : ''}{(position.unrealized_pnl * 100).toFixed(2)}%
-                  </div>
-                  <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                    ${(position.unrealized_pnl * position.entry_price * position.quantity).toFixed(2)}
-                  </div>
-                </div>
-              </div>
-              {/* P&L bar */}
-              <div style={{
-                height: '6px', borderRadius: '3px',
-                background: 'rgba(139,92,246,0.15)',
-                overflow: 'hidden'
-              }}>
-                <div style={{
-                  height: '100%', borderRadius: '3px',
-                  width: `${Math.min(100, Math.abs(position.unrealized_pnl * 100 / 3) * 100)}%`,
-                  background: position.unrealized_pnl >= 0 ? 'var(--gradient-green)' : 'var(--gradient-red)',
-                  transition: 'width 0.5s ease'
-                }} />
-              </div>
+              ))}
             </div>
           ) : (
             <div className="empty-state" style={{ padding: '30px 20px' }}>
               <div className="icon">💤</div>
-              <div className="message">No open position</div>
-              <div className="hint">Bot is scanning for entry signals</div>
+              <div className="message">No open positions</div>
+              <div className="hint">Bot is scanning {activePairs} pairs for entries</div>
             </div>
           )}
         </div>
       </div>
 
-      {/* Trade Stats + Full History */}
+      {/* Trade Stats + Bot Config */}
       <div className="grid-2col" style={{ marginTop: '24px' }}>
-        {/* Trade Statistics */}
+        {/* Trade Statistics with PnL Bars */}
         <div className="card">
-          <div className="chart-title" style={{ marginBottom: '20px' }}>Trade Statistics</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px' }}>
-            <div>
-              <div className="label">Total Trades</div>
-              <div style={{ fontSize: '24px', fontWeight: 700 }}>{sellTrades.length}</div>
+          <div className="chart-title" style={{ marginBottom: '16px' }}>Trade Statistics</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '16px' }}>
+            <div style={{ padding: '10px', borderRadius: '8px', background: 'rgba(139,92,246,0.05)', border: '1px solid rgba(139,92,246,0.1)' }}>
+              <div className="label" style={{ fontSize: '10px', marginBottom: '2px' }}>Trades</div>
+              <div style={{ fontSize: '20px', fontWeight: 700 }}>{sellTrades.length}</div>
             </div>
-            <div>
-              <div className="label">Win Rate</div>
-              <div style={{ fontSize: '24px', fontWeight: 700 }} className="positive">
+            <div style={{ padding: '10px', borderRadius: '8px', background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.1)' }}>
+              <div className="label" style={{ fontSize: '10px', marginBottom: '2px' }}>Win Rate</div>
+              <div className="positive" style={{ fontSize: '20px', fontWeight: 700 }}>
                 {sellTrades.length > 0 ? (wins.length / sellTrades.length * 100).toFixed(1) : 0}%
               </div>
             </div>
-            <div>
-              <div className="label">Avg Win</div>
-              <div style={{ fontSize: '24px', fontWeight: 700 }} className="positive">
+            <div style={{ padding: '10px', borderRadius: '8px', background: 'rgba(16,185,129,0.05)', border: '1px solid rgba(16,185,129,0.1)' }}>
+              <div className="label" style={{ fontSize: '10px', marginBottom: '2px' }}>Avg Win</div>
+              <div className="positive" style={{ fontSize: '20px', fontWeight: 700 }}>
                 +${avgWin.toFixed(2)}
               </div>
             </div>
-            <div>
-              <div className="label">Avg Loss</div>
-              <div style={{ fontSize: '24px', fontWeight: 700 }} className="negative">
+            <div style={{ padding: '10px', borderRadius: '8px', background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.1)' }}>
+              <div className="label" style={{ fontSize: '10px', marginBottom: '2px' }}>Avg Loss</div>
+              <div className="negative" style={{ fontSize: '20px', fontWeight: 700 }}>
                 ${avgLoss.toFixed(2)}
               </div>
             </div>
           </div>
+
+          {/* PnL Bar Chart */}
+          <div className="label" style={{ fontSize: '11px', marginBottom: '6px' }}>P&L per Trade (Last {pnlBars.length})</div>
+          <div style={{ height: '100px' }}>
+            {pnlBars.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={pnlBars} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+                  <Tooltip
+                    contentStyle={{ background: 'rgba(15,23,42,0.95)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '6px', fontSize: '11px', color: '#f1f5f9' }}
+                    formatter={(v: number) => [`$${v.toFixed(2)}`, 'P&L']}
+                    labelFormatter={(l) => `Trade #${l}`}
+                  />
+                  <Bar dataKey="pnl" radius={[2, 2, 0, 0]}>
+                    {pnlBars.map((entry, i) => (
+                      <Cell key={i} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+                Waiting for trades...
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Quick Stats */}
+        {/* Bot Config */}
         <div className="card">
           <div className="chart-title" style={{ marginBottom: '16px' }}>Bot Config</div>
           {config ? (
@@ -251,8 +289,8 @@ export default function Trading(_props: TradingProps) {
                 </span>
               </div>
               <div className="setting-row">
-                <span className="setting-label">Pair</span>
-                <span className="setting-value">{config.pair}</span>
+                <span className="setting-label">Active Pairs</span>
+                <span className="setting-value" style={{ color: '#8b5cf6' }}>{activePairs}</span>
               </div>
               <div className="setting-row">
                 <span className="setting-label">Interval</span>
@@ -291,6 +329,7 @@ export default function Trading(_props: TradingProps) {
             <thead>
               <tr>
                 <th>Time</th>
+                <th>Pair</th>
                 <th>Side</th>
                 <th>Quantity</th>
                 <th>Price</th>
@@ -301,6 +340,7 @@ export default function Trading(_props: TradingProps) {
               {trades.map((t, i) => (
                 <tr key={i}>
                   <td>{new Date(t.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+                  <td style={{ fontWeight: 600, fontSize: '12px' }}>{(t.pair || 'ETH').replace('USDT', '')}</td>
                   <td>
                     <span className={`badge ${t.action === 'BUY' ? 'badge-active' : t.pnl > 0 ? 'badge-active' : 'badge-inactive'}`}>
                       {t.action}
@@ -309,7 +349,7 @@ export default function Trading(_props: TradingProps) {
                   <td>{t.qty.toFixed(5)}</td>
                   <td>${t.price.toFixed(2)}</td>
                   <td className={t.pnl > 0 ? 'positive' : t.pnl < 0 ? 'negative' : 'neutral'}>
-                    {t.action === 'SELL' ? `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}` : '—'}
+                    {t.action.includes('SELL') ? `${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}` : '—'}
                   </td>
                 </tr>
               ))}
