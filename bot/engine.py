@@ -954,7 +954,8 @@ def run(config: TradingConfig | None = None):
                             pk = p["pair"]
                             if pk not in states:
                                 st = BotState.load(f"logs/state_{pk}.json")
-                                st.paper_balance = config.paper_balance / len(new_pairs)
+                                if st.paper_balance == 100_000.0:  # Fresh state
+                                    st.paper_balance = config.paper_balance
                                 st.check_new_day()
                                 states[pk] = st
                         pairs = new_pairs

@@ -110,7 +110,9 @@ async def get_status():
         starting_balance = TradingConfig.from_env().paper_balance
     except Exception:
         starting_balance = float(os.getenv("PAPER_BASE_USDT", "100000"))
-    current_equity = sum(p.get("paper_balance", 5000) for p in real_pairs) if real_pairs else state.get("paper_balance", starting_balance)
+    # SHARED POOL: Equity = starting capital + total P&L from all trades
+    # Don't sum per-pair balances (each pair now shows $100k = the full pool!)
+    current_equity = starting_balance + total_pnl
     daily_pnl_total = sum(p.get("daily_pnl", 0) for p in real_pairs) if real_pairs else state.get("daily_pnl", 0.0)
     
     # Active positions
@@ -249,13 +251,41 @@ async def get_config():
 
 @router.get("/brain")
 async def get_brain_status():
-    """Get brain learning status."""
+    """Get brain learning status — enriched with real trade data."""
     try:
         from bot.brain import get_brain
         brain = get_brain()
-        return brain.get_status()
+        status = brain.get_status()
     except Exception as e:
-        return {"error": str(e)}
+        status = {"stage": "🔌 Connecting...", "error": str(e)}
+    
+    # Enrich with real trade data (Brain's own storage is ephemeral)
+    trades = _read_trades()
+    if trades:
+        sell_trades = [t for t in trades if "SELL" in t.get("action", "").upper()]
+        wins = [t for t in sell_trades if float(t.get("pnl", 0)) > 0]
+        known_pairs = len(set(t.get("pair", "") for t in trades))
+        total_pnl = sum(float(t.get("pnl", 0)) for t in sell_trades)
+        
+        status["total_trades"] = len(trades)
+        status["pairs_known"] = known_pairs
+        status["lifetime_pnl"] = round(total_pnl, 2)
+        status["winrate"] = round(len(wins) / len(sell_trades) * 100, 1) if sell_trades else 0
+        
+        # Upgrade stage label based on real trade count
+        n = len(trades)
+        if n >= 100:
+            status["stage"] = "🧠 Expert — Deep market knowledge"
+        elif n >= 50:
+            status["stage"] = "📈 Advanced — Building expertise"
+        elif n >= 20:
+            status["stage"] = "📊 Learning — Refining patterns"
+        elif n >= 5:
+            status["stage"] = "🌱 Growing — Analyzing first patterns"
+        elif n >= 1:
+            status["stage"] = "🐣 Newborn — Collecting first data"
+    
+    return status
 
 
 @router.get("/swarm")
@@ -289,19 +319,38 @@ async def get_experience_status():
 
 @router.get("/shield")
 async def get_shield_status():
-    """Get risk shield status — circuit breaker and portfolio guard."""
+    """Get risk shield status — enriched with real position data."""
     try:
         from bot.shield import get_circuit_breaker, get_portfolio_guard, get_cost_simulator
         cb = get_circuit_breaker()
         pg = get_portfolio_guard()
         cs = get_cost_simulator()
-        return {
+        result = {
             "circuit_breaker": cb.get_status(),
             "portfolio_guard": pg.get_status(),
             "costs": cs.get_stats(),
         }
     except Exception as e:
-        return {"error": str(e)}
+        result = {
+            "circuit_breaker": {"tripped": False, "daily_pnl": 0, "consecutive_losses": 0},
+            "portfolio_guard": {"open_positions": 0, "max_positions": 8},
+            "error": str(e),
+        }
+    
+    # Enrich with real data from pair states
+    pair_states = _read_pair_states()
+    real_pairs = [p for p in pair_states if not p["pair"].startswith("S")]
+    open_count = sum(1 for p in real_pairs if p.get("in_position", False))
+    daily_pnl = sum(p.get("daily_pnl", 0) for p in real_pairs)
+    
+    if "portfolio_guard" in result:
+        result["portfolio_guard"]["open_positions"] = open_count
+        result["portfolio_guard"]["max_positions"] = max(len(real_pairs), 8)
+    if "circuit_breaker" in result:
+        if daily_pnl != 0:
+            result["circuit_breaker"]["daily_pnl"] = round(daily_pnl, 2)
+    
+    return result
 
 
 @router.post("/shield/reset")

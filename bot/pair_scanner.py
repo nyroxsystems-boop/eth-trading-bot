@@ -101,6 +101,10 @@ def fetch_all_binance_pairs() -> List[Dict]:
 
             base = symbol.replace("USDT", "")
 
+            # Skip non-ASCII symbols (e.g. Chinese/Korean named tokens)
+            if not symbol.isascii():
+                continue
+
             # Auto-detect stablecoins by name pattern
             if any(pat in base.upper() for pat in STABLECOIN_PATTERNS):
                 continue

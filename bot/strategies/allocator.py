@@ -329,31 +329,17 @@ class MasterAllocator:
         overall_win_rate = (len(wins) / len(sell_trades) * 100) if sell_trades else 0
         total_pnl = sum(float(t.get("pnl", 0)) for t in sell_trades)
         
-        # Read pair states for real equity
-        pair_states_dir = Path("logs")
-        real_equity = self.state.total_equity
-        try:
-            balances = []
-            for f in pair_states_dir.glob("state_*.json"):
-                pair_name = f.stem.replace("state_", "")
-                if not pair_name.startswith("S"):  # Filter strategy-prefixed
-                    with open(f) as fh:
-                        data = json.load(fh)
-                    balances.append(data.get("paper_balance", 5000))
-            if balances:
-                real_equity = sum(balances)
-        except Exception:
-            pass
-        
-        # Starting capital = config.paper_balance (total pool, default $100k)
-        # The engine splits this across pairs, but the TOTAL is what matters
+        # Starting capital = config.paper_balance (total shared pool, default $100k)
         try:
             from bot.config import TradingConfig
             starting_capital = TradingConfig.from_env().paper_balance
         except Exception:
             starting_capital = float(os.getenv("PAPER_BASE_USDT", "100000"))
         
-        # Peak = max of starting capital and current equity (in case we're in profit)
+        # SHARED POOL: Equity = starting capital + total PnL
+        real_equity = starting_capital + total_pnl
+        
+        # Peak = max of starting capital and current equity
         real_peak = max(starting_capital, real_equity)
         
         # Distribute stats across active strategies proportionally
