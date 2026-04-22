@@ -56,82 +56,90 @@ def fetch_all_binance_pairs() -> List[Dict]:
     """
     Fetch all active USDT spot pairs from Binance with 24h volume.
     Returns sorted list by volume (highest first).
+    Retries up to 3 times on failure.
     """
-    try:
-        # Get exchange info for active symbols
-        url = "https://api.binance.com/api/v3/exchangeInfo"
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "Mozilla/5.0 (compatible; EthBot/3.0)"
-        })
-        with urllib.request.urlopen(req, timeout=15) as r:
-            exchange_info = json.loads(r.read().decode())
-
-        # Filter USDT spot pairs that are TRADING
-        active_usdt = set()
-        for sym in exchange_info.get("symbols", []):
-            if (sym.get("status") == "TRADING" and
-                sym.get("quoteAsset") == "USDT" and
-                sym.get("isSpotTradingAllowed", False)):
-                symbol = sym["symbol"]
-                if symbol not in BLACKLIST:
-                    active_usdt.add(symbol)
-
-        logger.info(f"Binance: {len(active_usdt)} active USDT pairs found")
-
-        # Get 24h ticker for all pairs (single API call)
-        url2 = "https://api.binance.com/api/v3/ticker/24hr"
-        req2 = urllib.request.Request(url2, headers={
-            "User-Agent": "Mozilla/5.0 (compatible; EthBot/3.0)"
-        })
-        with urllib.request.urlopen(req2, timeout=20) as r2:
-            tickers = json.loads(r2.read().decode())
-
-        # Build sorted list
-        pairs = []
-        for t in tickers:
-            symbol = t.get("symbol", "")
-            if symbol not in active_usdt:
-                continue
-
-            volume_usdt = float(t.get("quoteVolume", 0))
-            if volume_usdt < MIN_VOLUME_USDT:
-                continue
-
-            # Skip ultra-penny tokens (high slippage)
-            last_price = float(t.get("lastPrice", 0))
-            if last_price < MIN_PRICE_USDT:
-                continue
-
-            # Skip pegged tokens (price change < 0.1% = stablecoin)
-            change_pct = abs(float(t.get("priceChangePercent", 0)))
-            if change_pct < MIN_PRICE_CHANGE_PCT:
-                continue
-
-            base = symbol.replace("USDT", "")
-
-            # Skip non-ASCII symbols (e.g. Chinese/Korean named tokens)
-            if not symbol.isascii():
-                continue
-
-            # Auto-detect stablecoins by name pattern
-            if any(pat in base.upper() for pat in STABLECOIN_PATTERNS):
-                continue
-
-            pairs.append({
-                "pair": symbol,
-                "base": base,
-                "volume_24h": volume_usdt,
-                "price": float(t.get("lastPrice", 0)),
-                "change_pct": float(t.get("priceChangePercent", 0)),
+    for attempt in range(3):
+        try:
+            # Get exchange info for active symbols
+            url = "https://api.binance.com/api/v3/exchangeInfo"
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (compatible; EthBot/3.0)"
             })
+            with urllib.request.urlopen(req, timeout=20) as r:
+                exchange_info = json.loads(r.read().decode())
 
-        # Sort by 24h volume (highest first)
-        pairs.sort(key=lambda x: x["volume_24h"], reverse=True)
-        return pairs
+            # Filter USDT spot pairs that are TRADING
+            active_usdt = set()
+            for sym in exchange_info.get("symbols", []):
+                if (sym.get("status") == "TRADING" and
+                    sym.get("quoteAsset") == "USDT" and
+                    sym.get("isSpotTradingAllowed", False)):
+                    symbol = sym["symbol"]
+                    if symbol not in BLACKLIST:
+                        active_usdt.add(symbol)
 
-    except Exception as e:
-        logger.error(f"Binance pair scan failed: {e}")
-        return []
+            logger.info(f"Binance: {len(active_usdt)} active USDT pairs found")
+
+            # Get 24h ticker for all pairs (single API call)
+            url2 = "https://api.binance.com/api/v3/ticker/24hr"
+            req2 = urllib.request.Request(url2, headers={
+                "User-Agent": "Mozilla/5.0 (compatible; EthBot/3.0)"
+            })
+            with urllib.request.urlopen(req2, timeout=20) as r2:
+                tickers = json.loads(r2.read().decode())
+
+            # Build sorted list
+            pairs = []
+            for t in tickers:
+                symbol = t.get("symbol", "")
+                if symbol not in active_usdt:
+                    continue
+
+                volume_usdt = float(t.get("quoteVolume", 0))
+                if volume_usdt < MIN_VOLUME_USDT:
+                    continue
+
+                # Skip ultra-penny tokens (high slippage)
+                last_price = float(t.get("lastPrice", 0))
+                if last_price < MIN_PRICE_USDT:
+                    continue
+
+                # Skip pegged tokens (price change < 0.1% = stablecoin)
+                change_pct = abs(float(t.get("priceChangePercent", 0)))
+                if change_pct < MIN_PRICE_CHANGE_PCT:
+                    continue
+
+                base = symbol.replace("USDT", "")
+
+                # Skip non-ASCII symbols (e.g. Chinese/Korean named tokens)
+                if not symbol.isascii():
+                    continue
+
+                # Auto-detect stablecoins by name pattern
+                if any(pat in base.upper() for pat in STABLECOIN_PATTERNS):
+                    continue
+
+                pairs.append({
+                    "pair": symbol,
+                    "base": base,
+                    "volume_24h": volume_usdt,
+                    "price": float(t.get("lastPrice", 0)),
+                    "change_pct": float(t.get("priceChangePercent", 0)),
+                })
+
+            # Sort by 24h volume (highest first)
+            pairs.sort(key=lambda x: x["volume_24h"], reverse=True)
+            logger.info(f"Pair scanner: {len(pairs)} pairs passed all filters (attempt {attempt+1})")
+            return pairs
+
+        except Exception as e:
+            logger.warning(f"Binance pair scan attempt {attempt+1}/3 failed: {e}")
+            if attempt < 2:
+                import time as _t
+                _t.sleep(2 * (attempt + 1))  # 2s, 4s backoff
+
+    logger.error("All 3 pair scan attempts failed — using fallback pairs")
+    return []
 
 
 def get_top_pairs(n: int = 20) -> List[Dict]:

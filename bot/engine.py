@@ -42,10 +42,11 @@ FALLBACK_PAIRS = [
 ]
 
 
-def _get_pairs(n: int = 20) -> list:
+def _get_pairs(n: int = 8) -> list:
     """
     Get trading pairs — dynamic from Binance or env override.
     Priority: PAIRS env var > Dynamic scanner > Fallback.
+    Always returns at least FALLBACK_PAIRS count.
     """
     # 1. Check env var override
     pairs_env = os.getenv("PAIRS", "").strip()
@@ -67,12 +68,16 @@ def _get_pairs(n: int = 20) -> list:
         from bot.pair_scanner import get_top_pairs
         n_pairs = int(os.getenv("NUM_PAIRS", str(n)))
         dynamic = get_top_pairs(n_pairs)
-        if dynamic:
+        if dynamic and len(dynamic) >= 3:  # Need at least 3 pairs from scanner
+            logger.info(f"Dynamic scanner: {len(dynamic)} pairs active")
             return dynamic
+        else:
+            logger.warning(f"Scanner returned only {len(dynamic)} pairs, using fallback")
     except Exception as e:
         logger.warning(f"Dynamic pair scan failed: {e}")
 
-    # 3. Fallback
+    # 3. Fallback — always available
+    logger.info(f"Using {len(FALLBACK_PAIRS)} fallback pairs")
     return FALLBACK_PAIRS
 
 # Graceful shutdown
