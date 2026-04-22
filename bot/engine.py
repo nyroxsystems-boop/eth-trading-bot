@@ -971,6 +971,20 @@ def run(config: TradingConfig | None = None):
     # SHARED CAPITAL POOL — all pairs share the total balance
     # The bot decides dynamically how much to allocate per trade based on confidence
     # Strong signals → more capital, weak signals → less capital
+    
+    # ── Restore balance from Postgres (survives Railway deploys) ──
+    restored_balance = config.paper_balance
+    try:
+        from trade_store import get_all_trades
+        all_trades = get_all_trades()
+        sells = [t for t in all_trades if 'SELL' in t.get('action', '').upper()]
+        total_realized = sum(t.get('pnl', 0) for t in sells)
+        if total_realized != 0:
+            restored_balance = config.paper_balance + total_realized
+            logger.info(f"💰 Restored balance from Postgres: ${restored_balance:,.2f} ({len(sells)} closed trades, PnL: ${total_realized:+.2f})")
+    except Exception as e:
+        logger.debug(f"Balance restore: {e}")
+    
     pairs = _get_pairs()
     states: dict[str, BotState] = {}
     for p in pairs:
@@ -979,7 +993,7 @@ def run(config: TradingConfig | None = None):
         # Each pair tracks its OWN P&L, but has access to the full pool
         # Don't overwrite balance if state was loaded (preserves P&L tracking)
         if state.paper_balance == 100_000.0:  # Fresh state, never traded
-            state.paper_balance = config.paper_balance
+            state.paper_balance = restored_balance
         state.check_new_day()
         # Fix stale positions: recover bars_held from entry_time
         if state.position and state.position.entry_time:
