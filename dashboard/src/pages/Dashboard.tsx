@@ -37,8 +37,8 @@ export default function Dashboard({ status: propStatus }: DashboardProps) {
   const [shield, setShield] = useState<any>(null)
   const [localStatus, setLocalStatus] = useState<any>(null)
 
-  // Use local status if prop status is null (prop passing can fail)
-  const status = propStatus || localStatus
+  // Use local status — propStatus from App.tsx may be empty/broken
+  const status = localStatus
 
   useEffect(() => {
     fetchTrades()

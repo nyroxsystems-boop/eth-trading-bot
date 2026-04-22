@@ -45,7 +45,7 @@ export default function Trading({ status: propStatus }: TradingProps) {
   const [config, setConfig] = useState<BotConfig | null>(null)
   const [localStatus, setLocalStatus] = useState<any>(null)
 
-  const status = propStatus || localStatus
+  const status = localStatus
 
   useEffect(() => {
     fetchTrades()
