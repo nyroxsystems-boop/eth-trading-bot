@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, BarChart, Bar
+  ResponsiveContainer
 } from 'recharts'
 import type { BotStatus } from '../App'
 import StrategyPanel from '../components/StrategyPanel'
