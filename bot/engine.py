@@ -531,6 +531,57 @@ def _trade_pair(
             except Exception as e:
                 logger.debug(f"Non-critical: {e}")
 
+            # ── Brain Intelligence: Feed learned knowledge into decision ──
+            brain_pair_confidence = 1.0
+            brain_regime_adj = 0.0
+            brain_hour_boost = 0.0
+            brain_signal_boost = 0.0
+            try:
+                from bot.brain import get_brain
+                brain = get_brain()
+                
+                # 1. Per-pair confidence from trade history
+                brain_pair_confidence = brain.get_pair_confidence(pair)
+                
+                # 2. Regime-based adjustment
+                brain_regime_adj = brain.get_regime_adjustment(signal.regime)
+                
+                # 3. Time-of-day performance
+                best_hour = brain.get_best_hour()
+                current_hour = datetime.now(timezone.utc).hour
+                hour_data = brain.memory["hourly_performance"].get(str(current_hour), {})
+                hour_trades = hour_data.get("trades", 0)
+                if hour_trades >= 5:
+                    hour_wr = hour_data.get("wins", 0) / hour_trades
+                    if hour_wr >= 0.65:
+                        brain_hour_boost = 0.05  # Good hour
+                    elif hour_wr < 0.35:
+                        brain_hour_boost = -0.05  # Bad hour
+                
+                # 4. Signal effectiveness weighting
+                signal_rankings = brain.get_signal_ranking()
+                effective_signals = {s["signal"]: s["effectiveness"] for s in signal_rankings}
+                if signal.signals and effective_signals:
+                    # Boost score if current signals have high historical effectiveness
+                    eff_scores = []
+                    for sig_name in signal.signals:
+                        clean = sig_name.split("(")[0].strip()
+                        if clean in effective_signals:
+                            eff_scores.append(effective_signals[clean])
+                    if eff_scores:
+                        avg_effectiveness = sum(eff_scores) / len(eff_scores)
+                        brain_signal_boost = (avg_effectiveness - 0.5) * 0.2  # -0.1 to +0.1
+                
+                total_brain_boost = brain_regime_adj + brain_hour_boost + brain_signal_boost
+                if abs(total_brain_boost) > 0.01 or brain_pair_confidence != 1.0:
+                    logger.debug(
+                        f"[{pair}] 🧠 Brain: pair_conf={brain_pair_confidence:.2f} "
+                        f"regime={brain_regime_adj:+.3f} hour={brain_hour_boost:+.3f} "
+                        f"signals={brain_signal_boost:+.3f} → boost={total_brain_boost:+.3f}"
+                    )
+            except Exception as e:
+                logger.debug(f"Brain boost: {e}")
+
             swarm_data = {
                 "pair": pair, "rsi": signal.rsi, "adx": signal.adx,
                 "macd": float(row.get("macd", 0)),
@@ -540,7 +591,8 @@ def _trade_pair(
                 "volume_ratio": float(row.get("volume", 0)) / max(float(df["volume"].mean()), 1),
                 "vwap_dev": float(row.get("vwap_dev", 0)),
                 "atr_pct": atr / max(px, 1) * 100,
-                "regime": signal.regime, "score": signal.score,
+                "regime": signal.regime,
+                "score": signal.score + brain_regime_adj + brain_hour_boost + brain_signal_boost,
                 "mtf_boost": mtf_boost if 'mtf_boost' in dir() else 0,
                 "fg_value": fg_value,
                 "news_sentiment": news_sentiment,
@@ -549,6 +601,8 @@ def _trade_pair(
                 "intel_composite": intel_composite,
                 "onchain_signal": onchain_signal,
                 "signal_count": len(signal.signals),
+                "brain_pair_confidence": brain_pair_confidence,
+                "brain_boost": brain_regime_adj + brain_hour_boost + brain_signal_boost,
             }
             decision = swarm.decide(swarm_data)
             swarm_approved = decision.approved
@@ -572,7 +626,7 @@ def _trade_pair(
                 logger.info(f"[{pair}] 🛡️ Pool exhausted: ${pool_equity:,.0f} remaining — skipping")
             else:
               # M1: Scale confidence by brain's pair-specific knowledge
-              adjusted_confidence = signal.score * brain_pair_confidence if 'brain_pair_confidence' in dir() else signal.score
+              adjusted_confidence = signal.score * brain_pair_confidence
               qty = position_size(
                 px, atr, config, state,
                 confidence=adjusted_confidence,
