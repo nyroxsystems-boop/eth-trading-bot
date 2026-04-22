@@ -39,18 +39,23 @@ interface BotConfig {
   loop_sleep_seconds: number
 }
 
-export default function Trading({ status }: TradingProps) {
+export default function Trading({ status: propStatus }: TradingProps) {
   const [trades, setTrades] = useState<Trade[]>([])
   const [signal, setSignal] = useState<SignalInfo | null>(null)
   const [config, setConfig] = useState<BotConfig | null>(null)
+  const [localStatus, setLocalStatus] = useState<any>(null)
+
+  const status = propStatus || localStatus
 
   useEffect(() => {
     fetchTrades()
     fetchSignal()
     fetchConfig()
+    fetchStatus()
     const interval = setInterval(() => {
       fetchSignal()
-    }, 30000)
+      fetchStatus()
+    }, 10000)
     return () => clearInterval(interval)
   }, [])
 
@@ -72,6 +77,13 @@ export default function Trading({ status }: TradingProps) {
     try {
       const res = await fetch(`${API_URL}/api/v3/config`)
       if (res.ok) setConfig(await res.json())
+    } catch {}
+  }
+
+  const fetchStatus = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/v3/status`)
+      if (res.ok) setLocalStatus(await res.json())
     } catch {}
   }
 

@@ -28,21 +28,36 @@ interface DashboardProps {
   status: BotStatus | null
 }
 
-export default function Dashboard({ status }: DashboardProps) {
+export default function Dashboard({ status: propStatus }: DashboardProps) {
   const [trades, setTrades] = useState<Trade[]>([])
   const [chartDays, setChartDays] = useState(7)
   const [pnlHistory, setPnlHistory] = useState<any[]>([])
   const [swarm, setSwarm] = useState<{ agents: SwarmAgent[], consensus_threshold: number } | null>(null)
   const [brain, setBrain] = useState<any>(null)
   const [shield, setShield] = useState<any>(null)
+  const [localStatus, setLocalStatus] = useState<any>(null)
+
+  // Use local status if prop status is null (prop passing can fail)
+  const status = propStatus || localStatus
 
   useEffect(() => {
     fetchTrades()
     fetchPnlHistory()
     fetchIntelligence()
-    const intv = setInterval(fetchIntelligence, 30000)
+    fetchStatus()
+    const intv = setInterval(() => {
+      fetchIntelligence()
+      fetchStatus()
+    }, 10000)
     return () => clearInterval(intv)
   }, [chartDays])
+
+  const fetchStatus = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/v3/status`)
+      if (res.ok) setLocalStatus(await res.json())
+    } catch { /* ignore */ }
+  }
 
   const fetchTrades = async () => {
     try {
