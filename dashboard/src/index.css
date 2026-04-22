@@ -462,12 +462,10 @@ body::before {
   align-items: stretch;
 }
 .grid-2col > .card {
-  height: 100%;
   display: flex;
   flex-direction: column;
-}
-.grid-2col > .card > div:last-child {
-  flex: 1;
+  max-height: 500px;
+  overflow: hidden;
 }
 
 /* ── Settings ── */

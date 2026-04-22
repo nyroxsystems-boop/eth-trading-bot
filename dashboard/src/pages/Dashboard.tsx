@@ -315,7 +315,7 @@ export default function Dashboard(_props: DashboardProps) {
 
       {/* Chart + Trade Stats */}
       <div className="grid-2col">
-        <div className="card chart-card" style={{ display: 'flex', flexDirection: 'column' }}>
+        <div className="card chart-card" style={{ display: 'flex', flexDirection: 'column', maxHeight: '480px' }}>
           <div className="chart-header">
             <div>
               <div className="chart-title">Performance Overview</div>
@@ -327,9 +327,9 @@ export default function Dashboard(_props: DashboardProps) {
               ))}
             </div>
           </div>
-          <div style={{ flex: 1, minHeight: '320px' }}>
+          <div style={{ height: '340px' }}>
             {pnlHistory.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height={320}>
                 <AreaChart data={pnlHistory} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">
@@ -356,7 +356,7 @@ export default function Dashboard(_props: DashboardProps) {
         </div>
 
         {/* Trade Statistics + Equity Curve */}
-        <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+        <div className="card" style={{ display: 'flex', flexDirection: 'column', maxHeight: '480px' }}>
           <div className="chart-title" style={{ marginBottom: '16px' }}>Trade Statistics</div>
           {/* Stats Row */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '20px' }}>
@@ -382,9 +382,9 @@ export default function Dashboard(_props: DashboardProps) {
 
           {/* Mini Equity Curve */}
           <div className="label" style={{ marginBottom: '8px', fontSize: '11px' }}>Equity Curve (Last Trades)</div>
-          <div style={{ flex: 1, minHeight: '140px' }}>
+          <div style={{ height: '160px' }}>
             {equityCurve.length > 1 ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height={150}>
                 <AreaChart data={equityCurve} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
@@ -399,7 +399,7 @@ export default function Dashboard(_props: DashboardProps) {
                 </AreaChart>
               </ResponsiveContainer>
             ) : (
-              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+              <div style={{ height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
                 Waiting for completed trades...
               </div>
             )}
