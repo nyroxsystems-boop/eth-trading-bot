@@ -646,3 +646,24 @@ body::before {
   fill: var(--accent) !important;
   stroke: var(--bg-card) !important;
 }
+
+/* ── Fix ALL Recharts white backgrounds ── */
+.recharts-wrapper,
+.recharts-surface,
+.recharts-cartesian-grid,
+.recharts-responsive-container {
+  background: transparent !important;
+}
+.recharts-wrapper svg {
+  background: transparent !important;
+}
+.recharts-cartesian-grid-bg {
+  fill: transparent !important;
+}
+/* Kill any remaining white rectangles inside charts */
+.recharts-wrapper rect.recharts-cartesian-grid-bg,
+.recharts-wrapper rect[fill="#fff"],
+.recharts-wrapper rect[fill="white"],
+.recharts-wrapper rect[fill="#ffffff"] {
+  fill: transparent !important;
+}
