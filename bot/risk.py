@@ -7,6 +7,61 @@ from bot.config import TradingConfig
 from bot.state import BotState
 
 
+def _adaptive_trade_limit(config: TradingConfig, state: BotState) -> int:
+    """
+    Adaptive trade limit — learns from today's performance.
+    
+    Instead of a fixed max_trades_per_day, the bot adjusts dynamically:
+    
+    - Winning day (P&L > 0):  More trades allowed (momentum)
+    - Losing day (P&L < 0):   Fewer trades (capital preservation)
+    - Win streak:              Boost limit
+    - Loss streak:             Reduce limit
+    - High win rate:           Allow more aggressive trading
+    
+    Returns: dynamic max trades for today (5 to 100)
+    """
+    base = 20  # Starting point
+    
+    # Factor 1: Today's P&L direction
+    if state.daily_pnl > 0:
+        profit_boost = min(state.daily_pnl / 100, 30)  # +1 per $100 profit, max +30
+        base += int(profit_boost)
+    elif state.daily_pnl < -50:
+        loss_penalty = min(abs(state.daily_pnl) / 50, 10)  # -1 per $50 loss, max -10
+        base -= int(loss_penalty)
+    
+    # Factor 2: Win/loss streak
+    if state.win_streak >= 5:
+        base += 15  # Hot streak — let it run
+    elif state.win_streak >= 3:
+        base += 8
+    elif state.loss_streak >= 4:
+        base -= 10  # Cool off
+    elif state.loss_streak >= 2:
+        base -= 5
+    
+    # Factor 3: Historical win rate from trade store
+    try:
+        from trade_store import get_all_trades
+        all_trades = get_all_trades()
+        sells = [t for t in all_trades if 'SELL' in t.get('action', '').upper() and t.get('pnl', 0) != 0]
+        if len(sells) >= 10:
+            wins = sum(1 for t in sells if t['pnl'] > 0)
+            win_rate = wins / len(sells)
+            if win_rate >= 0.65:
+                base += 20  # Proven winner — unleash
+            elif win_rate >= 0.55:
+                base += 10
+            elif win_rate < 0.40:
+                base -= 10  # Struggling — conserve
+    except Exception:
+        pass  # No Postgres / trade store — use base
+    
+    # Clamp to sane range
+    return max(5, min(100, base))
+
+
 def position_size(
     price: float,
     atr: float,
@@ -189,9 +244,12 @@ def check_guards(config: TradingConfig, state: BotState) -> str | None:
     2. Daily drawdown limit
     3. Cooldown active
     """
-    # 1. Max trades per day
-    if state.today_trades >= config.max_trades_per_day:
-        return "max_trades_reached"
+    # 1. Adaptive trade limit — learns from performance
+    # Good days → trade more, bad days → slow down
+    # Base: no fixed cap. Instead, dynamic cap based on win rate & daily PnL
+    adaptive_max = _adaptive_trade_limit(config, state)
+    if state.today_trades >= adaptive_max:
+        return f"adaptive_limit_{adaptive_max}"
 
     # 2. Daily drawdown circuit breaker
     if state.circuit_breaker:

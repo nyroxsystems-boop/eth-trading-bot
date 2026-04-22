@@ -1082,7 +1082,7 @@ def run(config: TradingConfig | None = None):
     logger.info("Strategies: S2(StatArb) + S4(Momentum) + S5(LiqHunter) | Mode: Margin Trading")
     logger.info(f"Interval: {config.interval} | Capital Pool: ${total_balance:,.2f} | Locked: ${locked_in_positions:,.2f}")
     logger.info(f"Dynamic sizing: Confidence-based (5%-55% of available pool per trade)")
-    logger.info(f"Max trades/day: {config.max_trades_per_day} | Entry min: {config.entry_score_min}")
+    logger.info(f"Trade limit: adaptive (base 20) | Entry min: {config.entry_score_min}")
 
     _notify(config, f"🤖 Ethbot v3 [{mode}] | {crypto_count} crypto + {stock_count} stocks | S2+S4+S5 (Margin) | ${total_balance:,.0f}")
 
