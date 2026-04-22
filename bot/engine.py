@@ -46,7 +46,7 @@ def _get_pairs(n: int = 8) -> list:
     """
     Get trading pairs — dynamic from Binance or env override.
     Priority: PAIRS env var > Dynamic scanner > Fallback.
-    Always returns at least FALLBACK_PAIRS count.
+    Always returns at least 8 pairs by merging scanner + fallback.
     """
     # 1. Check env var override
     pairs_env = os.getenv("PAIRS", "").strip()
@@ -64,21 +64,34 @@ def _get_pairs(n: int = 8) -> list:
             return result
 
     # 2. Dynamic scanner — top N by volume
+    dynamic = []
     try:
         from bot.pair_scanner import get_top_pairs
         n_pairs = int(os.getenv("NUM_PAIRS", str(n)))
         dynamic = get_top_pairs(n_pairs)
-        if dynamic and len(dynamic) >= 3:  # Need at least 3 pairs from scanner
-            logger.info(f"Dynamic scanner: {len(dynamic)} pairs active")
-            return dynamic
-        else:
-            logger.warning(f"Scanner returned only {len(dynamic)} pairs, using fallback")
+        if dynamic:
+            logger.info(f"Dynamic scanner: {len(dynamic)} pairs found")
     except Exception as e:
         logger.warning(f"Dynamic pair scan failed: {e}")
 
-    # 3. Fallback — always available
-    logger.info(f"Using {len(FALLBACK_PAIRS)} fallback pairs")
-    return FALLBACK_PAIRS
+    # 3. Merge: scanner pairs + fallback to guarantee minimum 8
+    seen = set()
+    merged = []
+    for p in dynamic:
+        if p["pair"] not in seen:
+            seen.add(p["pair"])
+            merged.append(p)
+    # Fill up with fallback pairs
+    for p in FALLBACK_PAIRS:
+        if p["pair"] not in seen:
+            seen.add(p["pair"])
+            merged.append(p)
+
+    if len(merged) > len(dynamic):
+        added = len(merged) - len(dynamic)
+        logger.info(f"Merged {len(dynamic)} scanner + {added} fallback = {len(merged)} total pairs")
+
+    return merged if merged else FALLBACK_PAIRS
 
 # Graceful shutdown
 _shutdown = threading.Event()

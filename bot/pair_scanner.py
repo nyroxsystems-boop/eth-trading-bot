@@ -17,7 +17,7 @@ logger = logging.getLogger("ethbot.pair_scanner")
 # Cache settings
 CACHE_DIR = Path("logs/intel_cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
-PAIR_CACHE_TTL = 3600  # Refresh top pairs every 1 hour
+PAIR_CACHE_TTL = 900  # Refresh top pairs every 15 minutes
 
 # Blacklist: leveraged tokens, stablecoins, and low-quality pairs
 BLACKLIST = {
