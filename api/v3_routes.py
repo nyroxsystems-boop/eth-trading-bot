@@ -104,9 +104,13 @@ async def get_status():
     # Filter out strategy-prefixed pairs (S4_, etc.)
     real_pairs = [p for p in pair_states if not p["pair"].startswith("S")]
     
-    # Calculate real equity: sum of all pair balances
-    starting_balance = 5000.0 * len(real_pairs) if real_pairs else 100_000
-    current_equity = sum(p.get("paper_balance", 5000) for p in real_pairs) if real_pairs else state.get("paper_balance", 100_000)
+    # Calculate real equity: sum of all pair balances = total pool value
+    try:
+        from bot.config import TradingConfig
+        starting_balance = TradingConfig.from_env().paper_balance
+    except Exception:
+        starting_balance = float(os.getenv("PAPER_BASE_USDT", "100000"))
+    current_equity = sum(p.get("paper_balance", 5000) for p in real_pairs) if real_pairs else state.get("paper_balance", starting_balance)
     daily_pnl_total = sum(p.get("daily_pnl", 0) for p in real_pairs) if real_pairs else state.get("daily_pnl", 0.0)
     
     # Active positions
