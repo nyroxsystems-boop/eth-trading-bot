@@ -213,19 +213,33 @@ async def get_pnl_history(days: int = Query(7, ge=1, le=90)):
 
 @router.get("/signal")
 async def get_current_signal():
-    """Get current trading signal (live computation)."""
+    """Get current trading signal — rotates through all active pairs."""
     try:
         from bot.config import TradingConfig
         from bot.executor import fetch_klines
         from bot.signals import add_indicators, compute_signals
+        import time
 
         config = TradingConfig.from_env()
-        df = fetch_klines(config.pair, config.interval, lookback=100)
+
+        # Get all active pairs and rotate through them
+        pair_states = _read_pair_states()
+        active_pairs = [p["pair"] for p in pair_states if not p["pair"].startswith("S")]
+
+        if not active_pairs:
+            active_pairs = [config.pair]
+
+        # Rotate: switch pair every 10 seconds
+        idx = int(time.time() / 10) % len(active_pairs)
+        current_pair = active_pairs[idx]
+
+        df = fetch_klines(current_pair, config.interval, lookback=100)
         df = add_indicators(df)
         signal = compute_signals(df, entry_score_min=config.entry_score_min)
 
         return {
-            "pair": config.pair,
+            "pair": current_pair.replace("USDT", "/USDT"),
+            "pair_raw": current_pair,
             "score": signal.score,
             "should_buy": signal.should_buy,
             "signals": signal.signals,
@@ -233,11 +247,13 @@ async def get_current_signal():
             "adx": round(signal.adx, 1),
             "regime": signal.regime,
             "price": round(signal.price, 2),
+            "rotating_index": idx,
+            "total_pairs": len(active_pairs),
         }
     except Exception as e:
         logger.error(f"Signal computation failed: {e}")
         return {
-            "pair": "ETHUSDT",
+            "pair": "—",
             "score": 0.0, "should_buy": False, "signals": [],
             "rsi": 50.0, "adx": 20.0, "regime": "unknown", "price": 0.0,
         }

@@ -143,10 +143,14 @@ export default function Trading(_props: TradingProps) {
                 </div>
                 <div>
                   <div style={{ fontSize: '20px', fontWeight: 700 }}>
-                    {signal.should_buy ? 'BUY Signal' : 'Waiting...'}
+                    {signal.should_buy ? 'BUY Signal' : 'Waiting...'}{' '}
+                    <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--accent)' }}>{(signal as any).pair || ''}</span>
                   </div>
                   <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
                     Score: {signal.score.toFixed(3)} | Regime: {signal.regime}
+                    {(signal as any).total_pairs > 1 && (
+                      <span> | 🔄 {((signal as any).rotating_index || 0) + 1}/{(signal as any).total_pairs}</span>
+                    )}
                   </div>
                 </div>
               </div>
