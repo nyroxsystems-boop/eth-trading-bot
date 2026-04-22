@@ -273,6 +273,27 @@ def _trade_pair(
             except Exception as e:
                 logger.debug(f"Non-critical: {e}")
 
+            # ── Swarm: Learn from trade outcome ──
+            try:
+                from bot.swarm import get_swarm
+                swarm = get_swarm()
+                market_data = {
+                    "close": px,
+                    "rsi": float(row.get("rsi", 50)),
+                    "macd": float(row.get("macd", 0)),
+                    "adx": float(row.get("adx", 25)),
+                    "bb_upper": float(row.get("bb_upper", px)),
+                    "bb_lower": float(row.get("bb_lower", px)),
+                    "volume": float(row.get("volume", 0)),
+                    "atr": atr,
+                    "vwap": float(row.get("vwap", px)),
+                    "regime": getattr(pos, 'entry_regime', 'unknown'),
+                }
+                swarm.learn_from_outcome(market_data, was_profitable=(pnl > 0))
+                logger.info(f"[{pair}] 🐝 Swarm learned from trade (profitable={pnl > 0})")
+            except Exception as e:
+                logger.debug(f"Non-critical swarm learning: {e}")
+
             # ── RL Optimizer: learn from trade outcome ──
             try:
                 from bot.rl_optimizer import get_rl_optimizer

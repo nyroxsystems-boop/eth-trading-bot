@@ -31,18 +31,20 @@ const STATUS_EMOJI: Record<string, string> = {
   'SCANNING': '🔍',
   'PLANNED': '⏳',
   'PAUSED': '⏸️',
+  'DISABLED': '🚫',
+  'HALTED': '⏸️',
 }
 
 const STRATEGY_ICONS: Record<string, string> = {
   'S2_StatArb': '📊',
-  'S3_MarketMaker': '🏛️',
+  'S3_MarketMaking': '🏛️',
   'S4_MomentumV2': '📈',
   'S5_LiqHunter': '🎯',
 }
 
 const STRATEGY_NAMES: Record<string, string> = {
   'S2_StatArb': 'Statistical Arb',
-  'S3_MarketMaker': 'Market Making',
+  'S3_MarketMaking': 'Market Making',
   'S4_MomentumV2': 'Momentum Breakout',
   'S5_LiqHunter': 'Liquidation Bounce',
 }
@@ -144,9 +146,9 @@ export default function StrategyPanel() {
                   <div style={{ fontSize: '11px', color: '#64748b' }}>{id}</div>
                 </div>
               </div>
-              <span className={`badge ${strat.status === 'ACTIVE' ? 'badge-active' : strat.status === 'PAPER' ? 'badge-pending' : 'badge-inactive'}`}
+              <span className={`badge ${strat.status === 'ACTIVE' ? 'badge-active' : strat.status === 'PAPER' || strat.status === 'SCANNING' ? 'badge-pending' : 'badge-inactive'}`}
                 style={{ fontSize: '10px', padding: '2px 8px' }}>
-                {STATUS_EMOJI[strat.status] || ''} {strat.status}
+                {STATUS_EMOJI[strat.status] || '⚙️'} {strat.status === 'PLANNED' ? 'PLANNED' : strat.status === 'DISABLED' ? 'DISABLED' : strat.status}
               </span>
             </div>
 

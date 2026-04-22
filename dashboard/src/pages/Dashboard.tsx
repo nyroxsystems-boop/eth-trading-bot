@@ -295,9 +295,9 @@ export default function Dashboard(_props: DashboardProps) {
                   </td>
                   <td style={{ fontSize: '12px', color: '#94a3b8' }}>{agent.correct_votes}/{agent.total_votes}</td>
                   <td>
-                    <span className={`badge ${agent.total_votes >= 10 ? 'badge-active' : 'badge-pending'}`}
+                    <span className={`badge ${agent.total_votes >= 5 ? 'badge-active' : 'badge-pending'}`}
                       style={{ fontSize: '10px', padding: '2px 8px' }}>
-                      {agent.total_votes >= 50 ? 'Expert' : agent.total_votes >= 10 ? 'Learning' : 'Newborn'}
+                      {agent.total_votes >= 30 ? 'Expert' : agent.total_votes >= 5 ? 'Learning' : 'Newborn'}
                     </span>
                   </td>
                 </tr>
