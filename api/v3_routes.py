@@ -185,17 +185,30 @@ async def get_trades(limit: int = Query(50, ge=1, le=500)):
 
 @router.get("/pnl-history")
 async def get_pnl_history(days: int = Query(7, ge=1, le=90)):
-    """Get daily P&L history for charting."""
+    """Get P&L history for charting. Per-trade if <3 days, per-day otherwise."""
     trades = _read_trades()
     sell_trades = [t for t in trades if "SELL" in t.get("action", "").upper() and t.get("pnl", 0) != 0]
 
-    # Group by date
+    # Group by date to check how many days we have
     daily: Dict[str, float] = {}
     for t in sell_trades:
         date = t["timestamp"][:10]  # YYYY-MM-DD
         daily[date] = daily.get(date, 0) + t["pnl"]
 
-    # Build cumulative series
+    # If fewer than 3 days of data, return per-trade cumulative PnL
+    if len(daily) < 3 and sell_trades:
+        result = []
+        cumulative = 0.0
+        for i, t in enumerate(sell_trades):
+            cumulative += t["pnl"]
+            result.append({
+                "date": f"Trade #{i+1}",
+                "daily_pnl": round(t["pnl"], 2),
+                "cumulative_pnl": round(cumulative, 2),
+            })
+        return result
+
+    # Normal: daily aggregation
     result = []
     cumulative = 0.0
     dates = sorted(daily.keys())

@@ -638,6 +638,13 @@ class TradingSwarm:
         """
         After a trade closes, update each agent's accuracy
         based on whether their vote was correct.
+        
+        BUY vote + profitable = correct
+        BUY vote + loss = incorrect
+        SKIP vote + profitable = incorrect (missed opportunity)
+        SKIP vote + loss = correct (avoided loss)
+        NEUTRAL vote + profitable = half credit (conservative miss)
+        NEUTRAL vote + loss = half credit (conservative save)
         """
         for agent in self.agents:
             try:
@@ -646,7 +653,11 @@ class TradingSwarm:
                     agent.update_accuracy(was_profitable)
                 elif vote.vote == Vote.SKIP:
                     agent.update_accuracy(not was_profitable)
-                # Neutral votes don't count
+                else:
+                    # NEUTRAL: still counts as a vote — abstaining is a choice
+                    # If trade was profitable, neutral missed it (incorrect)
+                    # If trade lost, neutral avoided it (correct)
+                    agent.update_accuracy(not was_profitable)
             except Exception:
                 pass
 

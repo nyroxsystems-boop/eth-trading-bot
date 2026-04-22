@@ -37,6 +37,8 @@ BLACKLIST = {
     "PYUSDUSDT", "USTCUSDT", "AEURUSDT", "BIDUSDUSDT",
     # Wrapped tokens
     "WBTCUSDT", "WBETHUSDT",
+    # Meme/pump-dump tokens (high loss history)
+    "CHIPUSDT",
 }
 
 # Patterns that indicate stablecoins (auto-detect)
@@ -47,6 +49,9 @@ MIN_VOLUME_USDT = 20_000_000  # $20M minimum daily volume (filters microcaps, ke
 
 # Maximum price change filter — skip coins moving <0.1% (likely pegged)
 MIN_PRICE_CHANGE_PCT = 0.1
+
+# Maximum price change filter — skip coins moving >25% (pump-and-dump risk)
+MAX_PRICE_CHANGE_PCT = 25.0
 
 # Minimum price filter — skip ultra-penny tokens (high slippage risk)
 MIN_PRICE_USDT = 0.001
@@ -107,6 +112,10 @@ def fetch_all_binance_pairs() -> List[Dict]:
                 # Skip pegged tokens (price change < 0.1% = stablecoin)
                 change_pct = abs(float(t.get("priceChangePercent", 0)))
                 if change_pct < MIN_PRICE_CHANGE_PCT:
+                    continue
+
+                # Skip pump-and-dump tokens (>25% change = too risky)
+                if change_pct > MAX_PRICE_CHANGE_PCT:
                     continue
 
                 base = symbol.replace("USDT", "")
