@@ -233,31 +233,10 @@ export default function Dashboard(_props: DashboardProps) {
         </div>
       )}
 
-      {/* ═══ STRATEGY PORTFOLIO (Collapsible) ═══ */}
-      <details style={{ marginBottom: '24px' }}>
-        <summary style={{
-          cursor: 'pointer',
-          padding: '14px 20px',
-          borderRadius: '12px',
-          background: 'rgba(139,92,246,0.05)',
-          border: '1px solid rgba(139,92,246,0.15)',
-          color: 'var(--text)',
-          fontSize: '14px',
-          fontWeight: 600,
-          listStyle: 'none',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          userSelect: 'none',
-        }}>
-          <span style={{ transition: 'transform 0.2s' }}>▶</span>
-          📊 Strategy Portfolio
-          <span style={{ marginLeft: 'auto', fontSize: '12px', color: 'var(--text-muted)' }}>Click to expand</span>
-        </summary>
-        <div style={{ marginTop: '12px' }}>
-          <StrategyPanel />
-        </div>
-      </details>
+      {/* ═══ STRATEGY PORTFOLIO ═══ */}
+      <div style={{ marginBottom: '24px' }}>
+        <StrategyPanel />
+      </div>
 
       {/* ═══ INTELLIGENCE PANEL ═══ */}
       <div className="stats-grid" style={{ marginBottom: '24px' }}>
@@ -330,9 +309,9 @@ export default function Dashboard(_props: DashboardProps) {
         </div>
       )}
 
-      {/* Chart + Trade Stats + Recent Trades */}
+      {/* Chart + Trade Stats */}
       <div className="grid-2col">
-        <div className="card chart-card">
+        <div className="card chart-card" style={{ display: 'flex', flexDirection: 'column' }}>
           <div className="chart-header">
             <div>
               <div className="chart-title">Performance Overview</div>
@@ -344,7 +323,7 @@ export default function Dashboard(_props: DashboardProps) {
               ))}
             </div>
           </div>
-          <div style={{ height: '280px' }}>
+          <div style={{ flex: 1, minHeight: '320px' }}>
             {pnlHistory.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={pnlHistory} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
@@ -373,7 +352,7 @@ export default function Dashboard(_props: DashboardProps) {
         </div>
 
         {/* Trade Statistics + Equity Curve */}
-        <div className="card">
+        <div className="card" style={{ display: 'flex', flexDirection: 'column' }}>
           <div className="chart-title" style={{ marginBottom: '16px' }}>Trade Statistics</div>
           {/* Stats Row */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px', marginBottom: '20px' }}>
@@ -399,7 +378,7 @@ export default function Dashboard(_props: DashboardProps) {
 
           {/* Mini Equity Curve */}
           <div className="label" style={{ marginBottom: '8px', fontSize: '11px' }}>Equity Curve (Last Trades)</div>
-          <div style={{ height: '120px' }}>
+          <div style={{ flex: 1, minHeight: '140px' }}>
             {equityCurve.length > 1 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={equityCurve} margin={{ top: 5, right: 5, left: 0, bottom: 0 }}>

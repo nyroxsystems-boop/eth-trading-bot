@@ -457,8 +457,9 @@ body::before {
 /* ── Two-column Layout ── */
 .grid-2col {
   display: grid;
-  grid-template-columns: 1.8fr 1fr;
+  grid-template-columns: 1.6fr 1fr;
   gap: 18px;
+  align-items: stretch;
 }
 
 /* ── Settings ── */
@@ -625,4 +626,23 @@ body::before {
 ::selection {
   background: rgba(99, 102, 241, 0.3);
   color: white;
+}
+
+/* ── Recharts Tooltip Fix (no white background) ── */
+.recharts-default-tooltip {
+  background: rgba(15, 23, 42, 0.95) !important;
+  border: 1px solid rgba(99, 102, 241, 0.2) !important;
+  border-radius: 8px !important;
+  color: #f1f5f9 !important;
+}
+.recharts-tooltip-item {
+  color: #f1f5f9 !important;
+}
+.recharts-tooltip-label {
+  color: #94a3b8 !important;
+}
+/* Fix recharts white dot */
+.recharts-dot {
+  fill: var(--accent) !important;
+  stroke: var(--bg-card) !important;
 }
