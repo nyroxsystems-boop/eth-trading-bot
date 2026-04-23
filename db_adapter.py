@@ -109,12 +109,13 @@ def execute_query(query: str, params: Optional[Tuple] = None, fetch: str = None)
 
 
 def convert_placeholders(query: str) -> str:
-    """Convert SQLite ? placeholders to PostgreSQL $1, $2, etc."""
+    """Convert SQLite ? placeholders to PostgreSQL %s."""
     if not USE_POSTGRES:
         return query
     
+    # psycopg2 uses %s (not $1, $2 like asyncpg)
+    # Simple replacement: ? → %s (outside of strings)
     parts = []
-    param_count = 1
     in_string = False
     escape_next = False
     
@@ -135,8 +136,7 @@ def convert_placeholders(query: str) -> str:
             continue
             
         if char == '?' and not in_string:
-            parts.append(f'${param_count}')
-            param_count += 1
+            parts.append('%s')
         else:
             parts.append(char)
     
