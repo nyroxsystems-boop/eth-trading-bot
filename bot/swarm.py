@@ -756,7 +756,10 @@ class TradingSwarm:
                 pass
 
     def get_status(self) -> dict:
-        """Get swarm status."""
+        """Get swarm status — reload from persistent storage for fresh data."""
+        # Always reload from Postgres/JSON to pick up Worker's changes
+        # (Web API has separate process from Worker)
+        self._load_weights()
         return {
             "total_agents": len(self.agents),
             "agents": [a.to_dict() for a in self.agents],
