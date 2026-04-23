@@ -12,6 +12,7 @@ from contextlib import contextmanager
 # Check if PostgreSQL is available
 try:
     import psycopg2
+    import psycopg2.pool
     POSTGRES_AVAILABLE = True
 except ImportError:
     POSTGRES_AVAILABLE = False
