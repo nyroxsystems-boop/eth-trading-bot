@@ -982,6 +982,13 @@ def run(config: TradingConfig | None = None):
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    # ── Database Migration: ensure all tables exist, drop legacy ──
+    try:
+        from db_migrate import run_migration
+        run_migration()
+    except Exception as e:
+        logger.warning(f"DB migration: {e}")
+
     # Initialize Brain + Experience Memory + Genetic Evolver
     try:
         from bot.brain import get_brain
