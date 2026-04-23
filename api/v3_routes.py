@@ -682,3 +682,55 @@ async def reconcile():
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+
+@router.get("/learning")
+async def get_learning():
+    """Auto-learning monitor — strategies tested, applied, and evolution."""
+    try:
+        from learning_store import (
+            get_learning_stats,
+            get_current_strategy,
+            get_all_strategies,
+            get_evolution,
+        )
+
+        stats = get_learning_stats()
+        current = get_current_strategy()
+        top_strategies = get_all_strategies(limit=10)
+        evolution = get_evolution(days=7)
+
+        return {
+            "total_tested": stats.get("total_tested", 0),
+            "best_score": stats.get("best_score", 0),
+            "applied_count": stats.get("applied_count", 0),
+            "avg_score": stats.get("avg_score", 0),
+            "this_hour": stats.get("this_hour", 0),
+            "learning_rate": stats.get("learning_rate", 0),
+            "current_strategy": current,
+            "top_strategies": [
+                {
+                    "params": s.get("params", {}),
+                    "score": s.get("score", 0),
+                    "metrics": s.get("metrics", {}),
+                    "applied": s.get("applied", False),
+                }
+                for s in top_strategies
+            ],
+            "evolution": evolution,
+            "training_active": stats.get("total_tested", 0) > 0,
+        }
+
+    except Exception as e:
+        logger.warning(f"Learning endpoint: {e}")
+        return {
+            "total_tested": 0,
+            "best_score": 0,
+            "applied_count": 0,
+            "avg_score": 0,
+            "this_hour": 0,
+            "learning_rate": 0,
+            "current_strategy": None,
+            "top_strategies": [],
+            "evolution": [],
+            "training_active": False,
+        }
