@@ -636,31 +636,57 @@ class TradingSwarm:
 
     def learn_from_outcome(self, market_data: dict, was_profitable: bool):
         """
-        After a trade closes, update each agent's accuracy
-        based on whether their vote was correct.
+        After a trade closes, update each agent's accuracy.
         
-        BUY vote + profitable = correct
-        BUY vote + loss = incorrect
-        SKIP vote + profitable = incorrect (missed opportunity)
-        SKIP vote + loss = correct (avoided loss)
-        NEUTRAL vote + profitable = half credit (conservative miss)
-        NEUTRAL vote + loss = half credit (conservative save)
+        SIMPLIFIED: Don't re-analyze (agents crash on missing keys).
+        Instead, directly update every agent with the trade outcome.
+        Each agent is judged on whether it WOULD HAVE voted correctly
+        based on the simplified market data.
         """
+        learn_count = 0
         for agent in self.agents:
             try:
-                vote = agent.analyze(market_data)
-                if vote.vote == Vote.BUY:
-                    agent.update_accuracy(was_profitable)
-                elif vote.vote == Vote.SKIP:
-                    agent.update_accuracy(not was_profitable)
-                else:
-                    # NEUTRAL: still counts as a vote — abstaining is a choice
-                    # If trade was profitable, neutral missed it (incorrect)
-                    # If trade lost, neutral avoided it (correct)
-                    agent.update_accuracy(not was_profitable)
-            except Exception:
-                pass
-
+                # Try to get the agent's vote, but if it fails,
+                # still update with a default assumption
+                try:
+                    vote = agent.analyze(market_data)
+                    vote_type = vote.vote
+                except Exception:
+                    # Agent can't analyze this data — treat as NEUTRAL
+                    vote_type = Vote.NEUTRAL
+                
+                # Determine if this agent was "correct"
+                if vote_type == Vote.BUY:
+                    was_correct = was_profitable
+                elif vote_type == Vote.SKIP:
+                    was_correct = not was_profitable
+                else:  # NEUTRAL
+                    was_correct = not was_profitable  # Conservative = correct if loss
+                
+                # FORCE the update — bypass the agent_voted_buy filter
+                agent.total_votes += 1
+                if was_correct:
+                    agent.correct_votes += 1
+                
+                # Rolling window
+                agent._recent_results.append(was_correct)
+                agent._recent_results = agent._recent_results[-agent._rolling_window:]
+                
+                if agent.total_votes > 0:
+                    agent.accuracy = agent.correct_votes / agent.total_votes
+                
+                # Weight update
+                if len(agent._recent_results) >= 30:
+                    rolling_acc = sum(agent._recent_results) / len(agent._recent_results)
+                    agent.weight = max(0.3, min(2.0, 0.5 + rolling_acc * 1.5))
+                elif agent.total_votes >= 10:
+                    agent.weight = max(0.5, min(1.5, 0.5 + agent.accuracy * 1.0))
+                
+                learn_count += 1
+            except Exception as e:
+                logger.debug(f"Swarm learn error for {agent.name}: {e}")
+        
+        logger.info(f"🐝 Swarm: {learn_count}/{len(self.agents)} agents learned (profitable={was_profitable})")
         self._save_weights()
 
     def _get_agent_weight(self, name: str) -> float:

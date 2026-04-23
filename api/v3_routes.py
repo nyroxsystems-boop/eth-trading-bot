@@ -476,24 +476,26 @@ async def get_pairs_status():
 # ── Helpers ─────────────────────────────────────
 
 def _read_trades() -> List[Dict]:
-    """Read trades — Postgres first (persistent), CSV fallback."""
-    # Try Postgres first (survives deploys)
+    """Read trades — merge Postgres + CSV (both sources, deduplicated)."""
+    all_trades = []
+    
+    # Source 1: Postgres (persistent across deploys)
     try:
         from trade_store import get_all_trades
         pg_trades = get_all_trades()
         if pg_trades:
-            return pg_trades
+            all_trades.extend(pg_trades)
     except Exception:
         pass
     
-    # Fallback to CSV
-    trades = []
+    # Source 2: CSV (ephemeral but has current session data)
+    csv_trades = []
     try:
         if TRADES_CSV.exists():
             with open(TRADES_CSV) as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    trades.append({
+                    csv_trades.append({
                         "timestamp": row.get("timestamp", ""),
                         "action": row.get("action", ""),
                         "pair": row.get("pair", "ETHUSDT"),
@@ -503,7 +505,20 @@ def _read_trades() -> List[Dict]:
                     })
     except Exception as e:
         logger.warning(f"Failed to read trades CSV: {e}")
-    return trades
+    
+    # Merge: add CSV trades that aren't in Postgres (by timestamp+pair+action)
+    pg_keys = set()
+    for t in all_trades:
+        pg_keys.add(f"{t['timestamp']}_{t['pair']}_{t['action']}")
+    
+    for t in csv_trades:
+        key = f"{t['timestamp']}_{t['pair']}_{t['action']}"
+        if key not in pg_keys:
+            all_trades.append(t)
+    
+    # Sort by timestamp
+    all_trades.sort(key=lambda t: t.get("timestamp", ""))
+    return all_trades
 
 
 def _read_pair_states() -> List[Dict]:

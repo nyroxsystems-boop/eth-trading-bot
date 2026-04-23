@@ -134,8 +134,8 @@ def _log_trade(action: str, pair: str, qty: float, price: float, pnl: float = 0.
     try:
         from trade_store import save_trade
         save_trade(ts, action, pair, qty, price, pnl)
-    except Exception:
-        pass  # CSV is the backup
+    except Exception as e:
+        logger.warning(f"Failed to save trade to Postgres: {e}")
 
 
 def _trade_pair(
