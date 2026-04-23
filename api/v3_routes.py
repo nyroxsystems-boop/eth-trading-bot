@@ -734,3 +734,39 @@ async def get_learning():
             "evolution": [],
             "training_active": False,
         }
+
+
+@router.get("/db-status")
+async def get_db_status():
+    """Diagnostic: check database tables and connection."""
+    result = {"use_postgres": False, "tables": {}, "errors": []}
+
+    try:
+        from db_adapter import USE_POSTGRES, get_db_connection
+        result["use_postgres"] = USE_POSTGRES
+
+        if USE_POSTGRES:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                # List all tables
+                cursor.execute("""
+                    SELECT table_name FROM information_schema.tables
+                    WHERE table_schema = 'public'
+                    ORDER BY table_name
+                """)
+                tables = [row[0] for row in cursor.fetchall()]
+
+                for table in tables:
+                    try:
+                        cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                        count = cursor.fetchone()[0]
+                        result["tables"][table] = count
+                    except Exception as e:
+                        result["tables"][table] = f"error: {e}"
+        else:
+            result["errors"].append("DATABASE_URL not set or psycopg2 not available")
+
+    except Exception as e:
+        result["errors"].append(str(e))
+
+    return result
