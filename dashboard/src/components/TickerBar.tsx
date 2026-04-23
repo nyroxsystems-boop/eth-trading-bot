@@ -14,19 +14,19 @@ interface TickerBarProps {
 
 export default function TickerBar({ tickers }: TickerBarProps) {
     return (
-        <div className="flex items-center gap-6 px-4 py-3 bg-slate-900/30 border-y border-slate-800 overflow-x-auto">
+        <div className="ticker-bar">
             {tickers.map((ticker) => {
                 const isPositive = ticker.change >= 0
 
                 return (
-                    <div key={ticker.symbol} className="flex items-center gap-2 min-w-fit">
-                        <span className="text-slate-400 text-sm font-medium">{ticker.symbol}</span>
-                        <span className="text-white font-semibold">${ticker.price.toFixed(2)}</span>
-                        <div className={`flex items-center gap-1 text-sm ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+                    <div key={ticker.symbol} style={{ display: 'flex', alignItems: 'center', gap: '8px', whiteSpace: 'nowrap' }}>
+                        <span style={{ color: 'var(--text-secondary)', fontSize: '13px', fontWeight: 500 }}>{ticker.symbol}</span>
+                        <span className="ticker-price">${ticker.price.toFixed(2)}</span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', color: isPositive ? 'var(--green)' : 'var(--red)' }}>
                             {isPositive ? (
-                                <TrendingUp className="w-3 h-3" />
+                                <TrendingUp size={12} />
                             ) : (
-                                <TrendingDown className="w-3 h-3" />
+                                <TrendingDown size={12} />
                             )}
                             <span>{isPositive ? '+' : ''}{ticker.changePercent.toFixed(2)}%</span>
                         </div>

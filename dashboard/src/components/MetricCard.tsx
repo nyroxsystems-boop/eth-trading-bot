@@ -22,30 +22,30 @@ export default function MetricCard({
     const getIcon = () => {
         switch (type) {
             case 'pnl':
-                return trend === 'up' ? <TrendingUp className="w-6 h-6" /> : <TrendingDown className="w-6 h-6" />
+                return trend === 'up' ? <TrendingUp size={20} /> : <TrendingDown size={20} />
             case 'winrate':
-                return <CheckCircle className="w-6 h-6" />
+                return <CheckCircle size={20} />
             case 'confidence':
-                return <Brain className="w-6 h-6" />
+                return <Brain size={20} />
             case 'trades':
-                return <Activity className="w-6 h-6" />
+                return <Activity size={20} />
             default:
                 return null
         }
     }
 
-    const getColor = () => {
+    const getValueColor = () => {
         switch (type) {
             case 'pnl':
-                return trend === 'up' ? 'text-green-400' : 'text-red-400'
+                return trend === 'up' ? 'var(--green)' : 'var(--red)'
             case 'winrate':
-                return 'text-green-400'
+                return 'var(--green)'
             case 'confidence':
-                return 'text-cyan-400'
+                return 'var(--cyan)'
             case 'trades':
-                return 'text-cyan-400'
+                return 'var(--cyan)'
             default:
-                return 'text-slate-400'
+                return 'var(--text-secondary)'
         }
     }
 
@@ -53,93 +53,96 @@ export default function MetricCard({
         <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="bg-slate-900/50 backdrop-blur-xl border border-slate-800 rounded-2xl p-6 hover:border-cyan-500/30 transition-all"
+            className="card"
+            style={{ padding: '20px' }}
         >
-            <div className="flex items-start justify-between mb-4">
-                <div className="text-slate-400 text-sm font-medium">{title}</div>
-                <div className={getColor()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>
+                    {title}
+                </div>
+                <div style={{ color: getValueColor(), opacity: 0.7 }}>
                     {getIcon()}
                 </div>
             </div>
 
             {/* Win Rate - Circular Progress */}
             {type === 'winrate' && percentage !== undefined && (
-                <div className="flex items-center gap-4">
-                    <div className="relative w-20 h-20">
-                        <svg className="w-20 h-20 transform -rotate-90">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div style={{ position: 'relative', width: '64px', height: '64px' }}>
+                        <svg width="64" height="64" style={{ transform: 'rotate(-90deg)' }}>
                             <circle
-                                cx="40"
-                                cy="40"
-                                r="32"
-                                stroke="#1e293b"
-                                strokeWidth="6"
+                                cx="32"
+                                cy="32"
+                                r="26"
+                                stroke="rgba(255,255,255,0.06)"
+                                strokeWidth="5"
                                 fill="none"
                             />
                             <circle
-                                cx="40"
-                                cy="40"
-                                r="32"
-                                stroke="#00ff88"
-                                strokeWidth="6"
+                                cx="32"
+                                cy="32"
+                                r="26"
+                                stroke="var(--green)"
+                                strokeWidth="5"
                                 fill="none"
-                                strokeDasharray={`${2 * Math.PI * 32}`}
-                                strokeDashoffset={`${2 * Math.PI * 32 * (1 - percentage / 100)}`}
+                                strokeDasharray={`${2 * Math.PI * 26}`}
+                                strokeDashoffset={`${2 * Math.PI * 26 * (1 - percentage / 100)}`}
                                 strokeLinecap="round"
-                                className="transition-all duration-1000"
+                                style={{ transition: 'all 1s ease' }}
                             />
                         </svg>
-                        <div className="absolute inset-0 flex items-center justify-center">
-                            <CheckCircle className="w-6 h-6 text-green-400" />
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <CheckCircle size={16} style={{ color: 'var(--green)' }} />
                         </div>
                     </div>
-                    <div className="text-4xl font-bold text-green-400">{value}</div>
+                    <div style={{ fontSize: '32px', fontWeight: 700, color: 'var(--green)', fontFamily: "'JetBrains Mono', monospace" }}>{value}</div>
                 </div>
             )}
 
             {/* ML Confidence - Gauge */}
             {type === 'confidence' && percentage !== undefined && (
-                <div className="flex items-center gap-4">
-                    <div className="relative w-20 h-20">
-                        <svg className="w-20 h-20 transform -rotate-90">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div style={{ position: 'relative', width: '64px', height: '64px' }}>
+                        <svg width="64" height="64" style={{ transform: 'rotate(-90deg)' }}>
                             <circle
-                                cx="40"
-                                cy="40"
-                                r="32"
-                                stroke="#1e293b"
-                                strokeWidth="6"
+                                cx="32"
+                                cy="32"
+                                r="26"
+                                stroke="rgba(255,255,255,0.06)"
+                                strokeWidth="5"
                                 fill="none"
-                                strokeDasharray={`${Math.PI * 32} ${Math.PI * 32}`}
+                                strokeDasharray={`${Math.PI * 26} ${Math.PI * 26}`}
                             />
                             <circle
-                                cx="40"
-                                cy="40"
-                                r="32"
-                                stroke="#00d4ff"
-                                strokeWidth="6"
+                                cx="32"
+                                cy="32"
+                                r="26"
+                                stroke="var(--cyan)"
+                                strokeWidth="5"
                                 fill="none"
-                                strokeDasharray={`${Math.PI * 32 * percentage} ${Math.PI * 32}`}
+                                strokeDasharray={`${Math.PI * 26 * percentage} ${Math.PI * 26}`}
                                 strokeLinecap="round"
-                                className="transition-all duration-1000"
+                                style={{ transition: 'all 1s ease' }}
                             />
                         </svg>
-                        <div className="absolute inset-0 flex items-center justify-center flex-col">
-                            <div className="text-xs text-slate-400">Index</div>
-                            <div className="text-sm font-bold text-cyan-400">{value}</div>
+                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+                            <div style={{ fontSize: '9px', color: 'var(--text-muted)' }}>Index</div>
+                            <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--cyan)' }}>{value}</div>
                         </div>
                     </div>
-                    <div className="text-sm text-slate-400">{subtitle}</div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{subtitle}</div>
                 </div>
             )}
 
             {/* P&L - Simple with trend */}
             {type === 'pnl' && (
                 <div>
-                    <div className={`text-4xl font-bold mb-2 ${getColor()}`}>
+                    <div style={{ fontSize: '32px', fontWeight: 700, marginBottom: '6px', color: getValueColor(), fontFamily: "'JetBrains Mono', monospace" }}>
                         {value}
                     </div>
                     {subtitle && (
-                        <div className={`text-sm flex items-center gap-1 ${getColor()}`}>
-                            {trend === 'up' ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                        <div style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px', color: getValueColor() }}>
+                            {trend === 'up' ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
                             {subtitle}
                         </div>
                     )}
@@ -149,8 +152,8 @@ export default function MetricCard({
             {/* Total Trades - Simple number */}
             {type === 'trades' && (
                 <div>
-                    <div className="text-5xl font-bold text-cyan-400 mb-2">{value}</div>
-                    {subtitle && <div className="text-sm text-slate-400">{subtitle}</div>}
+                    <div style={{ fontSize: '36px', fontWeight: 700, color: 'var(--cyan)', marginBottom: '6px', fontFamily: "'JetBrains Mono', monospace" }}>{value}</div>
+                    {subtitle && <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{subtitle}</div>}
                 </div>
             )}
         </motion.div>
