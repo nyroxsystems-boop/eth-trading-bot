@@ -308,7 +308,12 @@ class TradingBrain:
     def get_pair_confidence(self, pair: str) -> float:
         """
         Get a confidence multiplier for a pair based on past performance.
-        Returns 0.5-1.5 (0.5 = bad history, 1.5 = great history).
+        Returns 0.0-1.5:
+          0.0  = BLOCKED (WR < 25% after 8+ trades)
+          0.3  = Heavy penalty (WR 25-35%)
+          0.5  = Low confidence
+          1.0  = Neutral (not enough data)
+          1.5  = High confidence (great history)
         """
         pk = self.memory["pair_knowledge"].get(pair)
         if not pk or pk["trades"] < 5:
@@ -317,12 +322,23 @@ class TradingBrain:
         winrate = pk["wins"] / max(pk["trades"], 1)
         avg_pnl = pk["total_pnl"] / max(pk["trades"], 1)
 
+        # BLOCK pairs with terrible track record
+        if pk["trades"] >= 8 and winrate < 0.25:
+            logger.info(f"🧠 Brain BLOCKED {pair}: WR={winrate:.0%} after {pk['trades']} trades")
+            return 0.0  # Engine will skip this pair
+
+        # Heavy penalty for bad pairs
+        if pk["trades"] >= 6 and winrate < 0.35:
+            return 0.3
+
         # Score based on win rate and avg PnL
         confidence = 0.5 + winrate  # 0.5-1.5 range
-        if avg_pnl < 0:
-            confidence *= 0.8  # Penalty for negative avg PnL
+        if avg_pnl < -10:  # Significant negative average
+            confidence *= 0.7
+        elif avg_pnl < 0:
+            confidence *= 0.85
 
-        return max(0.5, min(1.5, confidence))
+        return max(0.3, min(1.5, confidence))
 
     def get_regime_adjustment(self, regime: str) -> float:
         """Get score adjustment based on regime performance history."""

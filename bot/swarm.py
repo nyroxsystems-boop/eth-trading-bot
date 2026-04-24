@@ -638,32 +638,34 @@ class TradingSwarm:
         """
         After a trade closes, update each agent's accuracy.
         
-        SIMPLIFIED: Don't re-analyze (agents crash on missing keys).
-        Instead, directly update every agent with the trade outcome.
-        Each agent is judged on whether it WOULD HAVE voted correctly
-        based on the simplified market data.
+        Only agents that CAN analyze the data get updated.
+        Agents that crash on missing keys are SKIPPED — no fake votes.
+        This ensures agents differentiate based on real performance.
         """
         learn_count = 0
+        skip_count = 0
         for agent in self.agents:
             try:
-                # Try to get the agent's vote, but if it fails,
-                # still update with a default assumption
+                # Only update agents that can actually analyze
                 try:
                     vote = agent.analyze(market_data)
                     vote_type = vote.vote
                 except Exception:
-                    # Agent can't analyze this data — treat as NEUTRAL
-                    vote_type = Vote.NEUTRAL
+                    # Agent can't analyze — SKIP, don't give fake credit
+                    skip_count += 1
+                    continue
                 
                 # Determine if this agent was "correct"
                 if vote_type == Vote.BUY:
                     was_correct = was_profitable
                 elif vote_type == Vote.SKIP:
                     was_correct = not was_profitable
-                else:  # NEUTRAL
-                    was_correct = not was_profitable  # Conservative = correct if loss
+                else:  # NEUTRAL — no strong opinion, slight penalty
+                    # NEUTRAL on a win = missed opportunity (wrong)
+                    # NEUTRAL on a loss = avoided commitment (half credit)
+                    was_correct = not was_profitable
                 
-                # FORCE the update — bypass the agent_voted_buy filter
+                # Update agent stats
                 agent.total_votes += 1
                 if was_correct:
                     agent.correct_votes += 1
@@ -675,7 +677,7 @@ class TradingSwarm:
                 if agent.total_votes > 0:
                     agent.accuracy = agent.correct_votes / agent.total_votes
                 
-                # Weight update
+                # Weight update based on rolling performance
                 if len(agent._recent_results) >= 30:
                     rolling_acc = sum(agent._recent_results) / len(agent._recent_results)
                     agent.weight = max(0.3, min(2.0, 0.5 + rolling_acc * 1.5))
@@ -686,7 +688,7 @@ class TradingSwarm:
             except Exception as e:
                 logger.debug(f"Swarm learn error for {agent.name}: {e}")
         
-        logger.info(f"🐝 Swarm: {learn_count}/{len(self.agents)} agents learned (profitable={was_profitable})")
+        logger.info(f"🐝 Swarm: {learn_count} learned, {skip_count} skipped (profitable={was_profitable})")
         self._save_weights()
 
     def _get_agent_weight(self, name: str) -> float:

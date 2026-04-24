@@ -171,8 +171,13 @@ class DQN(_BASE):  # type: ignore[misc]
     """Deep Q-Network for trading decisions"""
     
     def __init__(self, state_size: int, action_size: int = 3, hidden_size: int = 128):
+        if not PYTORCH_AVAILABLE:
+            raise RuntimeError(
+                "PyTorch not installed — cannot instantiate DQN. "
+                "Run: pip install torch"
+            )
         super(DQN, self).__init__()
-        
+
         self.network = nn.Sequential(
             nn.Linear(state_size, hidden_size),
             nn.ReLU(),

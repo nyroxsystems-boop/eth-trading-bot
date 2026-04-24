@@ -31,8 +31,13 @@ class StrategyLSTM(_BASE):  # type: ignore[misc]
     """LSTM Neural Network for strategy score prediction"""
     
     def __init__(self, input_size: int = 8, hidden_size: int = 64, num_layers: int = 2, dropout: float = 0.2):
+        if not PYTORCH_AVAILABLE:
+            raise RuntimeError(
+                "PyTorch not installed — cannot instantiate StrategyLSTM. "
+                "Run: pip install torch"
+            )
         super(StrategyLSTM, self).__init__()
-        
+
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         

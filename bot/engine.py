@@ -375,6 +375,18 @@ def _trade_pair(
 
             # M1: PAIR CONFIDENCE — Scale conviction by historical performance
             brain_pair_confidence = brain.get_pair_confidence(pair)
+
+            # M4: WR-BASED SELECTIVITY — Be more selective when losing
+            brain_stats = brain.memory.get("stats", {})
+            brain_trades = brain_stats.get("total_trades", 0)
+            brain_wins = brain_stats.get("wins", 0)
+            if brain_trades >= 20:
+                overall_wr = brain_wins / brain_trades
+                if overall_wr < 0.40:
+                    # Raise entry bar when we're losing too much
+                    wr_penalty = (0.40 - overall_wr) * 0.5  # +0.05 per 10% below 40%
+                    adaptive_entry_score = max(adaptive_entry_score, config.entry_score_min + wr_penalty)
+                    logger.debug(f"[{pair}] Entry raised to {adaptive_entry_score:.2f} (overall WR={overall_wr:.0%})")
         except Exception as e:
             logger.debug(f"Non-critical brain pre-filter: {e}")
 
@@ -621,8 +633,11 @@ def _trade_pair(
             swarm_approved = signal.should_buy
 
         if swarm_approved:
+            # BRAIN PAIR BLOCK: Skip pairs the brain has learned are bad
+            if brain_pair_confidence <= 0.0:
+                logger.info(f"[{pair}] 🧠 Brain BLOCKED — pair has terrible track record, skipping")
             # EXPOSURE CHECK: Don't open if pool is nearly exhausted
-            if pool_equity < config.paper_balance * 0.05:
+            elif pool_equity < config.paper_balance * 0.05:
                 logger.info(f"[{pair}] 🛡️ Pool exhausted: ${pool_equity:,.0f} remaining — skipping")
             else:
               # M1: Scale confidence by brain's pair-specific knowledge

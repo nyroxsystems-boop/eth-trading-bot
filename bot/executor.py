@@ -11,6 +11,7 @@ Safety features:
 import logging
 import time
 import functools
+import pandas as pd
 import requests
 from bot.config import TradingConfig
 from bot.state import BotState
@@ -307,10 +308,8 @@ def get_current_price(pair: str = "ETHUSDT") -> float | None:
 
 
 @retry_api(max_retries=3, base_delay=1.0)
-def fetch_klines(pair: str = "ETHUSDT", interval: str = "5m", lookback: int = 400) -> "pd.DataFrame":
+def fetch_klines(pair: str = "ETHUSDT", interval: str = "5m", lookback: int = 400) -> pd.DataFrame:
     """Fetch OHLCV klines from Binance (with retry)."""
-    import pandas as pd
-
     base = "https://api.binance.com/api/v3/klines"
     params = {"symbol": pair, "interval": interval, "limit": min(lookback, 1000)}
 
