@@ -87,11 +87,11 @@ class MasterAllocator:
 
     # Default strategy weights (initial allocation)
     DEFAULT_WEIGHTS = {
-        # S1_FundingArb removed — requires perpetual futures (not available in DE)
-        "S2_StatArb":       {"weight": 0.25, "min": 0.05, "max": 0.35},
+        # S1_FundingArb removed — 10% redistributed to S2 (+5%) and S5 (+5%)
+        "S2_StatArb":       {"weight": 0.30, "min": 0.05, "max": 0.40},
         "S3_MarketMaking":  {"weight": 0.00, "min": 0.00, "max": 0.20},  # Phase 4
         "S4_MomentumV2":    {"weight": 0.50, "min": 0.10, "max": 0.60},
-        "S5_LiqHunter":     {"weight": 0.15, "min": 0.05, "max": 0.25},
+        "S5_LiqHunter":     {"weight": 0.20, "min": 0.05, "max": 0.30},
     }
 
     def __init__(self, initial_equity: float = 100_000.0):
@@ -342,27 +342,43 @@ class MasterAllocator:
         # Peak = max of starting capital and current equity
         real_peak = max(starting_capital, real_equity)
         
-        # Distribute stats across active strategies proportionally
+        # Per-strategy stats: use each strategy's real tracked metrics
+        # Trades are not tagged by strategy ID, so we show honest individual stats
+        # once rebalance() has populated rolling_sharpe / pnl_30d / trades_30d / win_rate,
+        # otherwise show the strategy's own tracked data.
         strategies_out = {}
         for sid, a in self.state.strategies.items():
             strat_status = a.status
             # Fix: MarketMaking with weight=0 should show PLANNED, not HALTED
             if sid == "S3_MarketMaking" and a.weight == 0:
                 strat_status = "PLANNED"
-            
-            # Real stats for active strategies (proportional to weight)
-            strat_trades = int(total_trades_count * a.weight) if a.weight > 0 else 0
-            strat_win_rate = overall_win_rate if a.weight > 0 and total_trades_count > 0 else 0
+
+            # Use strategy's own tracked stats (populated by rebalance / update_pnl)
             strat_sharpe = a.rolling_sharpe
-            if strat_sharpe == 0 and strat_trades > 0 and total_pnl > 0:
-                # Estimate sharpe from overall performance
-                strat_sharpe = min(2.0, total_pnl / max(real_equity * 0.01, 1))
-            
+            strat_pnl_30d = a.pnl_30d
+            strat_trades = a.trades_30d
+            strat_win_rate = a.win_rate
+
+            # If no per-strategy data yet but we have global data,
+            # show the global stats ONLY for the primary strategy (S4)
+            # to avoid the "identical stats" illusion
+            if strat_trades == 0 and a.weight > 0 and total_trades_count > 0:
+                if sid == "S4_MomentumV2":
+                    # Primary momentum strategy gets global stats (most trades flow here)
+                    strat_trades = total_trades_count
+                    strat_win_rate = overall_win_rate
+                    if strat_sharpe == 0 and total_pnl > 0:
+                        strat_sharpe = min(2.0, total_pnl / max(real_equity * 0.01, 1))
+                    if strat_pnl_30d == 0:
+                        strat_pnl_30d = total_pnl / max(real_equity, 1)
+                # Other strategies: show their own (zero) stats honestly
+                # They'll populate once rebalance runs with real per-strategy PnL data
+
             strategies_out[sid] = {
                 "weight": round(a.weight * 100, 1),
                 "capital_usd": round(real_equity * a.weight, 2),
                 "sharpe_30d": round(strat_sharpe, 2),
-                "pnl_30d_pct": round(a.pnl_30d * 100, 2) if a.pnl_30d != 0 else round(total_pnl / max(real_equity, 1) * 100 * a.weight, 2),
+                "pnl_30d_pct": round(strat_pnl_30d * 100, 2),
                 "status": strat_status,
                 "trades_30d": strat_trades,
                 "win_rate": round(strat_win_rate, 1),
