@@ -172,35 +172,59 @@ class RLOptimizer:
         }
 
     def _save(self):
-        """Persist RL state."""
+        """Persist RL state to Postgres first, JSON fallback."""
+        data = {}
+        for name, arm in self.arms.items():
+            data[name] = {
+                "alpha": dict(arm.alpha),
+                "beta": dict(arm.beta),
+                "total_plays": arm.total_plays,
+            }
+
+        # Postgres first (survives deploys)
+        try:
+            from bot.brain_store import _save_brain_kv
+            _save_brain_kv('rl_optimizer', data)
+        except Exception as e:
+            logger.debug(f"RL Postgres save: {e}")
+
+        # JSON fallback (local dev)
         self.SAVE_PATH.parent.mkdir(parents=True, exist_ok=True)
         try:
-            data = {}
-            for name, arm in self.arms.items():
-                data[name] = {
-                    "alpha": dict(arm.alpha),
-                    "beta": dict(arm.beta),
-                    "total_plays": arm.total_plays,
-                }
             self.SAVE_PATH.write_text(json.dumps(data, indent=2))
         except Exception as e:
-            logger.debug(f"RL save: {e}")
+            logger.debug(f"RL JSON save: {e}")
 
     def _load(self):
-        """Load RL state."""
-        if not self.SAVE_PATH.exists():
-            return
+        """Load RL state from Postgres first, JSON fallback."""
+        data = None
+
+        # Try Postgres first
         try:
-            data = json.loads(self.SAVE_PATH.read_text())
-            for name, saved in data.items():
-                if name in self.arms:
-                    arm = self.arms[name]
-                    arm.alpha = defaultdict(lambda: 1.0, saved.get("alpha", {}))
-                    arm.beta = defaultdict(lambda: 1.0, saved.get("beta", {}))
-                    arm.total_plays = saved.get("total_plays", 0)
-            logger.info(f"🤖 RL state loaded: {sum(a.total_plays for a in self.arms.values())} total updates")
+            from bot.brain_store import _load_brain_kv
+            data = _load_brain_kv('rl_optimizer')
+            if data:
+                logger.info(f"🤖 RL state loaded from Postgres")
         except Exception as e:
-            logger.debug(f"RL load: {e}")
+            logger.debug(f"RL Postgres load: {e}")
+
+        # Fallback to JSON
+        if not data and self.SAVE_PATH.exists():
+            try:
+                data = json.loads(self.SAVE_PATH.read_text())
+            except Exception:
+                pass
+
+        if not data:
+            return
+
+        for name, saved in data.items():
+            if name in self.arms:
+                arm = self.arms[name]
+                arm.alpha = defaultdict(lambda: 1.0, saved.get("alpha", {}))
+                arm.beta = defaultdict(lambda: 1.0, saved.get("beta", {}))
+                arm.total_plays = saved.get("total_plays", 0)
+        logger.info(f"🤖 RL state loaded: {sum(a.total_plays for a in self.arms.values())} total updates")
 
 
 # Singleton

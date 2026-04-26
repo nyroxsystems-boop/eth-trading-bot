@@ -328,13 +328,10 @@ def _trade_pair(
             try:
                 from bot.rl_optimizer import get_rl_optimizer
                 rl = get_rl_optimizer()
-                # Get the swarm votes that led to this trade
-                from bot.swarm import get_swarm
-                get_swarm()  # Ensure singleton is initialized
-                trade_regime = getattr(pos, 'entry_regime', 'unknown')
+                # Use the ENTRY votes saved on the position (not current market votes)
                 rl.learn_from_trade(
-                    votes=decision.votes if 'decision' in dir() else [],
-                    regime=trade_regime,
+                    votes=getattr(pos, 'entry_votes', []),
+                    regime=getattr(pos, 'entry_regime', 'unknown'),
                     was_profitable=pnl > 0,
                 )
             except Exception as e:
@@ -710,6 +707,12 @@ def _trade_pair(
                   )
                   logger.info(msg)
                   _notify(config, msg)
+
+                  # Save entry context on position for accurate RL learning at close
+                  state.position.entry_votes = decision.votes
+                  state.position.entry_signals = list(signal.signals)
+                  state.position.entry_regime = signal.regime
+
                   state.save(f"logs/state_{pair}.json")
 
         # ── SHORT SELLING: Bearish signals + swarm confirmation ──
@@ -1307,6 +1310,23 @@ def run(config: TradingConfig | None = None):
                         f"{bs['winrate']:.0%} WR | "
                         f"${bs['lifetime_pnl']:+,.2f} | "
                         f"{bs['pairs_known']} pairs known"
+                    )
+                except Exception as e:
+                    logger.debug(f"Non-critical: {e}")
+
+            # ── Genetic Evolver: Evolve strategies periodically ──
+            if loop_count % 100 == 0:  # ~3.3 hours at 2-min loops
+                try:
+                    from bot.experience import get_evolver
+                    evolver = get_evolver()
+                    evolver.evolve()
+                    evolver.save()
+                    status = evolver.get_status()
+                    logger.info(
+                        f"🧬 Evolver: Gen #{status['generation']} | "
+                        f"Pop: {status['population_size']} | "
+                        f"Tested: {status['tested']} | "
+                        f"Best fitness: {status['best_fitness']:.3f}"
                     )
                 except Exception as e:
                     logger.debug(f"Non-critical: {e}")

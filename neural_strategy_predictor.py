@@ -2,6 +2,16 @@
 """
 Neural Network Strategy Predictor - LSTM-based deep learning
 Learns temporal patterns in strategy performance for smarter predictions
+
+⚠️ STANDALONE MODULE — NOT INTEGRATED into the production engine loop.
+This is a research/CLI tool. The production ML system uses a GradientBoosting
+classifier in bot/brain.py (maybe_train_model) which IS integrated.
+Requires PyTorch (not installed in production to keep container small).
+
+Usage:
+    python neural_strategy_predictor.py --train
+    python neural_strategy_predictor.py --ensemble
+    python neural_strategy_predictor.py --info
 """
 
 import os

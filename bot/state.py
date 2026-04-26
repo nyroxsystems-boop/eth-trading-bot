@@ -21,6 +21,10 @@ class Position:
     partial_taken: bool = False
     bars_held: int = 0
     direction: str = "LONG"  # "LONG" or "SHORT"
+    # Saved at entry for accurate RL learning at close
+    entry_votes: list = field(default_factory=list)
+    entry_signals: list = field(default_factory=list)
+    entry_regime: str = "unknown"
 
     @property
     def entry_value(self) -> float:
@@ -158,6 +162,10 @@ class BotState:
                 "trailing_active": self.position.trailing_active,
                 "partial_taken": self.position.partial_taken,
                 "bars_held": self.position.bars_held,
+                "direction": self.position.direction,
+                "entry_votes": self.position.entry_votes,
+                "entry_signals": self.position.entry_signals,
+                "entry_regime": self.position.entry_regime,
             }
         return d
 
@@ -188,6 +196,10 @@ class BotState:
                 trailing_active=pos.get("trailing_active", False),
                 partial_taken=pos.get("partial_taken", False),
                 bars_held=pos.get("bars_held", 0),
+                direction=pos.get("direction", "LONG"),
+                entry_votes=pos.get("entry_votes", []),
+                entry_signals=pos.get("entry_signals", []),
+                entry_regime=pos.get("entry_regime", "unknown"),
             )
             state.paper_locked = pos["entry_price"] * pos.get("quantity", 0)
         return state

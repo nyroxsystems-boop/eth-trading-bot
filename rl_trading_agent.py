@@ -2,6 +2,15 @@
 """
 Reinforcement Learning Trading Agent - Deep Q-Network (DQN)
 Learns optimal trading decisions through experience and rewards
+
+⚠️ STANDALONE MODULE — NOT INTEGRATED into the production engine loop.
+This is a research/CLI tool. The production RL system uses bot/rl_optimizer.py
+(Thompson Sampling) which IS integrated and persisted to Postgres.
+Requires PyTorch (not installed in production to keep container small).
+
+Usage:
+    python rl_trading_agent.py --train --episodes 200
+    python rl_trading_agent.py --test
 """
 
 import os

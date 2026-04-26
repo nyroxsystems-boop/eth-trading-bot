@@ -146,7 +146,19 @@ class ExperienceMemory:
         logger.info(f"💾 Experience Memory: {len(self.experiences)} experiences loaded")
 
     def _load(self):
-        """Load experiences from disk."""
+        """Load experiences from Postgres first, then disk."""
+        # Try Postgres first (survives deploys)
+        try:
+            from bot.brain_store import _load_brain_kv
+            pg_data = _load_brain_kv('experience_memory')
+            if pg_data and pg_data.get('experiences'):
+                self.experiences = pg_data['experiences']
+                logger.info(f"💾 Experience Memory loaded from Postgres: {len(self.experiences)} experiences")
+                return
+        except Exception as e:
+            logger.debug(f"Experience Postgres load: {e}")
+
+        # Fallback to JSON
         if EXPERIENCE_FILE.exists():
             try:
                 data = json.loads(EXPERIENCE_FILE.read_text())
@@ -155,9 +167,11 @@ class ExperienceMemory:
                 self.experiences = []
 
     def save(self):
-        """Persist experiences to disk."""
+        """Persist experiences to disk AND Postgres."""
         # Keep only latest MAX_EXPERIENCES
         self.experiences = self.experiences[-MAX_EXPERIENCES:]
+
+        # Save to JSON (local)
         try:
             EXPERIENCE_FILE.write_text(json.dumps({
                 "experiences": self.experiences,
@@ -166,6 +180,20 @@ class ExperienceMemory:
             }, ensure_ascii=False))
         except Exception as e:
             logger.warning(f"Experience save failed: {e}")
+
+        # Save to Postgres (compressed — can be 10-50MB)
+        # Only save latest 10k to Postgres to keep DB manageable
+        try:
+            from bot.brain_store import _save_brain_kv
+            pg_experiences = self.experiences[-10000:]
+            _save_brain_kv('experience_memory', {
+                'experiences': pg_experiences,
+                'count': len(pg_experiences),
+                'total_local': len(self.experiences),
+                'last_saved': datetime.now(timezone.utc).isoformat(),
+            }, compress=True)
+        except Exception as e:
+            logger.debug(f"Experience Postgres save: {e}")
 
     def record(self, pair: str, features: dict, action: str,
                signals: list = None, regime: str = "unknown"):
@@ -299,7 +327,7 @@ class ExperienceMemory:
         with_outcome = sum(1 for e in self.experiences if e.get("outcome"))
         buys = sum(1 for e in self.experiences if e.get("action") == "BUY")
         wins = sum(1 for e in self.experiences
-                   if e.get("outcome", {}).get("win", False))
+                   if (e.get("outcome") or {}).get("win", False))
 
         pairs = set(e.get("snapshot", {}).get("pair", "")
                     for e in self.experiences)
@@ -404,8 +432,31 @@ class GeneticEvolver:
         self._load()
 
     def _load(self):
-        """Load population from disk."""
-        if self.EVOLVER_FILE.exists():
+        """Load population from Postgres first, then disk."""
+        loaded = False
+
+        # Try Postgres first
+        try:
+            from bot.brain_store import _load_brain_kv
+            pg_data = _load_brain_kv('genetic_pool')
+            if pg_data and pg_data.get('population'):
+                self.generation = pg_data.get('generation', 0)
+                self.best_ever = pg_data.get('best_ever')
+                self.population = []
+                for p in pg_data['population']:
+                    dna = StrategyDNA(p.get('params'))
+                    dna.fitness = p.get('fitness', 0)
+                    dna.trades = p.get('trades', 0)
+                    dna.wins = p.get('wins', 0)
+                    dna.generation = p.get('generation', 0)
+                    self.population.append(dna)
+                loaded = True
+                logger.info(f"🧬 Genetic pool loaded from Postgres: Gen #{self.generation}, {len(self.population)} strategies")
+        except Exception as e:
+            logger.debug(f"Genetic Postgres load: {e}")
+
+        # Fallback to JSON
+        if not loaded and self.EVOLVER_FILE.exists():
             try:
                 data = json.loads(self.EVOLVER_FILE.read_text())
                 self.generation = data.get("generation", 0)
@@ -419,6 +470,7 @@ class GeneticEvolver:
                     dna.wins = p.get("wins", 0)
                     dna.generation = p.get("generation", 0)
                     self.population.append(dna)
+                loaded = True
             except Exception:
                 pass
 
@@ -428,16 +480,26 @@ class GeneticEvolver:
             logger.info(f"🧬 Genetic Evolver: Created {self.population_size} random strategies")
 
     def save(self):
-        """Persist population."""
+        """Persist population to disk AND Postgres."""
+        save_data = {
+            "generation": self.generation,
+            "best_ever": self.best_ever,
+            "population": [dna.to_dict() for dna in self.population],
+            "last_saved": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # JSON (local)
         try:
-            self.EVOLVER_FILE.write_text(json.dumps({
-                "generation": self.generation,
-                "best_ever": self.best_ever,
-                "population": [dna.to_dict() for dna in self.population],
-                "last_saved": datetime.now(timezone.utc).isoformat(),
-            }, indent=2))
+            self.EVOLVER_FILE.write_text(json.dumps(save_data, indent=2))
         except Exception:
             pass
+
+        # Postgres (survives deploys)
+        try:
+            from bot.brain_store import _save_brain_kv
+            _save_brain_kv('genetic_pool', save_data)
+        except Exception as e:
+            logger.debug(f"Genetic Postgres save: {e}")
 
     def record_trade(self, strategy_idx: int, pnl_pct: float):
         """Record a trade result for a specific strategy variant."""

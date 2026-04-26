@@ -333,6 +333,76 @@ def load_swarm_agents() -> Dict[str, dict]:
     return {}
 
 
+
+# ═══════════════════════════════════════════════════════════════════
+# GENERIC BRAIN KV STORE — used by RL, Experience, Genetic Evolver
+# ═══════════════════════════════════════════════════════════════════
+
+def _save_brain_kv(key: str, data: dict, compress: bool = False):
+    """Save arbitrary JSON data to brain_state Postgres table.
+    
+    Args:
+        key: Unique key (e.g. 'rl_optimizer', 'experience_memory', 'genetic_pool')
+        data: Dict to serialize as JSON
+        compress: If True, zlib-compress the JSON payload (for large data like experiences)
+    """
+    if not USE_POSTGRES or not HAS_DB:
+        return False
+
+    try:
+        payload = json.dumps(data, ensure_ascii=False)
+        if compress:
+            import zlib
+            import base64
+            compressed = zlib.compress(payload.encode('utf-8'), level=6)
+            payload = json.dumps({"_compressed": True, "_data": base64.b64encode(compressed).decode('ascii')})
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO brain_state (key, value, updated_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (key) DO UPDATE
+                SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+            """, (key, payload))
+        return True
+    except Exception as e:
+        logger.warning(f"brain_kv save ({key}) failed: {e}")
+        return False
+
+
+def _load_brain_kv(key: str) -> Optional[dict]:
+    """Load arbitrary JSON data from brain_state Postgres table.
+    
+    Handles both plain and zlib-compressed payloads.
+    """
+    if not USE_POSTGRES or not HAS_DB:
+        return None
+
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM brain_state WHERE key = %s", (key,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            data = row[0]
+            if isinstance(data, str):
+                data = json.loads(data)
+
+            # Handle compressed payloads
+            if isinstance(data, dict) and data.get("_compressed"):
+                import zlib
+                import base64
+                raw = zlib.decompress(base64.b64decode(data["_data"]))
+                data = json.loads(raw.decode('utf-8'))
+
+            return data
+    except Exception as e:
+        logger.warning(f"brain_kv load ({key}) failed: {e}")
+    return None
+
+
 # Initialize tables on import
 if USE_POSTGRES and HAS_DB:
     ensure_brain_tables()
